@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -7,17 +7,17 @@ import CommunityCard from '../cards/CommunityCard';
 import FloatingActionButtonCommunity from '../ui/FloatingActionButtonCommunity';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 import AllEventsPage from './AllEventsPage';
-import { Link } from 'react-router-dom';
 import CommunitySuggestions from '../ui/CommunitySuggestions';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import { useCommunities } from '../../hooks/useCommunities';
 
 const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState, setModalMessage }) => {
-    // ✅ MODIFIED: Added 'Collaborations' tab
     const TABS = useRef(['Browser', 'My Communitys', 'All Events', 'Collaborations']).current;
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
+    
+    const [isPending, startTransition] = useTransition();
 
     const { data: allCommunitys, isLoading: loading } = useCommunities();
 
@@ -27,7 +27,6 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const [visibleCommunities, setVisibleCommunities] = useState([]);
     const [page, setPage] = useState(1);
     const COMMUNITIES_PER_PAGE = 12;
-    const [showSuggestions, setShowSuggestions] = useState(true);
     const [refreshTrigger, setRefreshTrigger] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
     
@@ -44,11 +43,17 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const gameTabRefs = useRef([]);
     const gameGliderRef = useRef(null);
     const activeGameColor = getGameColor(communitysState.activeGameFilter);
+
+    const handleTabClick = (tabName) => {
+        startTransition(() => {
+            setCommunitysState(prev => ({...prev, activeTab: tabName, searchTerm: ''}));
+        });
+    };
     
     const startCooldown = useCallback(() => {
         const COOLDOWN_DURATION = 3600 * 1000;
         const lastRefreshTime = Date.now();
-        localStorage.setItem('refreshSuggestionsCooldown', lastRefreshTime);
+        localStorage.setItem('refreshSuggestionsCooldown', lastRefreshTime.toString());
 
         const updateTimer = () => {
             const now = Date.now();
@@ -178,11 +183,12 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
         }
         
         communitys.sort((a, b) => {
-            if (communitysState.activeTab === 'My Communitys') {
+            if (communitysState.activeTab === 'My Communitys' && user) {
                 if (a.ownerId === user.uid) return -1;
                 if (b.ownerId === user.uid) return 1;
             }
-            return (b[communitysState.sortBy] || 0) - (a[communitysState.sortBy] || 0);
+            const sortBy = communitysState.sortBy || 'memberCount';
+            return (b[sortBy] || 0) - (a[sortBy] || 0);
         });
 
         return communitys;
@@ -216,7 +222,6 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const showCreateButton = canCreate && !userHasCommunity;
     const showManageButton = userHasCommunity;
     
-    // ✅ NEW: Helper function to render content based on the active tab
     const renderContent = () => {
         if (loading) {
             return <Spinner />;
@@ -227,7 +232,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
             case 'My Communitys':
                 return (
                     <>
-                        {communitysState.activeTab === 'My Communitys' && showSuggestions && userProfile?.discordId && (
+                        {communitysState.activeTab === 'My Communitys' && userProfile?.discordId && (
                             <div className="mb-12">
                                 <div className="flex justify-center items-center mb-4">
                                     <button
@@ -291,7 +296,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
                     <div ref={gliderRef} className="absolute h-full bg-yellow-500 rounded-full transition-all duration-500 ease-in-out" />
                     {TABS.map((tab, index) => (
-                        <button key={tab} ref={el => tabRefs.current[index] = el} onClick={() => setCommunitysState(prev => ({...prev, activeTab: tab, searchTerm: ''}))} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ communitysState.activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
+                        <button key={tab} ref={el => tabRefs.current[index] = el} onClick={() => handleTabClick(tab)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ communitysState.activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
                             {tab}
                         </button>
                     ))}
@@ -311,7 +316,6 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 </div>
             )}
             
-            {/* ✅ MODIFIED: Conditional rendering for search/filters */}
             {isBrowsingCommunities && (
                 <div className="flex justify-center items-center mb-6 gap-4">
                     <input type="text" placeholder="Search communities..." value={communitysState.searchTerm} onChange={(e) => setCommunitysState(prev => ({...prev, searchTerm: e.target.value}))} className="w-full max-w-lg p-3 bg-gray-200 rounded-full focus:outline-none focus:ring-2 focus:ring-yellow-500"/>
@@ -324,8 +328,9 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 </div>
             )}
             
-            {/* ✅ MODIFIED: Call the new renderContent function */}
-            {renderContent()}
+            <div className={`transition-opacity duration-300 ${isPending ? 'opacity-50' : 'opacity-100'}`}>
+                {renderContent()}
+            </div>
 
             {showCreateButton && <FloatingActionButtonCommunity />}
             {showManageButton && <FloatingActionButtonManage communityId={ownedCommunityId} />}

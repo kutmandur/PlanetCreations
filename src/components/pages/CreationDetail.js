@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { onSnapshot, doc, getDoc, collection, updateDoc, writeBatch, serverTimestamp, deleteDoc, setDoc, query, where, documentId, getDocs, increment } from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, collection, deleteDoc, query, where, documentId, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
@@ -14,7 +14,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     const { data: creation, isLoading, isError, error } = useCreationDetail(id);
 
-    const [isVoting, setIsVoting] = useState(false);
     const [isFollowing, setIsFollowing] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
@@ -172,14 +171,12 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         }
     };
     
-    const handleVote = async (newVoteType) => { /* ... unchanged ... */ };
-    const handleFollow = async () => { /* ... unchanged ... */ };
-    const handleReport = () => { /* ... unchanged ... */ };
+    const handleVote = async (newVoteType) => { /* ... Logik ... */ };
+    const handleFollow = async () => { /* ... Logik ... */ };
+    const handleReport = () => { /* ... Logik ... */ };
     
     const handleDelete = () => {
         setConfirmation({
-            isOpen: true,
-            title: 'Confirm Deletion',
             message: 'Are you sure you want to permanently delete this creation? All associated data will be removed. This action cannot be undone.',
             onConfirm: async () => {
                 try {
@@ -268,22 +265,11 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             <style>
                 {`
                 @keyframes pulse-green {
-                    0% {
-                        background-color: #f3f4f6;
-                        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-                    }
-                    50% {
-                        background-color: #10b981;
-                        box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
-                    }
-                    100% {
-                        background-color: #f3f4f6;
-                        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-                    }
+                    0% { background-color: #f3f4f6; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+                    50% { background-color: #10b981; box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+                    100% { background-color: #f3f4f6; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
                 }
-                .animate-pulse-green {
-                    animation: pulse-green 2s ease-out;
-                }
+                .animate-pulse-green { animation: pulse-green 2s ease-out; }
                 `}
             </style>
 
@@ -394,7 +380,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         </Link>
                         <div className="mt-6 pt-6 border-t text-sm text-gray-600 space-y-4">
                             <div className="flex items-center justify-between"><span className="font-bold">Status:</span><span className={`px-2 py-1 rounded-full font-semibold text-xs ${creation.status === 'finished' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>{creation.status === 'finished' ? 'Finished' : 'Work in Progress'}</span></div>
-                            <div className="flex items-center justify-between"><span className="font-bold">Rating:</span><div className="flex items-center space-x-4"><button onClick={() => handleVote('like')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}><Icon path={ICONS.thumbUp} className="w-5 h-5" solid={userVote === 'like'}/><span className="font-bold">{creation.likes || 0}</span></button><button onClick={() => handleVote('dislike')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}><Icon path={ICONS.thumbDown} className="w-5 h-5" solid={userVote === 'dislike'}/><span className="font-bold">{creation.dislikes || 0}</span></button></div></div>
+                            <div className="flex items-center justify-between"><span className="font-bold">Rating:</span><div className="flex items-center space-x-4"><button onClick={() => handleVote('like')} disabled={!user} className={`flex items-center space-x-1 transition-colors ${userVote === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}><Icon path={ICONS.thumbUp} className="w-5 h-5" solid={userVote === 'like'}/><span className="font-bold">{creation.likes || 0}</span></button><button onClick={() => handleVote('dislike')} disabled={!user} className={`flex items-center space-x-1 transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}><Icon path={ICONS.thumbDown} className="w-5 h-5" solid={userVote === 'dislike'}/><span className="font-bold">{creation.dislikes || 0}</span></button></div></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Created:</span><span>{formatDate(creation.createdAt)}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Updated:</span><span>{formatDate(creation.updatedAt)}</span></div>
                             <button onClick={handleReport} disabled={hasAlreadyReported} className="w-full flex items-center justify-center space-x-2 text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors pt-4 border-t mt-4"><Icon path={ICONS.flag} className="w-5 h-5"/><span>{hasAlreadyReported ? 'Already Reported' : 'Report Creation'}</span></button>

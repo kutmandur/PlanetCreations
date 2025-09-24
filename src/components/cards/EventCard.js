@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ICONS } from '../../utils/helpers';
-import Icon from '../ui/Icon';
 
 const EventCard = ({ event, community, userProfile }) => {
     const themeColor = community?.themeColor || '#F97316';
