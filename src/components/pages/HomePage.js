@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { db } from '../../firebase/config';
-import { collection, query, where, onSnapshot, doc, getDoc, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
+import { doc, collection, query, where, onSnapshot, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
@@ -32,6 +32,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     const [dlcFilterMode, setDlcFilterMode] = useState('all');
 
     const [searchParams, setSearchParams] = useSearchParams();
+    
+    const [isPending, startTransition] = useTransition();
 
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -40,6 +42,13 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     const filterMenuRef = useRef(null);
     const dlcMenuRef = useRef(null);
     const color = getGameColor(activeTab);
+
+    const handleTabClick = (tabId) => {
+        startTransition(() => {
+            setActiveTab(tabId);
+            setHomeState(prev => ({...prev, activeCategory: 'All' }));
+        });
+    };
 
     useEffect(() => {
         const tagFromUrl = searchParams.get('tag');
@@ -52,7 +61,6 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                     filterTags: [...currentTags, tagFromUrl]
                 }));
             }
-            // Clean the URL by removing the tag parameter after it's been processed
             searchParams.delete('tag');
             setSearchParams(searchParams, { replace: true });
         }
@@ -275,7 +283,6 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                 (c.tags && c.tags.some(tag => tag.toLowerCase().includes(searchTermLower)))
             );
         }
-        // Updated logic for multiple tags
         if (homeState.filterTags && homeState.filterTags.length > 0) {
             filtered = filtered.filter(c => 
                 c.tags && homeState.filterTags.every(filterTag => 
@@ -296,7 +303,6 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                 break;
             case 'createdAt':
             default:
-                // The default fetch is already sorted by createdAt desc, so we don't need to re-sort unless another sort is active.
                 break;
         }
 
@@ -338,7 +344,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                         <button
                             key={tab.id}
                             ref={el => tabRefs.current[index] = el}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => handleTabClick(tab.id)}
                             className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeTab === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab.name}
@@ -347,219 +353,88 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                 </div>
             </div>
 
-            <div className="flex justify-center mb-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                    <div ref={categoryGliderRef} className="absolute h-full rounded-full bg-white transition-all duration-500 ease-in-out shadow" />
-                    {categories.map((cat, index) => (
-                        <button
-                            key={cat}
-                            ref={el => categoryTabRefs.current[index] = el}
-                            onClick={() => setHomeState({ ...homeState, activeCategory: cat })}
-                            className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium text-sm whitespace-nowrap ${homeState.activeCategory === cat ? color.text : 'text-gray-500 hover:text-gray-800'}`}
-                        >
-                            {cat}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="flex flex-col md:flex-row justify-center items-center mb-6 gap-4">
-                <div className="flex w-full md:w-auto flex-grow max-w-xl items-center gap-2">
-                    <div className="relative flex-grow">
-                        <input
-                            type="text"
-                            placeholder="Search for creations or users"
-                            value={homeState.searchTerm}
-                            onChange={(e) => setHomeState({ ...homeState, searchTerm: e.target.value })}
-                            className={`w-full p-3 pl-10 pr-10 bg-gray-200 rounded-full focus:outline-none focus:ring-2 ${color.ring}`}
-                        />
-                        <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        {homeState.searchTerm && (
+            <div className={`transition-opacity duration-300 ${isPending ? 'opacity-50' : 'opacity-100'}`}>
+                <div className="flex justify-center mb-6">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                        <div ref={categoryGliderRef} className="absolute h-full rounded-full bg-white transition-all duration-500 ease-in-out shadow" />
+                        {categories.map((cat, index) => (
                             <button
-                                onClick={() => setHomeState({ ...homeState, searchTerm: '' })}
-                                className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50 transition-colors"
-                                aria-label="Clear search"
+                                key={cat}
+                                ref={el => categoryTabRefs.current[index] = el}
+                                onClick={() => setHomeState({ ...homeState, activeCategory: cat })}
+                                className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium text-sm whitespace-nowrap ${homeState.activeCategory === cat ? color.text : 'text-gray-500 hover:text-gray-800'}`}
                             >
-                                <span className={`text-2xl font-bold ${color.text} pb-1`}>×</span>
+                                {cat}
                             </button>
-                        )}
-                    </div>
-                    
-                    <div className="relative" ref={filterMenuRef}>
-                        <button
-                            onClick={() => setIsFilterVisible(!isFilterVisible)}
-                            className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? `${color.bg} text-white` : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
-                        >
-                            <Icon path={ICONS.filter} className="w-6 h-6" />
-                        </button>
-                        {isFilterVisible && (
-                            <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl p-4 z-20">
-                                <h4 className="font-bold mb-2">Sort & Filter</h4>
-                                <label className="block text-sm font-medium text-gray-700">Sort by</label>
-                                <select
-                                    value={homeState.sortBy}
-                                    onChange={(e) => setHomeState({ ...homeState, sortBy: e.target.value })}
-                                    className={`mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}
-                                >
-                                    <option value="createdAt">Newest First</option>
-                                    <option value="likes">Most Popular</option>
-                                    <option value="createdAt_asc">Oldest First</option>
-                                    <option value="likes_asc">Least Popular</option>
-                                </select>
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Filter by Tag</label>
-                                <div className="relative mt-1">
-                                    <input
-                                        type="text"
-                                        placeholder="Type a tag and press Enter"
-                                        value={homeState.filterTagInput || ''}
-                                        onChange={(e) => setHomeState({ ...homeState, filterTagInput: e.target.value })}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleAddTag(homeState.filterTagInput);
-                                            }
-                                        }}
-                                        className={`block w-full p-2 pr-8 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}
-                                    />
-                                    {(homeState.filterTagInput || '').trim() && (
-                                        <button
-                                            onClick={() => setHomeState({ ...homeState, filterTagInput: '' })}
-                                            className="absolute z-10 right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors"
-                                            aria-label="Clear tag filter"
-                                        >
-                                            <span className={`text-xl font-bold ${color.text} pb-1`}>×</span>
-                                        </button>
-                                    )}
-                                </div>
-                                
-                                {homeState.filterTags && homeState.filterTags.length > 0 && (
-                                    <div className="flex flex-wrap gap-2 mt-3">
-                                        {homeState.filterTags.map(tag => (
-                                            <span key={tag} className="flex items-center bg-gray-200 text-gray-700 text-sm font-medium pl-3 pr-2 py-1 rounded-full">
-                                                {tag}
-                                                <button
-                                                    onClick={() => handleRemoveTag(tag)}
-                                                    className="ml-2 -mr-1 text-gray-400 hover:text-gray-700 rounded-full"
-                                                    aria-label={`Remove ${tag} filter`}
-                                                >
-                                                    <span className="text-md font-bold">×</span>
-                                                </button>
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="relative" ref={dlcMenuRef}>
-                        <button
-                            onClick={() => setIsDlcFilterVisible(!isDlcFilterVisible)}
-                            className="bg-gray-200 p-3 rounded-full hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 font-semibold"
-                        >
-                           DLC
-                        </button>
-                        {isDlcFilterVisible && (
-                            <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl p-4 z-20">
-                                <h4 className="font-bold mb-3 border-b pb-2">Filter by DLC</h4>
-                                <div className="space-y-2 max-h-64 overflow-y-auto">
-                                    <label className="flex items-center text-gray-800 font-semibold">
-                                        <input type="radio" name="dlcFilter" checked={dlcFilterMode === 'all'} onChange={handleSelectAll} className="h-4 w-4 text-blue-600 focus:ring-blue-500"/>
-                                        <span className="ml-2">Show All (Default)</span>
-                                    </label>
-                                    {user && (
-                                        <label className="flex items-center text-gray-800 font-semibold">
-                                            <input type="radio" name="dlcFilter" checked={dlcFilterMode === 'owned'} onChange={handleSelectOwned} className="h-4 w-4 text-blue-600 focus:ring-blue-500"/>
-                                            <span className="ml-2">Creations I Can Use</span>
-                                        </label>
-                                    )}
-                                    <hr className="my-2"/>
-                                    {gameDlcs.map(dlc => (
-                                        <label key={dlc} className="flex items-center text-gray-700">
-                                            <input type="checkbox" checked={selectedDlcs.includes(dlc)} onChange={() => handleDlcChange(dlc)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"/>
-                                            <span className="ml-2">{dlc}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                        ))}
                     </div>
                 </div>
 
-                {(activeTab === 'planet-coaster' || activeTab === 'planet-zoo') && (
-                    <div className="flex items-center justify-center gap-4 md:mt-0">
-                        <div className="flex items-center space-x-2">
-                            <span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'console' ? 'text-gray-400' : 'text-blue-600'}`}>
-                                PC
-                            </span>
-                            <div
-                                onClick={() => setHomeState({ ...homeState, platformFilter: homeState.platformFilter === 'pc' ? 'console' : 'pc' })}
-                                className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.platformFilter === 'pc' ? 'bg-blue-500' : 'bg-green-500'}`}
-                            >
-                                <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.platformFilter === 'pc' ? 'translate-x-0' : 'translate-x-6'}`}></div>
-                            </div>
-                            <span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'pc' ? 'text-gray-400' : 'text-green-600'}`}>
-                                Console
-                            </span>
+                <div className="flex flex-col md:flex-row justify-center items-center mb-6 gap-4">
+                    <div className="flex w-full md:w-auto flex-grow max-w-xl items-center gap-2">
+                        <div className="relative flex-grow">
+                            <input type="text" placeholder="Search for creations or users" value={homeState.searchTerm} onChange={(e) => setHomeState({ ...homeState, searchTerm: e.target.value })} className={`w-full p-3 pl-10 pr-10 bg-gray-200 rounded-full focus:outline-none focus:ring-2 ${color.ring}`} />
+                            <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            {homeState.searchTerm && (<button onClick={() => setHomeState({ ...homeState, searchTerm: '' })} className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50 transition-colors" aria-label="Clear search"><span className={`text-2xl font-bold ${color.text} pb-1`}>×</span></button>)}
                         </div>
-                        <div className="flex items-center space-x-2">
-                            <span className={`text-sm font-medium transition-colors ${homeState.showModsOnly ? 'text-green-600' : 'text-gray-500'}`}>
-                                Show Modded
-                            </span>
-                            <div
-                                onClick={() => setHomeState({ ...homeState, showModsOnly: !homeState.showModsOnly })}
-                                className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.showModsOnly ? 'bg-green-500' : 'bg-gray-300'}`}
-                            >
-                                <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.showModsOnly ? 'translate-x-6' : 'translate-x-0'}`}></div>
-                            </div>
+                        <div className="relative" ref={filterMenuRef}>
+                            <button onClick={() => setIsFilterVisible(!isFilterVisible)} className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? `${color.bg} text-white` : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.filter} className="w-6 h-6" /></button>
+                            {isFilterVisible && (
+                                <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl p-4 z-20">
+                                    <h4 className="font-bold mb-2">Sort & Filter</h4>
+                                    <label className="block text-sm font-medium text-gray-700">Sort by</label>
+                                    <select value={homeState.sortBy} onChange={(e) => setHomeState({ ...homeState, sortBy: e.target.value })} className={`mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}><option value="createdAt">Newest First</option><option value="likes">Most Popular</option><option value="createdAt_asc">Oldest First</option><option value="likes_asc">Least Popular</option></select>
+                                    <label className="block text-sm font-medium text-gray-700 mt-4">Filter by Tag</label>
+                                    <div className="relative mt-1">
+                                        <input type="text" placeholder="Type a tag and press Enter" value={homeState.filterTagInput || ''} onChange={(e) => setHomeState({ ...homeState, filterTagInput: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(homeState.filterTagInput); } }} className={`block w-full p-2 pr-8 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`} />
+                                        {(homeState.filterTagInput || '').trim() && (<button onClick={() => setHomeState({ ...homeState, filterTagInput: '' })} className="absolute z-10 right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors" aria-label="Clear tag filter"><span className={`text-xl font-bold ${color.text} pb-1`}>×</span></button>)}
+                                    </div>
+                                    {homeState.filterTags && homeState.filterTags.length > 0 && (<div className="flex flex-wrap gap-2 mt-3">{homeState.filterTags.map(tag => (<span key={tag} className="flex items-center bg-gray-200 text-gray-700 text-sm font-medium pl-3 pr-2 py-1 rounded-full">{tag}<button onClick={() => handleRemoveTag(tag)} className="ml-2 -mr-1 text-gray-400 hover:text-gray-700 rounded-full" aria-label={`Remove ${tag} filter`}><span className="text-md font-bold">×</span></button></span>))}</div>)}
+                                </div>
+                            )}
+                        </div>
+                        <div className="relative" ref={dlcMenuRef}>
+                            <button onClick={() => setIsDlcFilterVisible(!isDlcFilterVisible)} className="bg-gray-200 p-3 rounded-full hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 font-semibold">DLC</button>
+                            {isDlcFilterVisible && (
+                                <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl p-4 z-20">
+                                    <h4 className="font-bold mb-3 border-b pb-2">Filter by DLC</h4>
+                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                        <label className="flex items-center text-gray-800 font-semibold"><input type="radio" name="dlcFilter" checked={dlcFilterMode === 'all'} onChange={handleSelectAll} className="h-4 w-4 text-blue-600 focus:ring-blue-500"/><span className="ml-2">Show All (Default)</span></label>
+                                        {user && (<label className="flex items-center text-gray-800 font-semibold"><input type="radio" name="dlcFilter" checked={dlcFilterMode === 'owned'} onChange={handleSelectOwned} className="h-4 w-4 text-blue-600 focus:ring-blue-500"/><span className="ml-2">Creations I Can Use</span></label>)}
+                                        <hr className="my-2"/>
+                                        {gameDlcs.map(dlc => (<label key={dlc} className="flex items-center text-gray-700"><input type="checkbox" checked={selectedDlcs.includes(dlc)} onChange={() => handleDlcChange(dlc)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"/><span className="ml-2">{dlc}</span></label>))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
+                    {(activeTab === 'planet-coaster' || activeTab === 'planet-zoo') && (
+                        <div className="flex items-center justify-center gap-4 md:mt-0">
+                            <div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'console' ? 'text-gray-400' : 'text-blue-600'}`}>PC</span><div onClick={() => setHomeState({ ...homeState, platformFilter: homeState.platformFilter === 'pc' ? 'console' : 'pc' })} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.platformFilter === 'pc' ? 'bg-blue-500' : 'bg-green-500'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.platformFilter === 'pc' ? 'translate-x-0' : 'translate-x-6'}`}></div></div><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'pc' ? 'text-gray-400' : 'text-green-600'}`}>Console</span></div>
+                            <div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.showModsOnly ? 'text-green-600' : 'text-gray-500'}`}>Show Modded</span><div onClick={() => setHomeState({ ...homeState, showModsOnly: !homeState.showModsOnly })} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.showModsOnly ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.showModsOnly ? 'translate-x-6' : 'translate-x-0'}`}></div></div></div>
+                        </div>
+                    )}
+                </div>
+
+                {loading ? <Spinner gameId={activeTab} /> : (
+                    <>
+                        {isSearching && (<div className="mb-8 text-center"><Spinner /></div>)}
+                        {!isSearching && userSearchResults.length > 0 && (
+                            <div className="mb-8">
+                                <h2 className="text-2xl font-bold mb-4 text-gray-800">Users Found</h2>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">{userSearchResults.map(userResult => (<UserSearchResultCard key={userResult.id} user={userResult} />))}</div>
+                            </div>
+                        )}
+                        <div className="mb-8">
+                            {homeState.searchTerm.trim() && <h2 className="text-2xl font-bold mb-4 text-gray-800">Creations Found</h2>}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">{filteredCreations.map(creation => (<CreationCard key={creation.id} creation={creation} onTagClick={handleAddTag}/>))}</div>
+                            {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
+                            {!hasMore && creations.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {!loading && filteredCreations.length === 0 && (<p className="text-center text-gray-500 mt-10 text-xl">No creations found. Try a different search!</p>)}
+                        </div>
+                    </>
                 )}
             </div>
-
-            {loading ? <Spinner gameId={activeTab} /> : (
-                <>
-                    {isSearching && (
-                        <div className="mb-8 text-center">
-                            <Spinner />
-                        </div>
-                    )}
-
-                    {!isSearching && userSearchResults.length > 0 && (
-                        <div className="mb-8">
-                            <h2 className="text-2xl font-bold mb-4 text-gray-800">Users Found</h2>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                                {userSearchResults.map(userResult => (
-                                    <UserSearchResultCard
-                                        key={userResult.id}
-                                        user={userResult}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="mb-8">
-                        {homeState.searchTerm.trim() && <h2 className="text-2xl font-bold mb-4 text-gray-800">Creations Found</h2>}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                            {filteredCreations.map(creation => (
-                                <CreationCard 
-                                    key={creation.id} 
-                                    creation={creation}
-                                    onTagClick={handleAddTag}
-                                />
-                            ))}
-                        </div>
-                        {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
-                        {!hasMore && creations.length > 0 && (
-                            <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>
-                        )}
-                        {!loading && filteredCreations.length === 0 && (
-                            <p className="text-center text-gray-500 mt-10 text-xl">No creations found. Try a different search!</p>
-                        )}
-                    </div>
-                </>
-            )}
         </div>
     );
 };

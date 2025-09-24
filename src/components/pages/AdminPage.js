@@ -15,7 +15,7 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500' }) => (
 );
 
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = ['User Management', 'Data Management', 'Email Users', 'Site Statistics'];
+    const TABS = useRef(['User Management', 'Data Management', 'Email Users', 'Site Statistics']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
@@ -43,8 +43,6 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [loadingStats, setLoadingStats] = useState(true);
 
     const [isGenerating, setIsGenerating] = useState(false);
-    
-    // HIER IST DER FIX: useTransition Hook
     const [isPending, startTransition] = useTransition();
 
     const GAME_TABS = useRef([
