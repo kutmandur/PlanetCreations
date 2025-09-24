@@ -35,8 +35,8 @@ jobs:
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
 
       - name: Build and release Electron app
-        # HIER IST DIE KORREKTUR:
-        uses: samuelmeuli/electron-builder-action@v1
+        # HIER IST DIE KORREKTUR ZUM AKTUELLEN, OFFIZIELLEN PFAD:
+        uses: electron-builder-ecosystem/electron-builder-action@v1
         with:
           release: true
         env:
