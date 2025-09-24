@@ -35,9 +35,8 @@ jobs:
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
 
       - name: Build and release Electron app
-        # HIER IST DIE KORREKTUR ZUM AKTUELLEN, OFFIZIELLEN PFAD:
         uses: samuelmeuli/action-electron-builder@v1
         with:
+          # The token must be passed as an input with the name `github_token`
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           release: true
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
