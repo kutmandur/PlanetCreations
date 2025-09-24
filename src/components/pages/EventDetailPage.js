@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { doc, onSnapshot, getDoc, collection, query, where, getDocs, writeBatch, serverTimestamp, collectionGroup, deleteDoc, runTransaction } from 'firebase/firestore';
+import { useParams, useNavigate } from 'react-router-dom';
+import { doc, onSnapshot, getDoc, collection, query, where, getDocs, writeBatch, serverTimestamp, collectionGroup, runTransaction } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
@@ -8,7 +8,6 @@ import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
-import { deleteEvent } from '../../firebase/event';
 
 const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView }) => {
     const { eventId } = useParams();

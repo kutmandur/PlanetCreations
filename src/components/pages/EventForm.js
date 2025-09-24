@@ -1,5 +1,5 @@
-import { React, useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, updateDoc, arrayUnion } from 'firebase/firestore';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
@@ -201,11 +201,19 @@ const EventForm = ({ user, setModalMessage }) => {
     const navigate = useNavigate();
     const isEditing = !!eventId;
 
-    const formatDateForLocalInput = (date = new Date()) => {
+    const formatDateForLocalInput = useCallback((date = new Date()) => {
         const offset = date.getTimezoneOffset() * 60000;
         const localDate = new Date(date.getTime() - offset);
         return localDate.toISOString().slice(0, 16);
-    };
+    }, []);
+
+    const formatDateForInput = useCallback((date, tz) => {
+        try {
+            const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).formatToParts(date);
+            const partMap = parts.reduce((acc, part) => { acc[part.type] = part.value; return acc; }, {});
+            return `${partMap.year}-${partMap.month}-${partMap.day}T${partMap.hour}:${partMap.minute}`;
+        } catch (e) { return formatDateForLocalInput(date); }
+    }, [formatDateForLocalInput]);
 
     const [loading, setLoading] = useState(true);
     const [communityName, setCommunityName] = useState('');
@@ -258,14 +266,6 @@ const EventForm = ({ user, setModalMessage }) => {
         { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
         { id: 'planet-zoo', name: 'Planet Zoo' },
     ]).current;
-
-    const formatDateForInput = (date, tz) => {
-        try {
-            const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).formatToParts(date);
-            const partMap = parts.reduce((acc, part) => { acc[part.type] = part.value; return acc; }, {});
-            return `${partMap.year}-${partMap.month}-${partMap.day}T${partMap.hour}:${partMap.minute}`;
-        } catch (e) { return formatDateForLocalInput(date); }
-    };
 
     useEffect(() => {
         const loadFormData = async () => {
@@ -345,7 +345,7 @@ const EventForm = ({ user, setModalMessage }) => {
             finally { setLoading(false); }
         };
         loadFormData();
-    }, [eventId, communityId, isEditing, navigate, setModalMessage]);
+    }, [eventId, communityId, isEditing, navigate, setModalMessage, formatDateForInput, formatDateForLocalInput]);
 
     useEffect(() => {
         if (isEditing && originalEventDates && timezone) {
@@ -355,7 +355,7 @@ const EventForm = ({ user, setModalMessage }) => {
             setEndDatePart(endString.split('T')[0]);
             setEndTimePart(endString.split('T')[1]);
         }
-    }, [timezone, isEditing, originalEventDates]);
+    }, [timezone, isEditing, originalEventDates, formatDateForInput]);
     
     useEffect(() => {
         const currentSelected = eventClasses.map(c => c.toLowerCase());

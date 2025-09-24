@@ -1,15 +1,11 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/config';
 import { assignCommunityRole, kickUser, kickAndReportUser } from '../../firebase/community';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
-import ProfilePage from '../pages/ProfilePage'; // ⚠️ Make sure this path is correct!
+import ProfilePage from '../pages/ProfilePage';
 
-// This component now renders the full UserProfilePage in a large modal.
 const ProfilePopover = ({ userId, onClose, user, userProfile, setReportModal, setModalMessage, setConfirmation }) => {
     const popoverRef = useRef(null);
 
@@ -112,7 +108,7 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
     const [rankPopoverState, setRankPopoverState] = useState(null);
     const [profilePopoverState, setProfilePopoverState] = useState(null);
 
-    const getMemberRoles = (member) => {
+    const getMemberRoles = useCallback((member) => {
         if (!member) return [];
         if (member.roles && Array.isArray(member.roles)) {
             return member.roles;
@@ -121,7 +117,7 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
             return [member.role];
         }
         return [];
-    };
+    }, []);
 
     const getTextColorForBackground = (hexColor) => {
         if (!hexColor) return '#ffffff';
@@ -208,14 +204,14 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
     };
 
 
-    const getHighestRankWeight = (memberRoles) => {
+    const getHighestRankWeight = useCallback((memberRoles) => {
         if (!memberRoles || memberRoles.length === 0) return 99;
         const weights = memberRoles.map(role => {
             const rank = ranks.find(r => r.name.toLowerCase() === role.toLowerCase());
             return rank ? rank.weight : 99;
         });
         return Math.min(...weights);
-    };
+    }, [ranks]);
 
     const filteredMembers = useMemo(() => {
         return members
@@ -226,7 +222,7 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
                 return searchMatch && rankMatch;
             })
             .sort((a, b) => getHighestRankWeight(getMemberRoles(a)) - getHighestRankWeight(getMemberRoles(b)));
-    }, [members, searchTerm, rankFilter, ranks]);
+    }, [members, searchTerm, rankFilter, getHighestRankWeight, getMemberRoles]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">

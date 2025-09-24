@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { onSnapshot, collection, query, where, doc, getDoc, writeBatch, increment, serverTimestamp, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';

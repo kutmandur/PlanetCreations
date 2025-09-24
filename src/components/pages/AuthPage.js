@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
-import { doc, setDoc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';

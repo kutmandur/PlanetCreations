@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, onSnapshot, collection, getDocs, getDoc, query, where, documentId } from 'firebase/firestore';
+import { doc, onSnapshot, collection, getDocs, getDoc, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';

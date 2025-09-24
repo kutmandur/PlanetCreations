@@ -12,9 +12,10 @@ import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 
+const TABS = ['Creations', 'Members', 'Events'];
+
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
     const { communityName } = useParams();
-    const TABS = ['Creations', 'Members', 'Events'];
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -194,7 +195,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
             gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
         }
-    }, [activeTab, TABS, loading]);
+    }, [activeTab, loading]);
 
     const isSiteAdmin = userProfile?.role === 'admin';
     const isSiteModerator = userProfile?.role === 'moderator';

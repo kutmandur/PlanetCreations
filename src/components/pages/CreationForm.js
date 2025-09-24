@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom'; 
 import {
-    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch, arrayUnion, setDoc, query, where, documentId
+    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch, arrayUnion, query, where, documentId
 } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
@@ -402,7 +402,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         setLoading(true);
         const stripBlacklisted = (text) => {
             if (!text || !blacklist.length) return text;
-            const escapedBlacklist = blacklist.map(word => word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'));
+            const escapedBlacklist = blacklist.map(word => word.replace(/[-/\^$*+?.()|[\]{}]/g, '\\$&'));
             const regex = new RegExp(`\\b(${escapedBlacklist.join('|')})\\b`, 'gi');
             return text.replace(regex, '').replace(/\s\s+/g, ' ').trim();
         };
@@ -458,7 +458,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     createdAt: serverTimestamp(),
                     likes: 0, dislikes: 0, reportCount: 0,
                     eventIds: [],
-                    changelog: [] // Start with an empty changelog
+                    changelog: []
                 };
                 
                 const newDocRef = await addDoc(collection(db, 'creations'), creationData);

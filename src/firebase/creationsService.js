@@ -4,7 +4,7 @@ import { collection, query, where, orderBy, startAfter, limit, getDocs, doc, get
 const ITEMS_PER_PAGE = 12;
 
 export const fetchCreations = async ({ pageParam = null, queryKey }) => {
-    const [_key, activeTab, sortBy] = queryKey;
+    const [, activeTab, sortBy] = queryKey;
     const [sortField, sortDirection] = sortBy.split('_');
     let creationsQuery = query(
         collection(db, 'creations'),
