@@ -35,15 +35,9 @@ jobs:
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
 
       - name: Build and release Electron app
-        uses: electron-userland/electron-builder-action@v1
+        # HIER IST DIE KORREKTUR:
+        uses: samuelmeuli/electron-builder-action@v1
         with:
           release: true
         env:
-          # ############################################################### #
-          # ## HIER IST DER PLATZHALTER FÜR DEINEN TOKEN.                ## #
-          # ## DIESER CODE BLEIBT GENAU SO, WIE ER IST.                  ## #
-          # ## ÄNDERE IHN NICHT!                                         ## #
-          # ## Füge deinen echten Token NUR in den GitHub-Einstellungen  ## #
-          # ## unter dem Namen GH_TOKEN ein.                             ## #
-          # ############################################################### #
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
