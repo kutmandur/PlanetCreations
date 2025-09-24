@@ -402,7 +402,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         setLoading(true);
         const stripBlacklisted = (text) => {
             if (!text || !blacklist.length) return text;
-            const escapedBlacklist = blacklist.map(word => word.replace(/[-/\^$*+?.()|[\]{}]/g, '\\$&'));
+            const escapedBlacklist = blacklist.map(word => word.replace(/[-/^$*+?.()|[\]{}]/g, '\\$&'));
             const regex = new RegExp(`\\b(${escapedBlacklist.join('|')})\\b`, 'gi');
             return text.replace(regex, '').replace(/\s\s+/g, ' ').trim();
         };
