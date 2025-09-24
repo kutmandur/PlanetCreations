@@ -73,9 +73,17 @@ const AppContent = () => {
     const [notifications, setNotifications] = useState([]);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
-    // NEU: State für Update-Benachrichtigungen
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [updateDownloaded, setUpdateDownloaded] = useState(false);
+
+    // NEU: Effekt zum Steuern des Scroll-Verhaltens
+    useEffect(() => {
+        if (isOfflineMode) {
+            document.documentElement.style.overflow = 'hidden';
+        } else {
+            document.documentElement.style.overflow = 'auto';
+        }
+    }, [isOfflineMode]);
 
     useEffect(() => {
         if (!isConfigured) { setLoadingAuth(false); return; }
@@ -129,24 +137,51 @@ const AppContent = () => {
             if (docSnap.exists()) { setBlacklist(docSnap.data().words || []); } else { setBlacklist([]); }
         });
 
-        // NEU: Listener für Update-Events hinzufügen
         if (window.electronAPI) {
             window.electronAPI.onUpdateAvailable(() => {
                 setUpdateAvailable(true);
             });
             window.electronAPI.onUpdateDownloaded(() => {
-                setUpdateAvailable(false); // "Downloading"-Banner ausblenden
-                setUpdateDownloaded(true); // "Restart"-Banner einblenden
+                setUpdateAvailable(false);
+                setUpdateDownloaded(true);
             });
         }
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
     }, []);
 
-    const handleLogout = async () => { /* ... */ };
-    const handleResendVerification = async () => { /* ... */ };
-    const renderPopoverContent = () => { /* ... */ };
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+            // States werden durch den onAuthStateChanged-Listener zurückgesetzt
+        } catch (error) {
+            setModalMessage(`Error logging out: ${error.message}`);
+        }
+    };
 
+    const handleResendVerification = async () => {
+        if (user) {
+            try {
+                await sendEmailVerification(user);
+                setModalMessage("A new verification email has been sent.");
+            } catch (error) {
+                setModalMessage(`Error: ${error.message}`);
+            }
+        }
+    };
+
+    const renderPopoverContent = () => {
+        if (!popoverView) return null;
+        switch (popoverView.name) {
+            case 'detail':
+                return <CreationDetail creationIdOverride={popoverView.id} user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setExternalLink={setExternalLink} setReportModal={setReportModal} />;
+            case 'profile':
+                return <ProfilePage userIdOverride={popoverView.userId} user={user} userProfile={userProfile} setReportModal={setReportModal} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;
+            default:
+                return null;
+        }
+    };
+    
     if (loadingAuth) {
         return <div className="h-screen flex justify-center items-center bg-gray-100"><Spinner /></div>;
     }
@@ -155,25 +190,23 @@ const AppContent = () => {
 
     return (
         <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100">
+            {/* WIEDERHERGESTELLT: Alle Modals */}
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
-            {/* ... weitere Modals ... */}
-
-            {/* NEU: Die Update-Benachrichtigung */}
+            {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { window.open(externalLink, '_blank'); setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
+            {passwordConfirm && <PasswordConfirmationModal message={passwordConfirm.message} onConfirm={(password) => { passwordConfirm.onConfirm(password); setPasswordConfirm(null); }} onCancel={() => setPasswordConfirm(null)} />}
+            {reportModal && <ReportModal targetType={reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} />}
+            {strikeModal && <StrikeModal onConfirm={(reason) => { strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
+            {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>{renderPopoverContent()}</PopoverModal>}
+            {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
+            
             {updateDownloaded ? (
                 <div className="bg-green-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">
                     <p className="font-semibold">Update heruntergeladen. Jetzt neu starten, um zu installieren.</p>
-                    <button 
-                        onClick={() => window.electronAPI.restartApp()}
-                        className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100"
-                    >
-                        Neu starten
-                    </button>
+                    <button onClick={() => window.electronAPI.restartApp()} className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100">Neu starten</button>
                 </div>
             ) : updateAvailable && (
-                <div className="bg-blue-500 text-white p-2 text-center flex-shrink-0">
-                    <p>Ein neues Update ist verfügbar und wird im Hintergrund heruntergeladen...</p>
-                </div>
+                <div className="bg-blue-500 text-white p-2 text-center flex-shrink-0"><p>Ein neues Update ist verfügbar und wird im Hintergrund heruntergeladen...</p></div>
             )}
 
             <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" />
@@ -185,9 +218,10 @@ const AppContent = () => {
                 </div>
             )}
             
-            <main className="flex-1 min-h-0">
+            <main className="flex-1 min-h-0 overflow-y-auto">
                 <ErrorBoundary>
                     <Suspense fallback={<div className="h-full flex justify-center items-center"><Spinner /></div>}>
+                        {/* WIEDERHERGESTELLT: Props an die Routen weitergeben */}
                         <Routes>
                             <Route path="/client/dashboard" element={<ClientDashboard />} />
                             <Route path="/" element={<HomePage user={user} userProfile={userProfile} activeTab={activeTab} setActiveTab={setActiveTab} homeState={homeState} setHomeState={setHomeState} />} />
@@ -216,6 +250,15 @@ const AppContent = () => {
                 </ErrorBoundary>
             </main>
             
+            {/* WIEDERHERGESTELLT: Floating Buttons */}
+            {!isOfflineMode && <ToggleViewButton />}
+
+            {showNewCreationButton && (
+                <Link to="/create">
+                    <FloatingActionButton activeTab={activeTab} />
+                </Link>
+            )}
+
             {!isOfflineMode && (
                 <footer className="text-center p-4 mt-8 text-gray-500 flex-shrink-0">
                     <div className="flex justify-center items-center space-x-4 text-sm">
