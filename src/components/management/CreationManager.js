@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/config';
 import { doc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, increment, onSnapshot } from 'firebase/firestore';
 import ManagedCreationCard from './ManagedCreationCard';
@@ -13,7 +13,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         rankFilter: 'all',
         filterTag: '',
         sortBy: 'pinned_first',
-        // ✅ 1. Add state for the new filters
         activeGame: 'planet-coaster-2',
         activeCategory: 'All',
     });
@@ -22,7 +21,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
     const filterMenuRef = useRef(null);
     const [showcaseModal, setShowcaseModal] = useState(null); 
 
-    // ✅ 2. Add state and refs for the new tab bars
     const [categories, setCategories] = useState(['All']);
     const TABS = useRef([
         { id: 'planet-coaster', name: 'Planet Coaster' },
@@ -35,6 +33,10 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
     const categoryGliderRef = useRef(null);
     const color = getGameColor(managerState.activeGame);
 
+    const handleStateChange = useCallback((field, value) => {
+        setManagerState(prev => ({ ...prev, [field]: value }));
+    }, []);
+
     useEffect(() => {
         const handleClickOutside = (event) => {
             if (filterMenuRef.current && !filterMenuRef.current.contains(event.target)) {
@@ -45,7 +47,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // ✅ 3. Add useEffects to fetch categories and animate the tab bars
     useEffect(() => {
         const docRef = doc(db, 'categories', managerState.activeGame);
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -56,7 +57,7 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
             }
         });
         return () => unsubscribe();
-    }, [managerState.activeGame]);
+    }, [managerState.activeGame, managerState.activeCategory, handleStateChange]);
 
     useEffect(() => {
         const activeTabIndex = TABS.findIndex(tab => tab.id === managerState.activeGame);
@@ -75,10 +76,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
             categoryGliderRef.current.style.width = `${activeCatNode.offsetWidth}px`;
         }
     }, [managerState.activeCategory, categories]);
-
-    const handleStateChange = (field, value) => {
-        setManagerState(prev => ({ ...prev, [field]: value }));
-    };
 
     const handlePinToggle = async (creationId, isCurrentlyPinned) => {
         const pinnedCount = creations.filter(c => c.pinned).length;
@@ -149,15 +146,12 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
     const filteredAndSortedCreations = useMemo(() => {
         let filtered = [...creations];
 
-        // ✅ 4. Update the main filter logic to include game and category
         filtered = filtered.filter(creation => {
             const { filter, rankFilter, searchTerm, filterTag, activeGame, activeCategory } = managerState;
             
-            // Game and Category Filters
             if (creation.game !== activeGame) return false;
             if (activeCategory !== 'All' && creation.category !== activeCategory) return false;
 
-            // Status Filter
             if (filter !== 'all') {
                 if (filter === 'pinned' && !creation.pinned) return false;
                 if (filter === 'unpinned' && creation.pinned) return false;
@@ -167,18 +161,15 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
                 if (filter === 'wip' && creation.status !== 'wip') return false;
             }
 
-            // Rank Filter
             if (rankFilter !== 'all') {
                 if (!creation.creatorRanks.some(rank => rank.name.toLowerCase() === rankFilter)) return false;
             }
 
-            // Search Term Filter
             if (searchTerm.trim()) {
                 const term = searchTerm.toLowerCase();
                 if (!creation.title.toLowerCase().includes(term) && !creation.username.toLowerCase().includes(term)) return false;
             }
 
-            // Tag Filter
             if (filterTag.trim()) {
                 const tagTerm = filterTag.toLowerCase().trim();
                 if (!creation.tags || !creation.tags.some(tag => tag.toLowerCase().includes(tagTerm))) return false;
@@ -202,7 +193,7 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         });
         
         return [...pinned, ...unpinned];
-    }, [creations, managerState, categories]);
+    }, [creations, managerState]);
 
     return (
         <div>
@@ -216,7 +207,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
 
             <h2 className="text-2xl font-bold mb-4 text-center">Manage Community Creations</h2>
             
-            {/* ✅ 5. Add the game and category tab bars */}
             <div className="flex justify-center my-6">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
                     <div ref={gliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />

@@ -4,7 +4,7 @@ const HighlightableTextarea = ({ value, onChange, blacklist, ...props }) => {
     const renderHighlightedText = () => {
         if (!value) return null;
         
-        const escapedBlacklist = blacklist.map(word => word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'));
+        const escapedBlacklist = blacklist.map(word => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
         if (escapedBlacklist.length === 0) return <span>{value}</span>;
         
         const regex = new RegExp(`(${escapedBlacklist.join('|')})`, 'gi');
@@ -44,7 +44,6 @@ const HighlightableTextarea = ({ value, onChange, blacklist, ...props }) => {
                 value={value}
                 onChange={onChange}
                 spellCheck="false"
-                // ✅ FIX: Added caret-gray-800 to make the typing cursor visible
                 className={`${baseClasses} ${passedClasses} absolute inset-0 overflow-hidden resize-none focus:outline-none text-transparent caret-gray-800`}
             />
         </div>

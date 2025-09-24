@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../../firebase/config';
-import { collection, query, where, getDocs, doc, updateDoc, writeBatch, setDoc, serverTimestamp, arrayUnion, getCountFromServer } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, writeBatch, serverTimestamp, arrayUnion, getCountFromServer } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import Icon from '../ui/Icon';

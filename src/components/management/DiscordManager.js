@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
@@ -13,13 +13,7 @@ const DiscordManager = ({ community, setModalMessage, setConfirmation }) => {
     const [newClassName, setNewClassName] = useState('');
     const [isUpdatingClasses, setIsUpdatingClasses] = useState(false);
 
-    useEffect(() => {
-        if (community.discordServerId && channels.length === 0) {
-            fetchDiscordChannels(true);
-        }
-    }, [community.discordServerId]);
-    
-    const fetchDiscordChannels = async (isSilent = false) => {
+    const fetchDiscordChannels = useCallback(async (isSilent = false) => {
         if (!community.discordServerId) {
             if (!isSilent) setModalMessage('Please set a Discord Server ID in the community settings first.');
             return;
@@ -36,8 +30,14 @@ const DiscordManager = ({ community, setModalMessage, setConfirmation }) => {
         } finally {
             setIsFetchingChannels(false);
         }
-    };
+    }, [community.discordServerId, setModalMessage]);
 
+    useEffect(() => {
+        if (community.discordServerId && channels.length === 0) {
+            fetchDiscordChannels(true);
+        }
+    }, [community.discordServerId, channels.length, fetchDiscordChannels]);
+    
     const handleChannelMappingChange = (className, selectedChannelId) => {
         setDiscordChannelMapping(prev => {
             const newMapping = { ...prev };

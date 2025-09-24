@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/config';
-import { doc, updateDoc, collection, query, where, getDocs, documentId, writeBatch } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, documentId, writeBatch } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { deleteCommunityAsAdmin } from '../../firebase/community';
 import Spinner from '../ui/Spinner';
@@ -15,7 +15,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
   const [description, setDescription] = useState(communityToEdit.description || '');
   const [bannerImageUrl, setBannerImageUrl] = useState(communityToEdit.bannerImageUrl || '');
   const [profileImageUrl, setProfileImageUrl] = useState(communityToEdit.profileImageUrl || '');
-  // ❌ 1. Remove themeColor state
   const [discordServerId, setDiscordServerId] = useState(communityToEdit.discordServerId || '');
   const [suggestedRanks, setSuggestedRanks] = useState([]);
   const [isFetchingRanks, setIsFetchingRanks] = useState(false);
@@ -55,17 +54,40 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
   const slugify = (text) => {
     return text.toString().toLowerCase()
         .replace(/\s+/g, '-')
-        .replace(/[^\w\-]+/g, '')
-        .replace(/\-\-+/g, '-')
+        .replace(/[^\w-]+/g, '')
+        .replace(/--+/g, '-')
         .replace(/^-+/, '')
         .replace(/-+$/, '');
   };
+
+  const fetchDiscordRanks = useCallback(async (isSilent = false) => {
+    if (!discordServerId) {
+      if (!isSilent) setModalMessage('Please enter a Discord Server ID.');
+      return;
+    }
+    setIsFetchingRanks(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/getDiscordRoles?serverId=${discordServerId}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch ranks: ${errorText}`);
+      }
+      const fetchedRanks = await response.json();
+      setSuggestedRanks(fetchedRanks);
+    } catch (error) {
+      console.error('Error fetching Discord ranks:', error);
+      if (!isSilent) setModalMessage(error.message);
+    } finally {
+      setIsFetchingRanks(false);
+    }
+  }, [discordServerId, setModalMessage]);
 
   useEffect(() => {
     if (discordServerId) {
       fetchDiscordRanks(true);
     }
-  }, [discordServerId]);
+  }, [discordServerId, fetchDiscordRanks]);
 
   const handleRankChange = (index, field, value) => {
     const newRanks = [...ranks];
@@ -107,29 +129,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
     dragItem.current = null;
     dragOverItem.current = null;
     setRanks(_ranks);
-  };
-
-  const fetchDiscordRanks = async (isSilent = false) => {
-    if (!discordServerId) {
-      if (!isSilent) setModalMessage('Please enter a Discord Server ID.');
-      return;
-    }
-    setIsFetchingRanks(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/getDiscordRoles?serverId=${discordServerId}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to fetch ranks: ${errorText}`);
-      }
-      const fetchedRanks = await response.json();
-      setSuggestedRanks(fetchedRanks);
-    } catch (error) {
-      console.error('Error fetching Discord ranks:', error);
-      if (!isSilent) setModalMessage(error.message);
-    } finally {
-      setIsFetchingRanks(false);
-    }
   };
 
   const getTextColorForBackground = hexColor => {
@@ -197,7 +196,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
             description,
             bannerImageUrl,
             profileImageUrl,
-            // ❌ 2. Remove themeColor from the update object
             ranks: ranksToSave,
             defaultRankName,
             discordServerId,
@@ -303,11 +301,8 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
           <div className="mt-2"><InfoBox /></div>
         </div>
         
-        {/* ❌ 3. Remove the theme color div from the JSX */}
-
         <div>
           <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Discord Integration</h3>
-          {/* ... Discord Integration JSX remains the same ... */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <a
               href="https://discord.com/oauth2/authorize?client_id=1407474623511269427&permissions=268435456&integration_type=0&scope=bot"
@@ -368,7 +363,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
 
         <div>
             <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Community Ranks</h3>
-             {/* ... Ranks JSX remains the same ... */}
             <div className="p-3 mb-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800 rounded-r-lg">
                 <p className="text-sm">'Owner' and 'Moderator' are fixed ranks. You can add and reorder custom ranks below them.</p>
             </div>

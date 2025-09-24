@@ -8,9 +8,7 @@ import {
     updateDoc,
     increment,
     where,
-    doc,
-    writeBatch,
-    setDoc
+    writeBatch
 } from 'firebase/firestore';
 import { db } from './config';
 

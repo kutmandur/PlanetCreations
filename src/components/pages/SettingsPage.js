@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { db, auth } from '../../firebase/config';
-import { doc, getDoc, updateDoc, collection, getDocs, setDoc, writeBatch, deleteField, query, where, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, deleteUser, getIdToken, sendEmailVerification } from 'firebase/auth';
+import { db } from '../../firebase/config';
+import { doc, getDoc, updateDoc, collection, getDocs, setDoc, deleteField, query, where, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, getIdToken, sendEmailVerification } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
 import { joinCommunity } from '../../firebase/community';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
-import Spinner from '../ui/Spinner';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);

@@ -94,6 +94,7 @@ const SubmissionItem = ({ submission, members, community, eventData, eventId, is
     );
 };
 
+const TABS = ['Submissionlist', 'Groups', 'Stats'];
 
 const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) => {
     const { eventId } = useParams();
@@ -107,7 +108,6 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
     const [reactionCounts, setReactionCounts] = useState({});
     const [isSyncingReactions, setIsSyncingReactions] = useState(false);
 
-    const TABS = ['Submissionlist', 'Groups', 'Stats'];
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -210,10 +210,7 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
             gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
             gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
         }
-    }, [activeTab, TABS, loading]);
-
-    const now = new Date();
-    const isVotingOver = eventData?.voteEndDate?.toDate() < now;
+    }, [activeTab, loading]);
 
     const filteredAndSortedSubmissions = useMemo(() => {
         let filtered = [...submissions];
@@ -441,17 +438,6 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
         setGroupAssignments(prev => ({ ...prev, ...newAssignments }));
         setModalMessage(`${newGroups.length} group(s) created automatically. ${sortedSubs.length} creation(s) remain unassigned.`);
         setIsAutoGroupModalOpen(false);
-    };
-
-    const getTextColorForBackground = (hexColor) => {
-        if (!hexColor) return '#000000';
-        try {
-            const r = parseInt(hexColor.substr(1, 2), 16);
-            const g = parseInt(hexColor.substr(3, 2), 16);
-            const b = parseInt(hexColor.substr(5, 2), 16);
-            const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-            return (yiq >= 128) ? '#000000' : '#ffffff';
-        } catch(e) { return '#000000'; }
     };
 
     if (loading || !eventData || !community) return <Spinner />;

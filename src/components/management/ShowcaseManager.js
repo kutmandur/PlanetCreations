@@ -101,19 +101,6 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
             setModalMessage(`Error removing from group: ${error.message}`);
         }
     };
-    
-    const handleAddShowcaseVideo = async (creationId) => {
-        const videoUrl = prompt("Please enter the YouTube video URL for the showcase:");
-        if (!videoUrl) return;
-        const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
-        try {
-            await updateDoc(linkRef, { showcaseVideoUrl: videoUrl });
-            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: videoUrl } : c));
-            setModalMessage("Showcase video added successfully.");
-        } catch (error) {
-            setModalMessage(`Error adding showcase video: ${error.message}`);
-        }
-    };
 
     const handleAddVideoToGroup = async (group) => {
         const videoUrl = prompt(`Enter the YouTube video URL for all creations in the "${group.name}" group:`);
