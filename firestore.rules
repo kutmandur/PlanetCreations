@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Helper Functions ---
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isLoggedIn() && request.auth.token.role == 'admin';
+    }
+    function isModerator() {
+      return isLoggedIn() && (request.auth.token.role == 'moderator' || request.auth.token.role == 'admin');
+    }
+    function isInfluencer() {
+      return isLoggedIn() && request.auth.token.role == 'influencer';
+    }
+    function isCommunityStaff(communityId) {
+      let memberPath = /databases/$(database)/documents/communitys/$(communityId)/members/$(request.auth.uid);
+      return isLoggedIn() && exists(memberPath) && get(memberPath).data.roles.hasAny(['owner', 'moderator']);
+    }
+
+    // --- Rules for Collections ---
+
+    match /events/{eventId} {
+      allow read: if true;
+
+      // ✅ FIX: Separated 'write' into specific create, update, and delete rules.
+      // This ensures the correct variables are used for each operation.
+      allow create: if isLoggedIn() && (isCommunityStaff(request.resource.data.communityId) || isModerator());
+      allow update: if isLoggedIn() && (isCommunityStaff(resource.data.communityId) || isModerator());
+      allow delete: if isLoggedIn() && (isCommunityStaff(resource.data.communityId) || isModerator());
+      
+      match /voters/{userId} {
+        allow read: if true;
+        allow create: if isOwner(userId);
+        allow delete: if isCommunityStaff(get(/databases/$(database)/documents/events/$(eventId)).data.communityId) || isModerator();
+      }
+    }
+
+    match /communitys/{communityId} {
+      allow read: if true;
+      allow create: if isInfluencer() || isModerator();
+      allow update, delete: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+
+      match /members/{userId} {
+        allow read: if true;
+        allow create: if isLoggedIn() && isOwner(userId);
+        allow delete: if isLoggedIn() && (isOwner(userId) || get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+        allow update: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin() || isOwner(userId));
+      }
+      match /creations/{creationId} {
+        allow read: if true;
+        allow create: if isLoggedIn();
+        allow update, delete: if isLoggedIn() && (isCommunityStaff(communityId) || isModerator());
+      }
+    }
+
+    match /creations/{creationId} {
+      allow read: if true;
+      allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
+      allow delete: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
+
+      match /votes/{userId} {
+        allow read: if true;
+        allow create: if isLoggedIn() && isOwner(userId) && (
+            request.resource.data.type != 'event_vote' ||
+            get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.voteType == 'multiple' ||
+            (
+                get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.voteType == 'single' &&
+                !exists(/databases/$(database)/documents/events/$(request.resource.data.eventId)/voters/$(userId))
+            )
+        );
+        allow delete: if isOwner(userId);
+      }
+      
+      match /{subcollection}/{docId} {
+        allow read: if true;
+        allow write: if isLoggedIn();
+      }
+    }
+    
+    match /profiles/{userId} {
+      allow read: if true;
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+
+      match /communityMemberships/{communityId} {
+        allow read: if true;
+        allow write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && request.resource.data.role == 'user';
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+
+      match /notifications/{notificationId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      match /following/{creationId} {
+        allow read, write: if isOwner(userId);
+      }
+      match /reportedItems/{creationId} {
+        allow read, write: if isOwner(userId);
+        allow delete: if isModerator();
+      }
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isLoggedIn();
+    }
+    
+    match /dlcs/{gameId} {
+        allow read: if isLoggedIn();
+        allow write: if isAdmin();
+    }
+    match /categories/{gameId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /tags/{tagId} {
+      allow read: if true;
+      allow write: if isModerator();
+    }
+    match /mods/{modId} {
+      allow read: if true;
+      allow write: if isModerator();
+    }
+    match /meta/{docId} {
+        allow read: if true;
+        allow write: if isModerator();
+    }
+    match /reports/{reportId} {
+      allow create: if isLoggedIn();
+      allow list, get: if isModerator();
+      allow update, delete: if isModerator();
+    }
+    match /applications/{userId} {
+      allow read, delete: if isAdmin();
+      allow create: if isLoggedIn() && isOwner(userId);
+    }
+  }
+}

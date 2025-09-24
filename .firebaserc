@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "planetcreationsdotnet"
+  },
+  "targets": {
+    "planetcreationsdotnet": {
+      "hosting": {
+        "live": [
+          "planetcreationsdotnet"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
