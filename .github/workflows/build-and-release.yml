@@ -8,6 +8,10 @@ on:
 jobs:
   release:
     runs-on: windows-latest
+    
+    # Add this permissions block
+    permissions:
+      contents: write
 
     steps:
       - name: Check out git repository
@@ -37,6 +41,5 @@ jobs:
       - name: Build and release Electron app
         uses: samuelmeuli/action-electron-builder@v1
         with:
-          # The token must be passed as an input with the name `github_token`
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release: true
