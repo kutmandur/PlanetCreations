@@ -1,0 +1,83 @@
+{
+  "name": "planet-creation-net",
+  "version": "1.0.2",
+  "description": "PlanetCreations Desktop Client",
+  "author": "PlanetCreations",
+  "private": true,
+  "main": "electron/main.js",
+  "homepage": "./",
+  "dependencies": {
+    "@tanstack/react-query": "^5.89.0",
+    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/user-event": "^13.5.0",
+    "adm-zip": "^0.5.16",
+    "firebase": "^10.12.2",
+    "react": "^18.3.1",
+    "react-beautiful-dnd": "^13.1.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.23.1",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.0.1",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
+    "wait-on": "^7.2.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "electron-dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && electron .\"",
+    "package": "cross-env GH_TOKEN=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 npm run build && electron-builder"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "build": {
+    "extends": null,
+    "appId": "com.planetcreations.app",
+    "productName": "PlanetCreations Client",
+    "files": [
+      "build/**/*",
+      "electron/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "kutmandur",
+      "repo": "PlanetCreations",
+      "private": true
+    },
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    }
+  }
+}

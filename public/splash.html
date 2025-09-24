@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome to PlanetCreations</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #1f2937; /* gray-800 */
+            color: #f9fafb; /* gray-50 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            text-align: center;
+        }
+        .container {
+            max-width: 600px;
+        }
+        .logo {
+            width: 128px;
+            height: 128px;
+            margin-bottom: 2rem;
+        }
+        h1 {
+            font-size: 2.25rem;
+            font-weight: bold;
+            color: #ffffff;
+        }
+        p {
+            color: #d1d5db; /* gray-300 */
+            margin-bottom: 2.5rem;
+        }
+        .button-container {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+        }
+        .button {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+            min-width: 200px;
+        }
+        .button:hover {
+            transform: scale(1.05);
+        }
+        .button-online {
+            background-color: #3b82f6; /* blue-500 */
+            color: white;
+        }
+        .button-offline {
+            background-color: #f59e0b; /* amber-500 */
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <img src="./logo.png" alt="PlanetCreations Logo" class="logo">
+        <h1>Welcome to PlanetCreations</h1>
+        <p>Choose how you want to get started.</p>
+        <div class="button-container">
+            <button class="button button-online" onclick="selectMode('online')">
+                Online Workshop
+            </button>
+            <button class="button button-offline" onclick="selectMode('offline')">
+                Offline Manager
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Diese Funktion ruft die 'selectMode'-Funktion auf, die wir im preload.js-Skript bereitstellen.
+        function selectMode(mode) {
+            window.electronAPI.selectMode(mode);
+        }
+    </script>
+</body>
+</html>

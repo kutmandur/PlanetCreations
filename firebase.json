@@ -1,0 +1,50 @@
+{
+  "hosting": {
+    "target": "live",
+    "public": "build",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": "api"
+      },
+      {
+        "source": "/creation/**",
+        "function": "api"
+      },
+      {
+        "source": "/profile/**",
+        "function": "api"
+      },
+      {
+        "source": "/community/**",
+        "function": "api"
+      },
+      {
+        "source": "/event/**",
+        "function": "api"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ],
+      "runtime": "nodejs20"
+    }
+  ]
+}

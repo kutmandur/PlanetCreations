@@ -1,0 +1,31 @@
+html, body, #root {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  overflow-y: scroll; /* This line prevents the page from jumping */
+}
+
+/* Add the updated custom rollercoaster animation styles below */
+@layer utilities {
+  @keyframes coaster-spin {
+    0% {
+      /* Uses a CSS variable for a dynamic animation path */
+      transform: rotate(0deg) translateX(var(--coaster-radius)) rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg) translateX(var(--coaster-radius)) rotate(-360deg);
+    }
+  }
+
+  .animate-coaster-spin {
+    animation: coaster-spin 1.5s linear infinite;
+  }
+}
