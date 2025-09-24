@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import BackupNoteModal from '../ui/BackupNoteModal';
-
-// --- HILFSFUNKTIONEN & KLEINE UI-KOMPONENTEN ---
 
 function formatBytes(bytes, decimals = 2) {
     if (!+bytes) return '0 Bytes';
@@ -22,17 +20,23 @@ const GlobalLoader = ({ message }) => (
     </div>
 );
 
-const ToggleSwitch = ({ isToggled, onToggle, labels }) => (
-    <div className="flex items-center space-x-3">
-        {labels && <span className={`font-semibold text-sm ${!isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.off}</span>}
-        <div onClick={onToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${isToggled ? 'bg-green-500' : 'bg-gray-600'}`}>
-            <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${isToggled ? 'translate-x-6' : 'translate-x-0'}`}></div>
+const ToggleSwitch = ({ isToggled, onToggle, labels }) => {
+    return (
+        <div className="flex items-center space-x-3">
+            {labels && <span className={`font-semibold text-sm ${!isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.off}</span>}
+            <div
+                onClick={onToggle}
+                className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${isToggled ? 'bg-green-500' : 'bg-gray-600'}`}
+            >
+                <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${isToggled ? 'translate-x-6' : 'translate-x-0'}`}></div>
+            </div>
+            {labels && <span className={`font-semibold text-sm ${isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.on}</span>}
         </div>
-        {labels && <span className={`font-semibold text-sm ${isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.on}</span>}
-    </div>
-);
+    );
+};
 
 const SubHeader = ({ gameTabs, activeGame, setActiveGame, gameTabRefs, gameGliderRef, fileTypeTabs, activeTab, setActiveTab, fileTypeTabRefs, fileTypeGliderRef, activeGameColor }) => {
+    
     useEffect(() => {
         if (!gameTabRefs.current.length || !gameGliderRef.current) return;
         const activeGameIndex = gameTabs.findIndex(tab => tab.id === activeGame);
@@ -59,196 +63,188 @@ const SubHeader = ({ gameTabs, activeGame, setActiveGame, gameTabRefs, gameGlide
 
     return (
         <div className="flex-shrink-0">
-            <div className="p-2 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner"><div ref={gameGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{gameTabs.map((tab, index) => (<button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setActiveGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeGame === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
-            <div className="p-4 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 p-1 rounded-full mx-auto"><div ref={fileTypeGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{fileTypeTabs.map((tab, index) => (<button key={tab.id} ref={el => fileTypeTabRefs.current[index] = el} onClick={() => setActiveTab(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-semibold text-sm ${ activeTab === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
+            <div className="p-2 flex items-center justify-center">
+                <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner">
+                    <div ref={gameGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
+                    {gameTabs.map((tab, index) => (
+                        <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setActiveGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeGame === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>
+                            {tab.name}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <div className="p-4 flex items-center justify-center">
+                <div className="relative flex items-center bg-gray-900 p-1 rounded-full mx-auto">
+                    <div ref={fileTypeGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
+                    {fileTypeTabs.map((tab, index) => (
+                        <button key={tab.id} ref={el => fileTypeTabRefs.current[index] = el} onClick={() => setActiveTab(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-semibold text-sm ${ activeTab === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>
+                            {tab.name}
+                        </button>
+                    ))}
+                </div>
+            </div>
         </div>
     );
 };
 
 const FilterControls = ({ searchTerm, setSearchTerm, sortOption, setSortOption, sortOptions, showBackupAll, onBackupAll, showBackupSelected, onBackupSelected, selectedCount = 0, showRestoreSelected, onRestoreSelected }) => (
     <div className="px-6 py-4 flex items-center justify-between flex-shrink-0 bg-gray-800">
-        <div className="flex-1 flex items-center space-x-2">{showBackupAll && (<button onClick={onBackupAll} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Backup All</button>)}{showBackupSelected && (<button onClick={onBackupSelected} disabled={selectedCount === 0} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed">Backup Selected ({selectedCount})</button>)}{showRestoreSelected && (<button onClick={onRestoreSelected} disabled={selectedCount === 0} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed">Restore Selected ({selectedCount})</button>)}</div>
-        <div className="relative w-1/3 flex-1 mx-4"><span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><Icon path={ICONS.search} className="w-5 h-5 text-gray-400" /></span><input type="text" placeholder="Search by name..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-gray-700 text-white rounded-md pl-10 pr-8 py-1.5 w-full outline-none focus:ring-2 focus:ring-blue-500" />{searchTerm && (<button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white"><Icon path={ICONS.xMark} className="w-5 h-5" /></button>)}</div>
-        <div className="flex items-center flex-1 justify-end"><label htmlFor="sort-select" className="text-sm font-semibold text-gray-400 mr-3">Sort by:</label><select id="sort-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)} className="bg-gray-700 text-white rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 appearance-none">{sortOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
+        <div className="flex-1 flex items-center space-x-2">
+            {showBackupAll && (
+                <button 
+                    onClick={onBackupAll}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm"
+                >
+                    Backup All
+                </button>
+            )}
+             {showBackupSelected && (
+                <button 
+                    onClick={onBackupSelected}
+                    disabled={selectedCount === 0}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Backup Selected ({selectedCount})
+                </button>
+            )}
+            {showRestoreSelected && (
+                <button
+                    onClick={onRestoreSelected}
+                    disabled={selectedCount === 0}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Restore Selected ({selectedCount})
+                </button>
+            )}
+        </div>
+        <div className="relative w-1/3 flex-1 mx-4">
+             <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Icon path={ICONS.search} className="w-5 h-5 text-gray-400" />
+            </span>
+            <input
+                type="text"
+                placeholder="Search by name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="bg-gray-700 text-white rounded-md pl-10 pr-8 py-1.5 w-full outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {searchTerm && (
+                <button 
+                    onClick={() => setSearchTerm('')} 
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white"
+                >
+                    <Icon path={"M6 18L18 6M6 6l12 12"} className="w-5 h-5" />
+                </button>
+            )}
+        </div>
+        <div className="flex items-center flex-1 justify-end">
+            <label htmlFor="sort-select" className="text-sm font-semibold text-gray-400 mr-3">Sort by:</label>
+            <select
+                id="sort-select"
+                value={sortOption}
+                onChange={(e) => setSortOption(e.target.value)}
+                className="bg-gray-700 text-white rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+            >
+                {sortOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+        </div>
     </div>
 );
 
-// --- MODAL-KOMPONENTEN ---
-
-const MEDIA_TYPES = {
-    images: ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
-    videos: ['.mp4', '.webm', '.mov'],
-    audio: ['.mp3', '.wav', '.ogg'],
-};
-
 const MediaPreviewModal = ({ file, onClose }) => {
-    const [mediaSrc, setMediaSrc] = useState(null);
+    const [dataUrl, setDataUrl] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const getFileExtension = (filename) => {
+        const lastDot = filename.lastIndexOf('.');
+        if (lastDot === -1) return '';
+        return filename.substring(lastDot).toLowerCase();
+    };
+
+    const fileType = useMemo(() => {
+        const ext = getFileExtension(file.name);
+        if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(ext)) return 'image';
+        if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video';
+        if (['.mp3', '.ogg', '.wav'].includes(ext)) return 'audio';
+        return 'unsupported';
+    }, [file.name]);
+    
     useEffect(() => {
-        if (file && window.electronAPI) {
-            setLoading(true);
-            setError(null);
-            setMediaSrc(null);
-
-            const fetchMedia = async () => {
-                try {
-                    // KORRIGIERT: Der korrekte Funktionsname aus Ihrer preload.js wird jetzt verwendet.
-                    const dataUrl = await window.electronAPI.readFileAsDataURL(file.path);
-                    if (dataUrl) {
-                        setMediaSrc(dataUrl);
-                    } else {
-                        setError('Could not load media file.');
-                    }
-                } catch (e) {
-                    console.error('Error fetching media as data URL:', e);
-                    setError(`Error: ${e.message}`);
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            fetchMedia();
-        }
+        const loadFile = async () => {
+            if (!file || !window.electronAPI) return;
+            setLoading(true); setError(null);
+            try {
+                const url = await window.electronAPI.readFileAsDataURL(file.path);
+                if (url) { setDataUrl(url); } else { setError('Could not load file for preview.'); }
+            } catch (err) { setError(`An error occurred: ${err.message}`);
+            } finally { setLoading(false); }
+        };
+        loadFile();
     }, [file]);
 
-    if (!file) return null;
-
-    let content;
-    if (loading) {
-        content = <Spinner />;
-    } else if (error) {
-        content = <p className="text-red-400">{error}</p>;
-    } else if (mediaSrc) {
-        const fileExtension = file.path.split('.').pop().toLowerCase();
-        if (MEDIA_TYPES.images.some(ext => `.${fileExtension}` === ext)) {
-            content = <img src={mediaSrc} alt={file.name} className="max-w-full max-h-[80vh] object-contain" />;
-        } else if (MEDIA_TYPES.videos.some(ext => `.${fileExtension}` === ext)) {
-            content = <video src={mediaSrc} controls autoPlay className="max-w-full max-h-[80vh]"></video>;
-        } else if (MEDIA_TYPES.audio.some(ext => `.${fileExtension}` === ext)) {
-            content = <audio src={mediaSrc} controls autoPlay></audio>;
-        } else {
-            content = <p className="text-white">Cannot preview this file type.</p>;
-        }
-    } else {
-        content = <p className="text-white">No media to display.</p>;
-    }
-
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[60]" onClick={onClose}>
-            <div className="bg-gray-800 p-4 rounded-lg relative shadow-2xl min-w-[300px] min-h-[200px] flex flex-col" onClick={e => e.stopPropagation()}>
-                <button onClick={onClose} className="absolute -top-3 -right-3 bg-red-600 hover:bg-red-700 rounded-full p-1 text-white z-10">
-                     <Icon path={ICONS.xMark} className="w-5 h-5" />
-                </button>
-                <h4 className="text-white mb-2 font-semibold truncate max-w-lg">{file.name}</h4>
-                <div className="flex-grow flex items-center justify-center">
-                    {content}
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex justify-center items-center z-[60] p-4" onClick={onClose}>
+            <div className="bg-gray-900 p-4 rounded-lg shadow-xl max-w-4xl max-h-[80vh] w-full border border-gray-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-3 text-white truncate" title={file.name}>Preview: {file.name}</h3>
+                <div className="flex-grow flex items-center justify-center bg-black rounded">
+                    {loading && <Spinner />}
+                    {error && <p className="text-red-400">{error}</p>}
+                    {!loading && !error && dataUrl && (
+                        <>
+                            {fileType === 'image' && <img src={dataUrl} alt={file.name} className="max-w-full max-h-[70vh] object-contain"/>}
+                            {fileType === 'video' && <video src={dataUrl} controls autoPlay className="max-w-full max-h-[70vh] outline-none"/>}
+                            {fileType === 'audio' && <audio src={dataUrl} controls autoPlay className="w-full"/>}
+                            {fileType === 'unsupported' && <p className="text-yellow-400">Preview for this file type is not supported.</p>}
+                        </>
+                    )}
                 </div>
+                 <button onClick={onClose} className="mt-4 bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg self-center">Close</button>
             </div>
         </div>
     );
 };
 
+const MEDIA_TYPES = {
+    pictures: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'],
+    videos: ['.mp4', '.webm', '.mov', '.avi', '.mkv'],
+    audio: ['.mp3', '.ogg', '.wav', '.flac'],
+};
+const TABS = [{id: 'all', name: 'All'}, {id: 'pictures', name: 'Pictures'}, {id: 'videos', name: 'Videos'}, {id: 'audio', name: 'Audio'}];
 
-const FilterTabs = ({ activeTab, setActiveTab }) => {
-    const tabs = ['all', 'images', 'videos', 'audio'];
-    return (
-        <div className="flex items-center justify-center space-x-2 mb-4">
-            {tabs.map(tab => (
-                <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
-                        activeTab === tab
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+const FilterTabs = ({ activeTab, setActiveTab }) => (
+    <div className="w-full flex justify-center mb-2">
+        <div className="flex items-center bg-gray-800 rounded-full p-1 shadow-inner">
+            {TABS.map(tab => (
+                 <button 
+                    key={tab.id} 
+                    onClick={() => setActiveTab(tab.id)} 
+                    className={`py-1 px-4 rounded-full text-sm font-semibold transition-colors duration-300 ${activeTab === tab.id ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+                 >
+                    {tab.name}
                 </button>
             ))}
         </div>
-    );
-};
+    </div>
+);
 
 const MediaList = React.forwardRef(({ title, files, action, actionIcon, onPreviewClick }, ref) => (
-    <div className="bg-gray-800 p-3 rounded-lg border border-gray-700 flex flex-col h-[50vh]">
-        <h4 className="text-lg font-semibold mb-2 text-white sticky top-0 bg-gray-800 py-1">{title}</h4>
-        <div ref={ref} className="overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex-grow">
-            {files.length > 0 ? (
-                <ul className="space-y-2">
-                    {files.map(mediaFile => (
-                        <li key={mediaFile.path} className="flex items-center justify-between bg-gray-700 p-2 rounded-md">
-                            <span className="truncate text-sm text-gray-300 flex-grow" title={mediaFile.name}>{mediaFile.name}</span>
-                            <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
-                                <button onClick={() => onPreviewClick(mediaFile)} className="text-gray-400 hover:text-white p-1" title="Preview">
-                                     <Icon path={ICONS.eye} className="w-4 h-4" />
-                                </button>
-                                <button onClick={() => action(mediaFile)} className="bg-gray-600 hover:bg-gray-500 text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-sm">
-                                    {actionIcon}
-                                </button>
-                            </div>
-                        </li>
-                    ))}
-                </ul>
-            ) : (
-                <p className="text-gray-500 text-center text-sm pt-4">No files.</p>
-            )}
+    <div>
+        <h4 className="font-semibold mb-2">{title} ({files.length})</h4>
+        <div ref={ref} className="h-64 overflow-auto bg-gray-800 p-2 rounded-lg border border-gray-700">
+            {files.length === 0 && <p className="text-center text-gray-500 text-sm mt-4">No files</p>}
+            {files.map(media => (
+                <div key={media.path} className="flex items-center justify-between p-1.5 rounded hover:bg-gray-700 group">
+                    <div className="flex items-center min-w-0">
+                       <button onClick={() => onPreviewClick(media)} className="mr-2 text-gray-400 hover:text-white flex-shrink-0"><Icon path={ICONS.eye} className="w-4 h-4" /></button>
+                       <span className="text-xs truncate" title={media.name}>{media.name}</span>
+                    </div>
+                    <button onClick={() => action(media)} className="text-xl font-bold ml-2 leading-none text-gray-400 group-hover:text-white opacity-50 group-hover:opacity-100">{actionIcon}</button>
+                </div>
+            ))}
         </div>
     </div>
 ));
-MediaList.displayName = 'MediaList';
-
-
-const DeleteConfirmationModal = ({ item, title, warning, onConfirm, onCancel }) => {
-    const [confirmText, setConfirmText] = useState('');
-    const canConfirm = confirmText.toLowerCase() === 'delete';
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
-            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
-                <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
-                <p className="mb-4">{warning}</p>
-                <input
-                    type="text"
-                    value={confirmText}
-                    onChange={(e) => setConfirmText(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-600 rounded-md p-2"
-                    placeholder='Type "DELETE" to confirm'
-                />
-                <div className="flex justify-end space-x-4 mt-6">
-                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
-                    <button onClick={onConfirm} disabled={!canConfirm} className="bg-red-600 hover:bg-red-700 font-bold py-2 px-6 rounded-lg disabled:opacity-50">Confirm Delete</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const DeleteMediaModal = ({ file, onConfirm, onCancel }) => {
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
-            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-xl" onClick={e => e.stopPropagation()}>
-                <h2 className="text-xl font-bold mb-2">Delete Media for: {file.name}</h2>
-                <p className="text-gray-400 mb-6">Choose your deletion method. This action cannot be undone.</p>
-                <div className="space-y-4">
-                    <button onClick={() => onConfirm('safe')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
-                        <h3 className="font-bold text-green-400">Safe Delete (Recommended)</h3>
-                        <p className="text-sm text-gray-300">Deletes associated media files that are **NOT** used by any other of your creations.</p>
-                    </button>
-                    <button onClick={() => onConfirm('force')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
-                        <h3 className="font-bold text-red-400">Force Delete</h3>
-                        <p className="text-sm text-gray-300">Deletes **ALL** associated media files, even if they are used by your other creations. This might break other blueprints.</p>
-                    </button>
-                </div>
-                 <div className="flex justify-end mt-6">
-                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
-                </div>
-            </div>
-        </div>
-    );
-};
 
 const MediaSnapshotModal = ({ file, gameName, onClose, onSave }) => {
     const [associatedMedia, setAssociatedMedia] = useState([]);
@@ -349,7 +345,7 @@ const MediaSnapshotModal = ({ file, gameName, onClose, onSave }) => {
                             <input type="text" placeholder="Search in both lists..." value={mediaSearchTerm} onChange={(e) => setMediaSearchTerm(e.target.value)} className="bg-gray-700 text-white rounded-md pl-10 pr-8 py-1.5 w-full outline-none focus:ring-2 focus:ring-blue-500" />
                             {mediaSearchTerm && ( 
                                 <button onClick={() => setMediaSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white">
-                                    <Icon path={ICONS.xMark} className="w-5 h-5" />
+                                    <Icon path={"M6 18L18 6M6 6l12 12"} className="w-5 h-5" />
                                 </button>
                             )}
                         </div>
@@ -371,89 +367,6 @@ const MediaSnapshotModal = ({ file, gameName, onClose, onSave }) => {
         </div>
     );
 };
-
-
-// --- LISTENDARSTELLUNG ---
-
-const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
-    if (!files || files.length === 0) {
-        return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
-    }
-    return (
-        <div className="space-y-3">
-            {files.map(file => {
-                const displayName = file.name.includes('-') ? file.name.split('-')[0] : file.name.replace(/\.[^/.]+$/, "");
-                const isInstalled = viewMode === 'media' && mediaStatus && mediaStatus[file.path] === 'installed';
-                const hasMedia = viewMode === 'media' && snapshotStatus && snapshotStatus[file.path];
-                const isBackingUp = viewMode === 'backup' && backingUpFile === file.path;
-                const isBackingUpMedia = viewMode === 'media' && backingUpMediaFile === file.path;
-                const baseName = file.name.replace(/\.[^/.]+$/, "");
-                const backupsForFile = allBackups ? allBackups[baseName] : null;
-                const lastBackupDate = backupsForFile && backupsForFile.length > 0 ? new Date(backupsForFile[0].backupDate) : null;
-                const isSelected = viewMode === 'backup' && selectedItems && selectedItems.has(file.path);
-
-                return (
-                    <div key={file.path} className={`rounded-lg p-3 flex items-center justify-between transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-l-4 border-green-500' : 'bg-gray-700 hover:bg-gray-600'}`}>
-                        {viewMode === 'backup' && (
-                            <div className="mr-4 flex-shrink-0">
-                                <input
-                                    type="checkbox"
-                                    className="h-5 w-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500"
-                                    checked={isSelected}
-                                    onChange={() => onToggleSelection(file.path)}
-                                />
-                            </div>
-                        )}
-                        <div className="flex items-center overflow-hidden flex-grow">
-                            <Icon path={ICONS.cog} className="w-6 h-6 text-gray-400 mr-4 flex-shrink-0" />
-                            <div className="truncate">
-                                <p className="font-semibold text-white truncate" title={file.name}>{displayName}</p>
-                                <p className="text-sm text-gray-500 truncate">{file.name}</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center space-x-6 flex-shrink-0 ml-4">
-                            <div className="text-center text-sm w-24">
-                                <p className="text-gray-400 text-xs">Size</p>
-                                <p className="font-semibold text-white">{formatBytes(file.size)}</p>
-                            </div>
-                            <div className="text-center text-sm w-32">
-                                <p className="text-gray-400 text-xs">Last Modified</p>
-                                <p className="font-semibold text-white">{new Date(file.modifiedAt).toLocaleString()}</p>
-                            </div>
-                            <div className="text-center text-sm w-32">
-                                <p className="text-gray-400 text-xs">Last Backup</p>
-                                <p className="font-semibold text-white">{lastBackupDate ? lastBackupDate.toLocaleString() : 'N/A'}</p>
-                            </div>
-                            <div className="flex space-x-2 items-center w-auto">
-                                {viewMode === 'backup' && (
-                                    <button onClick={() => onBackupClick(file)} disabled={isBackingUp} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm w-20 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
-                                        {isBackingUp ? '...' : 'Backup'}
-                                    </button>
-                                )}
-                                {viewMode === 'media' && (
-                                    <>
-                                        <button onClick={() => onBackupMediaClick(file)} disabled={!hasMedia || isBackingUpMedia} title="Backup associated media" className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-sm w-28 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
-                                            {isBackingUpMedia ? '...' : 'Backup Media'}
-                                        </button>
-                                        <button onClick={() => onManageMediaClick(file)} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded text-sm">
-                                            Manage Media
-                                        </button>
-                                        <button onClick={() => onDeleteMediaClick(file)} disabled={!hasMedia} title="Delete associated media" className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                                            Delete Media
-                                        </button>
-                                        <ToggleSwitch isToggled={isInstalled} onToggle={() => isInstalled ? onUninstallMedia(file) : onInstallMedia(file)} />
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                );
-            })}
-        </div>
-    );
-};
-
-// --- TAB-SPEZIFISCHE KOMPONENTEN ---
 
 const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader, refreshKey }) => {
     const [backupModalState, setBackupModalState] = useState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] });
@@ -505,8 +418,8 @@ const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subH
         });
     };
 
-    const handleBackupClick = (file) => { setBackupModalState({ isOpen: true, file: file, isBatch: false, selectedFiles: [] }); };
-    const handleBackupAllClick = () => { setBackupModalState({ isOpen: true, file: null, isBatch: true, selectedFiles: [] }); };
+    const handleBackupClick = (file) => { setBackupModalState({ isOpen: true, file: file, isBatch: false }); };
+    const handleBackupAllClick = () => { setBackupModalState({ isOpen: true, file: null, isBatch: true }); };
     const handleBackupSelectedClick = () => {
         const filesToBackup = processedFiles.filter(f => selectedFiles.has(f.path));
         setBackupModalState({ isOpen: true, file: null, isBatch: true, selectedFiles: filesToBackup });
@@ -579,6 +492,62 @@ const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subH
                         onToggleSelection={handleToggleSelection}
                     />
                 )}
+            </div>
+        </div>
+    );
+};
+
+const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
+    if (!files || files.length === 0) {
+        return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
+    }
+    return ( <div className="space-y-3"> {files.map(file => { const displayName = file.name.includes('-') ? file.name.split('-')[0] : file.name.replace(/\.[^/.]+$/, ""); const isInstalled = viewMode === 'media' && mediaStatus && mediaStatus[file.path] === 'installed'; const hasMedia = viewMode === 'media' && snapshotStatus && snapshotStatus[file.path]; const isBackingUp = viewMode === 'backup' && backingUpFile === file.path; const isBackingUpMedia = viewMode === 'media' && backingUpMediaFile === file.path; const baseName = file.name.replace(/\.[^/.]+$/, ""); const backupsForFile = allBackups ? allBackups[baseName] : null; const lastBackupDate = backupsForFile && backupsForFile.length > 0 ? new Date(backupsForFile[0].backupDate) : null; const isSelected = viewMode === 'backup' && selectedItems && selectedItems.has(file.path); return ( <div key={file.path} className={`rounded-lg p-3 flex items-center justify-between transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-l-4 border-green-500' : 'bg-gray-700 hover:bg-gray-600'}`}> {viewMode === 'backup' && ( <div className="mr-4 flex-shrink-0"> <input type="checkbox" className="h-5 w-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500" checked={isSelected} onChange={() => onToggleSelection(file.path)} /> </div> )} <div className="flex items-center overflow-hidden flex-grow"> <Icon path={ICONS.document} className="w-6 h-6 text-gray-400 mr-4 flex-shrink-0" /> <div className="truncate"> <p className="font-semibold text-white truncate" title={file.name}>{displayName}</p> <p className="text-sm text-gray-500 truncate">{file.name}</p> </div> </div> <div className="flex items-center space-x-6 flex-shrink-0 ml-4"> <div className="text-center text-sm w-24"> <p className="text-gray-400 text-xs">Size</p> <p className="font-semibold text-white">{formatBytes(file.size)}</p> </div> <div className="text-center text-sm w-32"> <p className="text-gray-400 text-xs">Last Modified</p> <p className="font-semibold text-white">{new Date(file.modifiedAt).toLocaleString()}</p> </div> <div className="text-center text-sm w-32"> <p className="text-gray-400 text-xs">Last Backup</p> <p className="font-semibold text-white">{lastBackupDate ? lastBackupDate.toLocaleString() : 'N/A'}</p> </div> <div className="flex space-x-2 items-center w-auto"> {viewMode === 'backup' && ( <button onClick={() => onBackupClick(file)} disabled={isBackingUp} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm w-20 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">{isBackingUp ? '...' : 'Backup'}</button> )} {viewMode === 'media' && ( <> {hasMedia && (<button onClick={() => onBackupMediaClick(file)} disabled={isBackingUpMedia} title="Backup associated media" className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-sm w-28 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">{isBackingUpMedia ? '...' : 'Backup Media'}</button>)} <button onClick={() => onManageMediaClick(file)} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded text-sm">Manage Media</button> {hasMedia && (<button onClick={() => onDeleteMediaClick(file)} title="Delete associated media" className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm">Delete Media</button>)} <ToggleSwitch isToggled={isInstalled} onToggle={() => isInstalled ? onUninstallMedia(file) : onInstallMedia(file)} /> </> )} </div> </div> </div> ); })} </div> );
+};
+
+const DeleteConfirmationModal = ({ item, title, warning, onConfirm, onCancel }) => {
+    const [confirmText, setConfirmText] = useState('');
+    const canConfirm = confirmText.toLowerCase() === 'delete';
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
+            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
+                <p className="mb-4">{warning}</p>
+                <input
+                    type="text"
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-600 rounded-md p-2"
+                    placeholder='Type "DELETE" to confirm'
+                />
+                <div className="flex justify-end space-x-4 mt-6">
+                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
+                    <button onClick={onConfirm} disabled={!canConfirm} className="bg-red-600 hover:bg-red-700 font-bold py-2 px-6 rounded-lg disabled:opacity-50">Confirm Delete</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const DeleteMediaModal = ({ file, onConfirm, onCancel }) => {
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
+            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-xl" onClick={e => e.stopPropagation()}>
+                <h2 className="text-xl font-bold mb-2">Delete Media for: {file.name}</h2>
+                <p className="text-gray-400 mb-6">Choose your deletion method. This action cannot be undone.</p>
+                <div className="space-y-4">
+                    <button onClick={() => onConfirm('safe')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
+                        <h3 className="font-bold text-green-400">Safe Delete (Recommended)</h3>
+                        <p className="text-sm text-gray-300">Deletes associated media files that are **NOT** used by any other of your creations.</p>
+                    </button>
+                    <button onClick={() => onConfirm('force')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
+                        <h3 className="font-bold text-red-400">Force Delete</h3>
+                        <p className="text-sm text-gray-300">Deletes **ALL** associated media files, even if they are used by your other creations. This might break other blueprints.</p>
+                    </button>
+                </div>
+                 <div className="flex justify-end mt-6">
+                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
+                </div>
             </div>
         </div>
     );
@@ -840,18 +809,14 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
     );
 };
 
-// --- HAUPT-WRAPPER-KOMPONENTE ---
-
 const ClientDashboard = () => {
     const [activeView, setActiveView] = useState('backup');
     const [backupRefreshKey, setBackupRefreshKey] = useState(0);
     const [scanResults, setScanResults] = useState(null);
     const [loading, setLoading] = useState(true);
     const [selectedPath, setSelectedPath] = useState(null);
-    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [globalLoader, setGlobalLoader] = useState({ isLoading: false, message: '' });
-    const settingsRef = useRef(null);
-    
+
     const GAME_TABS = useMemo(() => [ { id: 'Planet Coaster 2', name: 'Planet Coaster 2' }, { id: 'Planet Zoo', name: 'Planet Zoo' }, ], []);
     const FILE_TYPE_TABS = useMemo(() => {
         const baseTabs = [ { id: 'parks', name: 'Parks' }, { id: 'blueprints', name: 'Blueprints' }, { id: 'autosaves', name: 'Autosaves' }, ];
@@ -907,53 +872,9 @@ const ClientDashboard = () => {
         loadStoredPath();
     }, [handleScan]);
     
-    const handleSelectFolder = async () => {
-        if (window.electronAPI) {
-            const path = await window.electronAPI.selectFolder();
-            if (path) {
-                setSelectedPath(path);
-                handleScan(path);
-            }
-        }
-        setIsSettingsOpen(false);
-    };
-    
-    const handleOpenBackupFolder = () => {
-        window.electronAPI.openBackupFolder();
-        setIsSettingsOpen(false);
-    };
-    
-    const handleLoadExternalBackup = async () => {
-        const result = await window.electronAPI.loadExternalBackup();
-        alert(result.message);
-        if (result.success) {
-            handleBackupCreated();
-        }
-        setIsSettingsOpen(false);
-    };
-    
-    const handleImportMediaBackup = async () => {
-        const result = await window.electronAPI.importMediaBackup();
-        alert(result.message);
-        if (result.success) {
-            handleScan(selectedPath);
-        }
-        setIsSettingsOpen(false);
-    };
-
     const handleBackupCreated = () => {
         setBackupRefreshKey(key => key + 1);
     };
-    
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (settingsRef.current && !settingsRef.current.contains(event.target)) {
-                setIsSettingsOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
 
     const subHeaderProps = { gameTabs: GAME_TABS, activeGame, setActiveGame, gameTabRefs, gameGliderRef, fileTypeTabs: FILE_TYPE_TABS, activeTab, setActiveTab, fileTypeTabRefs, fileTypeGliderRef, activeGameColor };
     
@@ -988,34 +909,14 @@ const ClientDashboard = () => {
         <div className="h-full flex flex-col bg-gray-800 text-white overflow-hidden">
             {globalLoader.isLoading && <GlobalLoader message={globalLoader.message} />}
             
-            <div className="p-4 flex justify-between items-center flex-shrink-0">
-                <div className="flex-1"></div>
-                <div className="flex-1 flex justify-center">
-                    <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner">
-                        <div ref={mainGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
-                        {MAIN_TABS.map((tab, index) => (
-                            <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => setActiveView(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeView === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>
-                                {tab.name}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-                <div className="flex-1 flex justify-end">
-                    <div className="relative" ref={settingsRef}>
-                        <button onClick={() => setIsSettingsOpen(prev => !prev)} title="Settings" className="bg-gray-700 hover:bg-gray-600 text-white font-bold p-2 rounded-full">
-                            <Icon path={ICONS.cog} className="w-6 h-6" />
+            <div className="p-4 flex justify-center items-center flex-shrink-0">
+                 <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner">
+                    <div ref={mainGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
+                    {MAIN_TABS.map((tab, index) => (
+                        <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => setActiveView(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeView === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>
+                            {tab.name}
                         </button>
-                        {isSettingsOpen && (
-                            <div className="absolute top-full right-0 mt-2 w-64 bg-gray-700 border border-gray-600 rounded-lg shadow-xl z-50">
-                                <ul className="text-sm text-white">
-                                    <li onClick={handleSelectFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-t-lg">Change Game Files Path</li>
-                                    <li onClick={handleLoadExternalBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Creation Backup</li>
-                                    <li onClick={handleImportMediaBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Media Backup</li>
-                                    <li onClick={handleOpenBackupFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-b-lg">Open Backup Folder</li>
-                                </ul>
-                            </div>
-                        )}
-                    </div>
+                    ))}
                 </div>
             </div>
 

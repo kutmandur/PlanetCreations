@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import { db, auth } from '../../firebase/config';
 import { doc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -43,6 +43,9 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [loadingStats, setLoadingStats] = useState(true);
 
     const [isGenerating, setIsGenerating] = useState(false);
+    
+    // HIER IST DER FIX: useTransition Hook
+    const [isPending, startTransition] = useTransition();
 
     const GAME_TABS = useRef([
         { id: 'planet-coaster', name: 'Planet Coaster' },
@@ -154,6 +157,11 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         return () => { isMounted = false; };
     }, [activeTab, setModalMessage]);
 
+    const handleProfileClick = (userId) => {
+        startTransition(() => {
+            setPopoverView({ name: 'profile', userId: userId });
+        });
+    };
 
     const handleRoleChange = async (userId, newRole) => {
         const batch = writeBatch(db);
@@ -297,12 +305,12 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         switch (activeTab) {
             case 'User Management':
                 return (
-                    <div>
+                    <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>
                         <div className="mb-6">
                             <h2 className="text-2xl font-bold mb-4 text-center">Influencer Applications</h2>
                             {applications.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={handleApplication} onDeny={handleApplication} />)}
+                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} />)}
                                 </div>
                             ) : <p className="text-center text-gray-500">No pending applications.</p>}
                         </div>
@@ -323,7 +331,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                             {filteredUsers.map(user => (
                                                 <tr key={user.id} className="border-b hover:bg-gray-50">
                                                     <td className="p-2">
-                                                        <button onClick={() => setPopoverView({ name: 'profile', userId: user.id })} className="text-blue-500 hover:underline focus:outline-none font-semibold">{user.username || 'N/A'}</button>
+                                                        <button onClick={() => handleProfileClick(user.id)} className="text-blue-500 hover:underline focus:outline-none font-semibold">{user.username || 'N/A'}</button>
                                                     </td>
                                                     <td className="p-2">
                                                         <select value={user.role} onChange={(e) => handleRoleChange(user.id, e.target.value)} className="p-1 border rounded-md bg-white">
@@ -350,7 +358,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                     <div>
                         <div className="relative flex justify-center my-6">
                             <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
-                                <div ref={gameGliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-300 ease-in-out`} />
+                                <div ref={gameGliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
                                 {GAME_TABS.map((tab, index) => (
                                     <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
                                 ))}
