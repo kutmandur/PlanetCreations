@@ -43,7 +43,6 @@ const EventManager = React.lazy(() => import('./components/management/EventManag
 const LegalPage = React.lazy(() => import('./components/pages/LegalPage'));
 const ClientInfoPage = React.lazy(() => import('./components/pages/ClientInfoPage'));
 
-
 const queryClient = new QueryClient();
 
 const AppContent = () => {
@@ -75,7 +74,7 @@ const AppContent = () => {
     const [notifications, setNotifications] = useState([]);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
-    const [updateAvailable, setUpdateAvailable] = useState(false);
+    const [updateInfo, setUpdateInfo] = useState(null);
     const [updateDownloaded, setUpdateDownloaded] = useState(false);
 
     useEffect(() => {
@@ -139,11 +138,11 @@ const AppContent = () => {
         });
 
         if (window.electronAPI) {
-            window.electronAPI.onUpdateAvailable(() => {
-                setUpdateAvailable(true);
+            window.electronAPI.onUpdateInfoAvailable((info) => {
+                setUpdateInfo(info);
             });
             window.electronAPI.onUpdateDownloaded(() => {
-                setUpdateAvailable(false);
+                setUpdateInfo(null);
                 setUpdateDownloaded(true);
             });
         }
@@ -204,8 +203,16 @@ const AppContent = () => {
                     <p className="font-semibold">Update heruntergeladen. Jetzt neu starten, um zu installieren.</p>
                     <button onClick={() => window.electronAPI.restartApp()} className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100">Neu starten</button>
                 </div>
-            ) : updateAvailable && (
-                <div className="bg-blue-500 text-white p-2 text-center flex-shrink-0"><p>Ein neues Update ist verfügbar und wird im Hintergrund heruntergeladen...</p></div>
+            ) : updateInfo && (
+                <div className="bg-blue-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">
+                    <p className="font-semibold">Eine neue Version ({updateInfo.version}) ist verfügbar!</p>
+                    <button 
+                        onClick={() => window.electronAPI.openExternalLink(updateInfo.url)} 
+                        className="ml-4 bg-white text-blue-700 font-bold py-1 px-3 rounded hover:bg-blue-100"
+                    >
+                        Jetzt herunterladen
+                    </button>
+                </div>
             )}
 
             <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" />
@@ -221,9 +228,7 @@ const AppContent = () => {
                 <ErrorBoundary>
                     <Suspense fallback={<div className="h-full flex justify-center items-center"><Spinner /></div>}>
                         <Routes>
-                            {/* HIER WURDE DIE PROP 'user' HINZUGEFÜGT */}
                             <Route path="/client/dashboard" element={<ClientDashboard user={user} />} />
-                            
                             <Route path="/" element={<HomePage user={user} userProfile={userProfile} activeTab={activeTab} setActiveTab={setActiveTab} homeState={homeState} setHomeState={setHomeState} />} />
                             <Route path="/login" element={<AuthPage setModalMessage={setModalMessage} activeTab={activeTab} blacklist={blacklist} />} />
                             <Route path="/creation/:id" element={<CreationDetail user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setExternalLink={setExternalLink} setReportModal={setReportModal} />} />
