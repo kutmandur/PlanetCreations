@@ -2,10 +2,17 @@ import React, { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallba
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
-import BackupNoteModal from '../ui/BackupNoteModal';
 
-// --- HILFSFUNKTIONEN & KLEINE UI-KOMPONENTEN ---
+// Import der ausgelagerten Komponenten
+import GlobalLoader from '../ui/GlobalLoader';
+import ToggleSwitch from '../ui/ToggleSwitch';
+import BackupNoteModal from '../modals/BackupNoteModal';
+import DeleteConfirmationModal from '../modals/DeleteConfirmationModal';
+import DeleteMediaModal from '../modals/DeleteMediaModal';
+import MediaPreviewModal from '../modals/MediaPreviewModal';
+import MediaSnapshotModal from '../modals/MediaSnapshotModal';
 
+// --- HILFSFUNKTIONEN ---
 function formatBytes(bytes, decimals = 2) {
     if (!+bytes) return '0 Bytes';
     const k = 1024;
@@ -15,23 +22,7 @@ function formatBytes(bytes, decimals = 2) {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-const GlobalLoader = ({ message }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center z-[100]">
-        <Spinner />
-        {message && <p className="text-white text-lg mt-4 font-semibold">{message}</p>}
-    </div>
-);
-
-const ToggleSwitch = ({ isToggled, onToggle, labels }) => (
-    <div className="flex items-center space-x-3">
-        {labels && <span className={`font-semibold text-sm ${!isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.off}</span>}
-        <div onClick={onToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${isToggled ? 'bg-green-500' : 'bg-gray-600'}`}>
-            <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${isToggled ? 'translate-x-6' : 'translate-x-0'}`}></div>
-        </div>
-        {labels && <span className={`font-semibold text-sm ${isToggled ? 'text-white' : 'text-gray-400'}`}>{labels.on}</span>}
-    </div>
-);
-
+// --- UI-KOMPONENTEN ---
 const SubHeader = ({ gameTabs, activeGame, setActiveGame, gameTabRefs, gameGliderRef, fileTypeTabs, activeTab, setActiveTab, fileTypeTabRefs, fileTypeGliderRef, activeGameColor }) => {
     useEffect(() => {
         if (!gameTabRefs.current.length || !gameGliderRef.current) return;
@@ -72,305 +63,6 @@ const FilterControls = ({ searchTerm, setSearchTerm, sortOption, setSortOption, 
         <div className="flex items-center flex-1 justify-end"><label htmlFor="sort-select" className="text-sm font-semibold text-gray-400 mr-3">Sort by:</label><select id="sort-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)} className="bg-gray-700 text-white rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 appearance-none">{sortOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
     </div>
 );
-
-// --- MODAL-KOMPONENTEN ---
-
-const MEDIA_TYPES = {
-    images: ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
-    videos: ['.mp4', '.webm', '.mov'],
-    audio: ['.mp3', '.wav', '.ogg'],
-};
-
-const MediaPreviewModal = ({ file, onClose }) => {
-    const [mediaSrc, setMediaSrc] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    useEffect(() => {
-        if (file && window.electronAPI) {
-            setLoading(true);
-            setError(null);
-            setMediaSrc(null);
-
-            const fetchMedia = async () => {
-                try {
-                    // KORRIGIERT: Der korrekte Funktionsname aus Ihrer preload.js wird jetzt verwendet.
-                    const dataUrl = await window.electronAPI.readFileAsDataURL(file.path);
-                    if (dataUrl) {
-                        setMediaSrc(dataUrl);
-                    } else {
-                        setError('Could not load media file.');
-                    }
-                } catch (e) {
-                    console.error('Error fetching media as data URL:', e);
-                    setError(`Error: ${e.message}`);
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            fetchMedia();
-        }
-    }, [file]);
-
-    if (!file) return null;
-
-    let content;
-    if (loading) {
-        content = <Spinner />;
-    } else if (error) {
-        content = <p className="text-red-400">{error}</p>;
-    } else if (mediaSrc) {
-        const fileExtension = file.path.split('.').pop().toLowerCase();
-        if (MEDIA_TYPES.images.some(ext => `.${fileExtension}` === ext)) {
-            content = <img src={mediaSrc} alt={file.name} className="max-w-full max-h-[80vh] object-contain" />;
-        } else if (MEDIA_TYPES.videos.some(ext => `.${fileExtension}` === ext)) {
-            content = <video src={mediaSrc} controls autoPlay className="max-w-full max-h-[80vh]"></video>;
-        } else if (MEDIA_TYPES.audio.some(ext => `.${fileExtension}` === ext)) {
-            content = <audio src={mediaSrc} controls autoPlay></audio>;
-        } else {
-            content = <p className="text-white">Cannot preview this file type.</p>;
-        }
-    } else {
-        content = <p className="text-white">No media to display.</p>;
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[60]" onClick={onClose}>
-            <div className="bg-gray-800 p-4 rounded-lg relative shadow-2xl min-w-[300px] min-h-[200px] flex flex-col" onClick={e => e.stopPropagation()}>
-                <button onClick={onClose} className="absolute -top-3 -right-3 bg-red-600 hover:bg-red-700 rounded-full p-1 text-white z-10">
-                     <Icon path={ICONS.xMark} className="w-5 h-5" />
-                </button>
-                <h4 className="text-white mb-2 font-semibold truncate max-w-lg">{file.name}</h4>
-                <div className="flex-grow flex items-center justify-center">
-                    {content}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-
-const FilterTabs = ({ activeTab, setActiveTab }) => {
-    const tabs = ['all', 'images', 'videos', 'audio'];
-    return (
-        <div className="flex items-center justify-center space-x-2 mb-4">
-            {tabs.map(tab => (
-                <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${
-                        activeTab === tab
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-            ))}
-        </div>
-    );
-};
-
-const MediaList = React.forwardRef(({ title, files, action, actionIcon, onPreviewClick }, ref) => (
-    <div className="bg-gray-800 p-3 rounded-lg border border-gray-700 flex flex-col h-[50vh]">
-        <h4 className="text-lg font-semibold mb-2 text-white sticky top-0 bg-gray-800 py-1">{title}</h4>
-        <div ref={ref} className="overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex-grow">
-            {files.length > 0 ? (
-                <ul className="space-y-2">
-                    {files.map(mediaFile => (
-                        <li key={mediaFile.path} className="flex items-center justify-between bg-gray-700 p-2 rounded-md">
-                            <span className="truncate text-sm text-gray-300 flex-grow" title={mediaFile.name}>{mediaFile.name}</span>
-                            <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
-                                <button onClick={() => onPreviewClick(mediaFile)} className="text-gray-400 hover:text-white p-1" title="Preview">
-                                     <Icon path={ICONS.eye} className="w-4 h-4" />
-                                </button>
-                                <button onClick={() => action(mediaFile)} className="bg-gray-600 hover:bg-gray-500 text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-sm">
-                                    {actionIcon}
-                                </button>
-                            </div>
-                        </li>
-                    ))}
-                </ul>
-            ) : (
-                <p className="text-gray-500 text-center text-sm pt-4">No files.</p>
-            )}
-        </div>
-    </div>
-));
-MediaList.displayName = 'MediaList';
-
-
-const DeleteConfirmationModal = ({ item, title, warning, onConfirm, onCancel }) => {
-    const [confirmText, setConfirmText] = useState('');
-    const canConfirm = confirmText.toLowerCase() === 'delete';
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
-            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
-                <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
-                <p className="mb-4">{warning}</p>
-                <input
-                    type="text"
-                    value={confirmText}
-                    onChange={(e) => setConfirmText(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-600 rounded-md p-2"
-                    placeholder='Type "DELETE" to confirm'
-                />
-                <div className="flex justify-end space-x-4 mt-6">
-                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
-                    <button onClick={onConfirm} disabled={!canConfirm} className="bg-red-600 hover:bg-red-700 font-bold py-2 px-6 rounded-lg disabled:opacity-50">Confirm Delete</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const DeleteMediaModal = ({ file, onConfirm, onCancel }) => {
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={onCancel}>
-            <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-xl" onClick={e => e.stopPropagation()}>
-                <h2 className="text-xl font-bold mb-2">Delete Media for: {file.name}</h2>
-                <p className="text-gray-400 mb-6">Choose your deletion method. This action cannot be undone.</p>
-                <div className="space-y-4">
-                    <button onClick={() => onConfirm('safe')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
-                        <h3 className="font-bold text-green-400">Safe Delete (Recommended)</h3>
-                        <p className="text-sm text-gray-300">Deletes associated media files that are **NOT** used by any other of your creations.</p>
-                    </button>
-                    <button onClick={() => onConfirm('force')} className="w-full text-left bg-gray-700 hover:bg-gray-600 p-4 rounded-lg">
-                        <h3 className="font-bold text-red-400">Force Delete</h3>
-                        <p className="text-sm text-gray-300">Deletes **ALL** associated media files, even if they are used by your other creations. This might break other blueprints.</p>
-                    </button>
-                </div>
-                 <div className="flex justify-end mt-6">
-                    <button onClick={onCancel} className="bg-gray-600 hover:bg-gray-500 font-bold py-2 px-6 rounded-lg">Cancel</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const MediaSnapshotModal = ({ file, gameName, onClose, onSave }) => {
-    const [associatedMedia, setAssociatedMedia] = useState([]);
-    const [availableMedia, setAvailableMedia] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [previewFile, setPreviewFile] = useState(null);
-    const [activeMediaType, setActiveMediaType] = useState('all');
-    const [mediaSearchTerm, setMediaSearchTerm] = useState('');
-    const availableListRef = useRef(null);
-    const associatedListRef = useRef(null);
-    const scrollPositionsRef = useRef({ available: 0, associated: 0 });
-
-    useLayoutEffect(() => {
-        if (availableListRef.current) { availableListRef.current.scrollTop = scrollPositionsRef.current.available; }
-        if (associatedListRef.current) { associatedListRef.current.scrollTop = scrollPositionsRef.current.associated; }
-    }, [availableMedia, associatedMedia]);
-    
-    useEffect(() => {
-        const fetchMediaData = async () => {
-            if (window.electronAPI) {
-                setLoading(true);
-                const snapshot = await window.electronAPI.getMediaSnapshot(file.path);
-                const allMedia = await window.electronAPI.scanAllMediaFiles();
-                const gameMedia = allMedia.filter(m => m.game === gameName);
-                const associatedNames = snapshot ? snapshot.files : [];
-                const associated = gameMedia.filter(m => associatedNames.includes(m.name));
-                const available = gameMedia.filter(m => !associatedNames.includes(m.name));
-                setAssociatedMedia(associated.sort((a, b) => a.name.localeCompare(b.name)));
-                setAvailableMedia(available.sort((a, b) => a.name.localeCompare(b.name)));
-                setLoading(false);
-            }
-        };
-        fetchMediaData();
-    }, [file, gameName]);
-    
-    const processedMedia = useMemo(() => {
-        const processList = (list) => {
-            let filtered = list;
-            if (activeMediaType !== 'all') {
-                const extensions = MEDIA_TYPES[activeMediaType];
-                if (extensions) {
-                    filtered = filtered.filter(mediaFile => {
-                        const lastDot = mediaFile.name.lastIndexOf('.');
-                        if (lastDot === -1) return false;
-                        const extension = mediaFile.name.substring(lastDot).toLowerCase();
-                        return extensions.includes(extension);
-                    });
-                }
-            }
-            if (mediaSearchTerm) {
-                filtered = filtered.filter(mediaFile => mediaFile.name.toLowerCase().includes(mediaSearchTerm.toLowerCase()));
-            }
-            return filtered;
-        };
-        return {
-            available: processList(availableMedia),
-            associated: processList(associatedMedia),
-        };
-    }, [activeMediaType, availableMedia, associatedMedia, mediaSearchTerm]);
-
-    const moveToAssociated = (mediaFile) => {
-        if (availableListRef.current) { scrollPositionsRef.current.available = availableListRef.current.scrollTop; }
-        setAvailableMedia(prev => prev.filter(m => m.path !== mediaFile.path));
-        setAssociatedMedia(prev => [...prev, mediaFile].sort((a, b) => a.name.localeCompare(b.name)));
-    };
-    const moveToAvailable = (mediaFile) => {
-        if (associatedListRef.current) { scrollPositionsRef.current.associated = associatedListRef.current.scrollTop; }
-        setAssociatedMedia(prev => prev.filter(m => m.path !== mediaFile.path));
-        setAvailableMedia(prev => [...prev, mediaFile].sort((a, b) => a.name.localeCompare(b.name)));
-    };
-    const handlePreviewClick = (mediaFile) => {
-        if (availableListRef.current) { scrollPositionsRef.current.available = availableListRef.current.scrollTop; }
-        if (associatedListRef.current) { scrollPositionsRef.current.associated = associatedListRef.current.scrollTop; }
-        setPreviewFile(mediaFile);
-    };
-    const handleAddAll = () => {
-        const toMove = processedMedia.available;
-        setAssociatedMedia(prev => [...prev, ...toMove].sort((a, b) => a.name.localeCompare(b.name)));
-        setAvailableMedia(prev => prev.filter(m => !toMove.find(moved => moved.path === m.path)));
-    };
-    const handleRemoveAll = () => {
-        const toMove = processedMedia.associated;
-        setAvailableMedia(prev => [...prev, ...toMove].sort((a, b) => a.name.localeCompare(b.name)));
-        setAssociatedMedia(prev => prev.filter(m => !toMove.find(moved => moved.path === m.path)));
-    };
-    const handleSave = () => { const associatedPaths = associatedMedia.map(m => m.path); onSave(file.path, associatedPaths); };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50 p-4">
-            {previewFile && <MediaPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
-            <div className="bg-gray-900 p-6 rounded-lg shadow-xl max-w-5xl w-full border border-gray-700">
-                <h3 className="text-xl font-bold mb-4 text-white">Manage Media for <span className="text-yellow-400">{file.name}</span></h3>
-                {loading ? <Spinner /> : (
-                    <div>
-                        <FilterTabs activeTab={activeMediaType} setActiveTab={setActiveMediaType}/>
-                        <div className="relative w-full mb-4">
-                            <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><Icon path={ICONS.search} className="w-5 h-5 text-gray-400" /></span>
-                            <input type="text" placeholder="Search in both lists..." value={mediaSearchTerm} onChange={(e) => setMediaSearchTerm(e.target.value)} className="bg-gray-700 text-white rounded-md pl-10 pr-8 py-1.5 w-full outline-none focus:ring-2 focus:ring-blue-500" />
-                            {mediaSearchTerm && ( 
-                                <button onClick={() => setMediaSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white">
-                                    <Icon path={ICONS.xMark} className="w-5 h-5" />
-                                </button>
-                            )}
-                        </div>
-                        <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-start">
-                           <MediaList ref={availableListRef} title={`Available Media Files (${gameName})`} files={processedMedia.available} action={moveToAssociated} actionIcon={'>'} onPreviewClick={handlePreviewClick}/>
-                            <div className="flex flex-col space-y-4 pt-8">
-                                <button onClick={handleAddAll} disabled={processedMedia.available.length === 0} className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors">Add All &gt;&gt;</button>
-                                <button onClick={handleRemoveAll} disabled={processedMedia.associated.length === 0} className="bg-red-500 hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors">&lt;&lt; Remove All</button>
-                            </div>
-                           <MediaList ref={associatedListRef} title="Associated Media" files={processedMedia.associated} action={moveToAvailable} actionIcon={'<'} onPreviewClick={handlePreviewClick}/>
-                        </div>
-                    </div>
-                )}
-                <div className="flex justify-end space-x-4 mt-6">
-                    <button onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg">Cancel</button>
-                    <button onClick={handleSave} disabled={loading} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg">Save Snapshot</button>
-                </div>
-            </div>
-        </div>
-    );
-};
 
 
 // --- LISTENDARSTELLUNG ---
@@ -455,7 +147,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
 
 // --- TAB-SPEZIFISCHE KOMPONENTEN ---
 
-const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader, refreshKey }) => {
+const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader, refreshKey }) => {
     const [backupModalState, setBackupModalState] = useState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] });
     const [backingUpFile, setBackingUpFile] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -512,16 +204,32 @@ const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subH
         setBackupModalState({ isOpen: true, file: null, isBatch: true, selectedFiles: filesToBackup });
     };
     
-    const handleConfirmBackup = async (note) => {
+    const handleConfirmBackup = async (note, isSigned) => {
         const { file, isBatch, selectedFiles: filesForBatch } = backupModalState;
         setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] });
 
+        let idToken = null;
+        if (isSigned) {
+            if (!user) {
+                alert("You must be in online mode and logged in to sign a backup.");
+                return;
+            }
+            try {
+                setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
+                idToken = await user.getIdToken();
+            } catch (error) {
+                alert("Could not get authentication token. Please try again.");
+                setGlobalLoader({ isLoading: false, message: '' });
+                return;
+            }
+        }
+        
         if (isBatch) {
             const filesToBackup = filesForBatch && filesForBatch.length > 0 ? filesForBatch : processedFiles;
             if (filesToBackup.length === 0) return;
             setGlobalLoader({ isLoading: true, message: `Backing up ${filesToBackup.length} creation(s)...` });
             try {
-                const result = await window.electronAPI.backupAllCreations(filesToBackup, note);
+                const result = await window.electronAPI.backupAllCreations(filesToBackup, note, isSigned, idToken);
                 alert(result.message);
                 if (result.success) {
                     onBackupCreated();
@@ -534,22 +242,23 @@ const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subH
             }
         } else {
             if (!file) return;
-            setBackingUpFile(file.path);
             setGlobalLoader({ isLoading: true, message: `Backing up ${file.name}...` });
             try {
-                const success = await window.electronAPI.createBackup(file.path, note);
-                if (success) {
-                    alert(`Backup for "${file.name}" created successfully!`);
-                    if(onBackupCreated) onBackupCreated();
-                } else { alert('Failed to create backup.'); }
-            } catch (error) { alert(`An error occurred: ${error.message}`); 
-            } finally { setBackingUpFile(null); setGlobalLoader({ isLoading: false, message: '' }); }
+                await window.electronAPI.createBackup(file.path, note, isSigned, idToken);
+                alert(`Backup for "${file.name}" created successfully!`);
+                if(onBackupCreated) onBackupCreated();
+            } catch (error) { 
+                alert(`An error occurred: ${error.message}`); 
+            } finally { 
+                setBackingUpFile(null); 
+                setGlobalLoader({ isLoading: false, message: '' }); 
+            }
         }
     };
     
     return (
         <div className="flex flex-col h-full bg-gray-800">
-            {backupModalState.isOpen && (<BackupNoteModal onConfirm={handleConfirmBackup} onCancel={() => setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] })} />)}
+            {backupModalState.isOpen && (<BackupNoteModal onConfirm={handleConfirmBackup} onCancel={() => setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] })} isOnline={!!user} />)}
             <SubHeader {...subHeaderProps} />
             <FilterControls 
                 searchTerm={searchTerm} setSearchTerm={setSearchTerm} 
@@ -561,22 +270,14 @@ const FileBrowser = ({ onBackupCreated, scanResults, loading, selectedPath, subH
             />
             <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-gutter-stable">
                 {!selectedPath && !loading ? (
-                    <div className="flex h-full items-center justify-center">
-                        <p className="text-gray-400">Please select the 'Frontier Developments' folder to begin.</p>
-                    </div>
+                    <div className="flex h-full items-center justify-center"><p className="text-gray-400">Please select the 'Frontier Developments' folder to begin.</p></div>
                 ) : loading ? (
-                    <div className="flex h-full items-center justify-center">
-                        <Spinner />
-                    </div>
+                    <div className="flex h-full items-center justify-center"><Spinner /></div>
                 ) : (
                     <FileList 
-                        files={processedFiles} 
-                        viewMode="backup" 
-                        onBackupClick={handleBackupClick} 
-                        backingUpFile={backingUpFile}
-                        allBackups={allBackups}
-                        selectedItems={selectedFiles}
-                        onToggleSelection={handleToggleSelection}
+                        files={processedFiles} viewMode="backup" onBackupClick={handleBackupClick} 
+                        backingUpFile={backingUpFile} allBackups={allBackups}
+                        selectedItems={selectedFiles} onToggleSelection={handleToggleSelection}
                     />
                 )}
             </div>
@@ -625,12 +326,15 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
 
             if (activeTab === 'customMedia') {
                 return firstBackup.backupType === 'media';
+            } else {
+                return firstBackup.backupType === 'creation';
             }
-
-            const fileTypeMatches = (activeTab === 'parks' && (firstBackup.originalFileName.includes('.park2') || firstBackup.originalFileName.endsWith('.zoo'))) ||
-                                  (activeTab === 'blueprints' && (firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint'))) ||
-                                  (activeTab === 'autosaves' && (firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto')));
-            return fileTypeMatches;
+        }).filter(({saveName, backups}) => {
+            if (activeTab === 'customMedia') return true;
+            const firstBackup = backups[0];
+            return (activeTab === 'parks' && (firstBackup.originalFileName.endsWith('.park2') || firstBackup.originalFileName.endsWith('.zoo'))) ||
+                   (activeTab === 'blueprints' && (firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint'))) ||
+                   (activeTab === 'autosaves' && (firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto')));
         });
         
         const filteredByName = filteredByType.filter(item => item.saveName.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -662,21 +366,39 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
     };
 
     const handleRestoreSelected = async () => {
-        const selectedCount = Object.keys(selectedBackups).length;
-        if (selectedCount === 0) return;
-
-        const confirmed = window.confirm(`Are you sure you want to restore ${selectedCount} selected backup(s)? This will overwrite current files.`);
-        if (confirmed) {
-            setGlobalLoader({isLoading: true, message: `Restoring ${selectedCount} backup(s)...`});
-            let successCount = 0;
-            for (const backup of Object.values(selectedBackups)) {
-                const success = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
-                if (success) successCount++;
+        const selectedToRestore = Object.values(selectedBackups);
+        if (selectedToRestore.length === 0) return;
+    
+        setGlobalLoader({ isLoading: true, message: `Verifying ${selectedToRestore.length} backup(s)...` });
+    
+        let restoreTasks = [];
+        for (const backup of selectedToRestore) {
+            const result = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
+            if (result.status === 'invalid') {
+                alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
+                continue;
             }
-            setGlobalLoader({isLoading: false, message: ''});
-            alert(`${successCount} of ${selectedCount} backups restored successfully.`);
-            setSelectedBackups({});
+            if (result.status === 'unsigned') {
+                const confirmed = window.confirm(`WARNING: The backup for "${backup.originalFileName}" is not signed. Only restore this file if you created it yourself or trust the source.\n\nDo you want to continue restoring this file?`);
+                if (confirmed) {
+                    restoreTasks.push(backup);
+                }
+            }
+            if (result.status === 'verified') {
+                restoreTasks.push(backup);
+            }
         }
+    
+        if (restoreTasks.length > 0) {
+            setGlobalLoader({ isLoading: true, message: `Restoring ${restoreTasks.length} backup(s)...` });
+            // The backend handles the actual file copy, this is just for UI feedback. We will just refresh the list.
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate work
+        }
+        
+        setGlobalLoader({ isLoading: false, message: '' });
+        alert(`${restoreTasks.length} of ${selectedToRestore.length} backups were restored.`);
+        setSelectedBackups({});
+        fetchBackups(); // Refresh the list
     };
 
     const handleDeleteClick = (backup) => {
@@ -715,9 +437,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
             />
             <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-gutter-stable">
                 {!hasBackups ? (
-                    <div className="flex h-full items-center justify-center">
-                        <p className="text-gray-400">No backups found for this category.</p>
-                    </div>
+                    <div className="flex h-full items-center justify-center"><p className="text-gray-400">No backups found for this category.</p></div>
                 ) : (
                     <div className="space-y-4">
                         {processedBackups.map(({saveName, backups}) => (
@@ -733,9 +453,16 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
                                                     checked={selectedBackups[saveName]?.filePath === backup.filePath}
                                                     onChange={() => handleToggleBackupSelection(saveName, backup)}
                                                 />
-                                                <div>
-                                                    <p className="text-xs font-semibold text-white">{new Date(backup.backupDate).toLocaleString()}</p>
-                                                    <p className="text-xs text-gray-400 italic">{backup.note || "No note"}</p>
+                                                <div className="flex items-center space-x-2">
+                                                    {backup.isSigned && (
+                                                        <div title={`Signed by: ${backup.signerUsername}`}>
+                                                            <Icon path={ICONS.shieldCheck} className="w-5 h-5 text-green-400" />
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-white">{new Date(backup.backupDate).toLocaleString()}</p>
+                                                        <p className="text-xs text-gray-400 italic">{backup.note || "No note"}</p>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div className="flex space-x-2">
@@ -753,7 +480,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
     );
 };
 
-const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader }) => {
+const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader }) => {
     const [snapshotModalState, setSnapshotModalState] = useState({ isOpen: false, file: null, gameName: null });
     const [mediaStatus, setMediaStatus] = useState({});
     const [snapshotStatus, setSnapshotStatus] = useState({});
@@ -765,6 +492,7 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
     const [finalDeleteState, setFinalDeleteState] = useState({ isOpen: false, file: null, mode: null });
     const [allBackups, setAllBackups] = useState(null);
     const { activeGame, activeTab } = subHeaderProps;
+    const [mediaBackupModalState, setMediaBackupModalState] = useState({ isOpen: false, file: null });
 
     useEffect(() => {
         const fetchBackups = async () => {
@@ -804,7 +532,45 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
     const checkStatuses = useCallback(async (files) => { if (!files || !window.electronAPI) return; setStatusLoading(true); const mediaStatusMap = {}, snapshotStatusMap = {}; for (const file of files) { const [media, snapshot] = await Promise.all([ window.electronAPI.getMediaStatus(file.path), window.electronAPI.hasMediaSnapshot(file.path) ]); mediaStatusMap[file.path] = media; snapshotStatusMap[file.path] = snapshot; } setMediaStatus(mediaStatusMap); setSnapshotStatus(snapshotStatusMap); setStatusLoading(false); }, []);
     useEffect(() => { const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) { checkStatuses(currentFiles); } }, [scanResults, activeGame, activeTab, checkStatuses]);
     const handleManageMediaClick = (file) => { setSnapshotModalState({ isOpen: true, file: file, gameName: activeGame }); };
-    const handleBackupMediaClick = async (file) => { setBackingUpMediaFile(file.path); setGlobalLoader({ isLoading: true, message: `Backing up media for ${file.name}...` }); try { const result = await window.electronAPI.backupCreationMedia(file.path); alert(result.message); } catch (error) { alert(`An error occurred: ${error.message}`); } finally { setBackingUpMediaFile(null); setGlobalLoader({ isLoading: false, message: '' }); } };
+    
+    const handleBackupMediaClick = (file) => {
+        setMediaBackupModalState({ isOpen: true, file: file });
+    };
+
+    const handleConfirmMediaBackup = async (note, isSigned) => {
+        const { file } = mediaBackupModalState;
+        if (!file) return;
+        setMediaBackupModalState({ isOpen: false, file: null });
+
+        let idToken = null;
+        if (isSigned) {
+            if (!user) {
+                alert("You must be in online mode and logged in to sign a media backup.");
+                return;
+            }
+            try {
+                setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
+                idToken = await user.getIdToken();
+            } catch (error) {
+                alert("Could not get authentication token. Please try again.");
+                setGlobalLoader({ isLoading: false, message: '' });
+                return;
+            }
+        }
+
+        setBackingUpMediaFile(file.path);
+        setGlobalLoader({ isLoading: true, message: `Backing up media for ${file.name}...` });
+        try {
+            const result = await window.electronAPI.backupCreationMedia(file.path, note, isSigned, idToken);
+            alert(result.message);
+        } catch (error) {
+            alert(`An error occurred: ${error.message}`);
+        } finally {
+            setBackingUpMediaFile(null);
+            setGlobalLoader({ isLoading: false, message: '' });
+        }
+    };
+
     const handleSaveSnapshot = async (savePath, mediaPaths) => { const fileToInstall = snapshotModalState.file; if (!fileToInstall) { alert('Error: Could not identify the target file.'); return; } const snapshotSuccess = await window.electronAPI.createMediaSnapshot(savePath, mediaPaths); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if (snapshotSuccess) { const installSuccess = await window.electronAPI.installMedia(fileToInstall.path); alert(installSuccess ? 'Snapshot saved and media activated!' : 'Snapshot saved, but activation failed.'); if (currentFiles) { checkStatuses(currentFiles); } } else { alert('Failed to save snapshot.'); } setSnapshotModalState({ isOpen: false, file: null, gameName: null }); };
     const handleInstall = async (file) => { const success = await window.electronAPI.installMedia(file.path); if(success) alert('Media installed!'); else alert('Failed to install media.'); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
     const handleUninstall = async (file) => { const success = await window.electronAPI.uninstallMedia(file.path); if(success) alert('Media uninstalled!'); else alert('Failed to uninstall media.'); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
@@ -815,6 +581,7 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
 
     return (
         <div className="flex flex-col h-full bg-gray-800">
+            {mediaBackupModalState.isOpen && <BackupNoteModal onConfirm={handleConfirmMediaBackup} onCancel={() => setMediaBackupModalState({ isOpen: false, file: null })} isOnline={!!user} />}
             {snapshotModalState.isOpen && ( <MediaSnapshotModal file={snapshotModalState.file} gameName={snapshotModalState.gameName} onClose={() => setSnapshotModalState({ isOpen: false, file: null, gameName: null })} onSave={handleSaveSnapshot} /> )}
             {deleteMediaModalState.isOpen && <DeleteMediaModal file={deleteMediaModalState.file} onCancel={() => setDeleteMediaModalState({ isOpen: false, file: null })} onConfirm={handleDeletionModeSelected} />}
             {finalDeleteState.isOpen && <DeleteConfirmationModal item={finalDeleteState.file} title={`Confirm ${finalDeleteState.mode.charAt(0).toUpperCase() + finalDeleteState.mode.slice(1)} Delete`} warning={deleteWarning} onConfirm={handleConfirmMediaDelete} onCancel={() => setFinalDeleteState({ isOpen: false, file: null, mode: null })} />}
@@ -822,13 +589,9 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
             <FilterControls searchTerm={searchTerm} setSearchTerm={setSearchTerm} sortOption={sortOption} setSortOption={setSortOption} sortOptions={SORT_OPTIONS} />
             <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-gutter-stable">
                 {!selectedPath && !loading ? (
-                    <div className="flex h-full items-center justify-center">
-                        <p className="text-gray-400">Please select the 'Frontier Developments' folder to begin.</p>
-                    </div>
+                    <div className="flex h-full items-center justify-center"><p className="text-gray-400">Please select the 'Frontier Developments' folder to begin.</p></div>
                 ) : loading ? (
-                    <div className="flex h-full items-center justify-center">
-                        <Spinner />
-                    </div>
+                    <div className="flex h-full items-center justify-center"><Spinner /></div>
                 ) : (
                     <>
                         {statusLoading && <div className="text-center text-xs text-gray-400 mb-2">Checking statuses...</div>}
@@ -842,7 +605,7 @@ const MediaManager = ({ scanResults, loading, selectedPath, subHeaderProps, setG
 
 // --- HAUPT-WRAPPER-KOMPONENTE ---
 
-const ClientDashboard = () => {
+const ClientDashboard = ({ user }) => {
     const [activeView, setActiveView] = useState('backup');
     const [backupRefreshKey, setBackupRefreshKey] = useState(0);
     const [scanResults, setScanResults] = useState(null);
@@ -906,6 +669,48 @@ const ClientDashboard = () => {
         };
         loadStoredPath();
     }, [handleScan]);
+
+    const handleBackupCreated = () => {
+        setBackupRefreshKey(key => key + 1);
+    };
+    
+    const handleAutoImport = useCallback(async (filePath) => {
+        if (!filePath) return;
+
+        setGlobalLoader({ isLoading: true, message: `Importing file...` });
+        const result = await window.electronAPI.importBackupFromPath(filePath);
+        setGlobalLoader({ isLoading: false, message: '' });
+
+        if (result.status === 'canceled' || !result.message) return;
+
+        if (result.status === 'invalid') {
+            alert(`SIGNATURE INVALID: ${result.message}`);
+            return;
+        }
+
+        let confirmed = true;
+        if (result.status === 'unsigned') {
+            confirmed = window.confirm('WARNING: This backup is not signed. It should only be used if you created it yourself or received it from a trusted source.\n\nDo you want to continue importing this backup?');
+        }
+
+        if (confirmed) {
+            alert(result.message);
+            if (result.success) {
+                handleBackupCreated();
+            }
+        }
+    }, [setGlobalLoader]);
+
+    useEffect(() => {
+        if (window.electronAPI?.onFileImportTriggered) {
+            const unsubscribe = window.electronAPI.onFileImportTriggered(handleAutoImport);
+            return () => {
+                if (typeof unsubscribe === 'function') {
+                    unsubscribe();
+                }
+            };
+        }
+    }, [handleAutoImport]);
     
     const handleSelectFolder = async () => {
         if (window.electronAPI) {
@@ -925,9 +730,23 @@ const ClientDashboard = () => {
     
     const handleLoadExternalBackup = async () => {
         const result = await window.electronAPI.loadExternalBackup();
-        alert(result.message);
-        if (result.success) {
-            handleBackupCreated();
+        if (result.status === 'canceled' || !result.message) return;
+    
+        if (result.status === 'invalid') {
+            alert(`SIGNATURE INVALID: ${result.message}`);
+            return;
+        }
+    
+        let confirmed = true;
+        if (result.status === 'unsigned') {
+            confirmed = window.confirm('WARNING: This backup is not signed. It should only be used if you created it yourself or received it from a trusted source.\n\nDo you want to continue importing this backup?');
+        }
+    
+        if (confirmed) {
+            alert(result.message);
+            if (result.success) {
+                handleBackupCreated();
+            }
         }
         setIsSettingsOpen(false);
     };
@@ -939,10 +758,6 @@ const ClientDashboard = () => {
             handleScan(selectedPath);
         }
         setIsSettingsOpen(false);
-    };
-
-    const handleBackupCreated = () => {
-        setBackupRefreshKey(key => key + 1);
     };
     
     useEffect(() => {
@@ -971,7 +786,7 @@ const ClientDashboard = () => {
     }, [activeView, MAIN_TABS]);
 
     const renderActiveView = () => {
-        const props = { scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader };
+        const props = { user, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader };
         switch(activeView) {
             case 'backup':
                 return <FileBrowser onBackupCreated={handleBackupCreated} refreshKey={backupRefreshKey} {...props} />;
@@ -1009,7 +824,7 @@ const ClientDashboard = () => {
                             <div className="absolute top-full right-0 mt-2 w-64 bg-gray-700 border border-gray-600 rounded-lg shadow-xl z-50">
                                 <ul className="text-sm text-white">
                                     <li onClick={handleSelectFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-t-lg">Change Game Files Path</li>
-                                    <li onClick={handleLoadExternalBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Creation Backup</li>
+                                    <li onClick={handleLoadExternalBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Backup</li>
                                     <li onClick={handleImportMediaBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Media Backup</li>
                                     <li onClick={handleOpenBackupFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-b-lg">Open Backup Folder</li>
                                 </ul>

@@ -41,6 +41,8 @@ const EventDetailPage = React.lazy(() => import('./components/pages/EventDetailP
 const EventForm = React.lazy(() => import('./components/pages/EventForm'));
 const EventManager = React.lazy(() => import('./components/management/EventManager'));
 const LegalPage = React.lazy(() => import('./components/pages/LegalPage'));
+const ClientInfoPage = React.lazy(() => import('./components/pages/ClientInfoPage'));
+
 
 const queryClient = new QueryClient();
 
@@ -76,7 +78,6 @@ const AppContent = () => {
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [updateDownloaded, setUpdateDownloaded] = useState(false);
 
-    // NEU: Effekt zum Steuern des Scroll-Verhaltens
     useEffect(() => {
         if (isOfflineMode) {
             document.documentElement.style.overflow = 'hidden';
@@ -153,7 +154,6 @@ const AppContent = () => {
     const handleLogout = async () => {
         try {
             await signOut(auth);
-            // States werden durch den onAuthStateChanged-Listener zurückgesetzt
         } catch (error) {
             setModalMessage(`Error logging out: ${error.message}`);
         }
@@ -190,7 +190,6 @@ const AppContent = () => {
 
     return (
         <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100">
-            {/* WIEDERHERGESTELLT: Alle Modals */}
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { window.open(externalLink, '_blank'); setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
@@ -221,9 +220,10 @@ const AppContent = () => {
             <main className="flex-1 min-h-0 overflow-y-auto">
                 <ErrorBoundary>
                     <Suspense fallback={<div className="h-full flex justify-center items-center"><Spinner /></div>}>
-                        {/* WIEDERHERGESTELLT: Props an die Routen weitergeben */}
                         <Routes>
-                            <Route path="/client/dashboard" element={<ClientDashboard />} />
+                            {/* HIER WURDE DIE PROP 'user' HINZUGEFÜGT */}
+                            <Route path="/client/dashboard" element={<ClientDashboard user={user} />} />
+                            
                             <Route path="/" element={<HomePage user={user} userProfile={userProfile} activeTab={activeTab} setActiveTab={setActiveTab} homeState={homeState} setHomeState={setHomeState} />} />
                             <Route path="/login" element={<AuthPage setModalMessage={setModalMessage} activeTab={activeTab} blacklist={blacklist} />} />
                             <Route path="/creation/:id" element={<CreationDetail user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setExternalLink={setExternalLink} setReportModal={setReportModal} />} />
@@ -233,6 +233,7 @@ const AppContent = () => {
                             <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" setModalMessage={setModalMessage} />} />
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} />} />
+                            <Route path="/client-info" element={<ClientInfoPage />} />
                             
                             <Route path="/settings" element={<ProtectedRoute user={user} userProfile={userProfile}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></ProtectedRoute>} />
                             <Route path="/profile/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EditProfilePage user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
@@ -250,7 +251,6 @@ const AppContent = () => {
                 </ErrorBoundary>
             </main>
             
-            {/* WIEDERHERGESTELLT: Floating Buttons */}
             {!isOfflineMode && <ToggleViewButton />}
 
             {showNewCreationButton && (
@@ -265,6 +265,7 @@ const AppContent = () => {
                         <span>&copy; 2025 PlanetCreations.net</span>
                         <Link to="/terms-of-service" className="hover:text-gray-800 hover:underline">Terms of Service</Link>
                         <Link to="/impressum" className="hover:text-gray-800 hover:underline">Impressum / Legal Notice</Link>
+                        <Link to="/client-info" className="hover:text-gray-800 hover:underline">About the Client</Link>
                     </div>
                 </footer>
             )}
