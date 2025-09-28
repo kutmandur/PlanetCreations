@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
@@ -9,7 +9,6 @@ import ToggleSwitch from '../ui/ToggleSwitch';
 import BackupNoteModal from '../modals/BackupNoteModal';
 import DeleteConfirmationModal from '../modals/DeleteConfirmationModal';
 import DeleteMediaModal from '../modals/DeleteMediaModal';
-import MediaPreviewModal from '../modals/MediaPreviewModal';
 import MediaSnapshotModal from '../modals/MediaSnapshotModal';
 
 // --- HILFSFUNKTIONEN ---
@@ -391,14 +390,13 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
     
         if (restoreTasks.length > 0) {
             setGlobalLoader({ isLoading: true, message: `Restoring ${restoreTasks.length} backup(s)...` });
-            // The backend handles the actual file copy, this is just for UI feedback. We will just refresh the list.
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate work
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         setGlobalLoader({ isLoading: false, message: '' });
         alert(`${restoreTasks.length} of ${selectedToRestore.length} backups were restored.`);
         setSelectedBackups({});
-        fetchBackups(); // Refresh the list
+        fetchBackups();
     };
 
     const handleDeleteClick = (backup) => {
