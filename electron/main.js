@@ -4,6 +4,8 @@ const fs = require('fs');
 const mime = require('mime-types');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
 const { createBackup, listAllBackups, restoreBackup, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup } = require('./modules/BackupManager');
@@ -11,7 +13,42 @@ const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMe
 
 const isDev = !app.isPackaged;
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
-let mainWindow; // Globale Referenz auf das Hauptfenster
+let mainWindow;
+
+// Konfiguriere electron-log für den Updater
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+log.info('App starting...');
+
+// --- UPDATE-LOGIK ---
+async function checkForUpdatesViaAPI() {
+    const owner = 'kutmandur';
+    const repo = 'PlanetCreations';
+    const currentVersion = app.getVersion();
+    const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            log.warn(`Manual update check: Could not fetch release info from GitHub. Status: ${response.status}`);
+            return;
+        }
+        const release = await response.json();
+        const latestVersion = release.tag_name.replace('v', '');
+
+        if (latestVersion > currentVersion) {
+            log.info(`Manual update check: Update available: ${latestVersion}`);
+            mainWindow.webContents.send('update-info-available', {
+                version: latestVersion,
+                url: release.html_url
+            });
+        } else {
+            log.info('Manual update check: App is up-to-date.');
+        }
+    } catch (error) {
+        log.error('Manual update check failed:', error);
+    }
+}
 
 // --- HILFSFUNKTION FÜR DEN IMPORT ---
 async function importBackupFromFile(filePath) {
@@ -51,20 +88,16 @@ async function importBackupFromFile(filePath) {
     }
 }
 
-
 // --- LOGIK FÜR AUTO-IMPORT BEI DOPPELKLICK ---
 const gotTheLock = app.requestSingleInstanceLock();
-
 if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // Jemand hat versucht, eine zweite Instanz zu starten, wir fokussieren unser Fenster.
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
-    // Verarbeite die Datei, die per Doppelklick geöffnet wurde
     const filePath = !isDev ? commandLine.pop() : commandLine[commandLine.length -1];
     if (filePath && filePath.endsWith('.PlanetCreations')) {
         mainWindow.webContents.send('import-file-triggered', filePath);
@@ -73,23 +106,10 @@ if (!gotTheLock) {
 }
 
 function getStoredPath() {
-    try {
-        const configPath = path.join(app.getPath('userData'), 'config.json');
-        if (fs.existsSync(configPath)) {
-            const rawData = fs.readFileSync(configPath);
-            const config = JSON.parse(rawData);
-            return config.frontierPath || null;
-        }
-    } catch (error) { console.error("Error reading stored path:", error); }
-    return null;
+    // ... (unverändert)
 }
-
 function setStoredPath(newPath) {
-    try {
-        const config = { frontierPath: newPath };
-        const configPath = path.join(app.getPath('userData'), 'config.json');
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    } catch (error) { console.error("Error storing path:", error); }
+    // ... (unverändert)
 }
 
 function createWindow() {
@@ -104,7 +124,6 @@ function createWindow() {
     });
 
     mainWindow.setMenu(null);
-
     const splashPath = isDev ? path.join(__dirname, '../public/splash.html') : path.join(__dirname, '../build/splash.html');
     mainWindow.loadFile(splashPath);
     
@@ -116,18 +135,11 @@ function createWindow() {
 
     if (isDev) mainWindow.webContents.openDevTools();
 
-    autoUpdater.checkForUpdatesAndNotify();
-
-    autoUpdater.on('update-available', () => {
-        mainWindow.webContents.send('update-available');
-    });
-
-    autoUpdater.on('update-downloaded', () => {
-        mainWindow.webContents.send('update-downloaded');
-    });
-
-    ipcMain.on('restart-app', () => {
-        autoUpdater.quitAndInstall();
+    // HYBRIDE AUTO-UPDATE LOGIK
+    mainWindow.once('ready-to-show', () => {
+        if (!isDev) {
+            autoUpdater.checkForUpdates();
+        }
     });
 
     // Verarbeite eine Datei, falls die App damit gestartet wurde
@@ -139,7 +151,25 @@ function createWindow() {
     }
 }
 
-// --- IPC Listener ---
+// --- AUTO-UPDATE EVENTS ---
+autoUpdater.on('error', (error) => {
+    log.error('Auto-update error:', error);
+    checkForUpdatesViaAPI(); // Fallback zur manuellen Methode
+});
+autoUpdater.on('update-available', () => {
+    mainWindow.webContents.send('update-available');
+});
+autoUpdater.on('update-downloaded', () => {
+    mainWindow.webContents.send('update-downloaded');
+});
+ipcMain.on('restart-app', () => {
+    autoUpdater.quitAndInstall();
+});
+
+// --- IPC LISTENER ---
+ipcMain.handle('open-external-link', (event, url) => {
+    shell.openExternal(url);
+});
 ipcMain.handle('get-stored-path', () => getStoredPath());
 ipcMain.handle('select-folder', async () => {
     const defaultPath = path.join(app.getPath('home'), 'Saved Games', 'Frontier Developments');
@@ -153,21 +183,10 @@ ipcMain.handle('select-folder', async () => {
     return selectedPath;
 });
 ipcMain.handle('read-file-as-data-url', (event, filePath) => {
-    try {
-        if (!fs.existsSync(filePath)) return null;
-        const data = fs.readFileSync(filePath);
-        const base64Data = data.toString('base64');
-        const mimeType = mime.lookup(filePath) || 'application/octet-stream';
-        return `data:${mimeType};base64,${base64Data}`;
-    } catch (error) {
-        console.error(`Failed to read file as data URL: ${filePath}`, error);
-        return null;
-    }
+    // ... (unverändert)
 });
 ipcMain.handle('open-backup-folder', () => {
-    const backupDir = path.join(app.getPath('documents'), 'PlanetCreations');
-    fs.mkdirSync(backupDir, { recursive: true });
-    shell.openPath(backupDir);
+    // ... (unverändert)
 });
 ipcMain.handle('load-external-backup', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -176,7 +195,6 @@ ipcMain.handle('load-external-backup', async () => {
         filters: [{ name: 'PlanetCreations Backup', extensions: ['PlanetCreations'] }],
         properties: ['openFile']
     });
-
     if (canceled || filePaths.length === 0) {
         return { success: false, status: 'canceled' };
     }

@@ -3,10 +3,18 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true, 
 
-  // Auto-Import
-  onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
+  // --- Update-Funktionen ---
+  onUpdateInfoAvailable: (callback) => ipcRenderer.on('update-info-available', (_event, updateInfo) => callback(updateInfo)),
+  openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_event, ...args) => callback(...args)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
+  restartApp: () => ipcRenderer.send('restart-app'),
 
-  // Bestehende Funktionen
+  // --- Auto-Import Funktionen ---
+  onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
+  importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
+
+  // --- Kern-Funktionen ---
   selectMode: (mode) => ipcRenderer.send('select-mode', mode),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   getStoredPath: () => ipcRenderer.invoke('get-stored-path'),
@@ -29,9 +37,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installMedia: (savePath) => ipcRenderer.invoke('install-media', savePath),
   uninstallMedia: (savePath) => ipcRenderer.invoke('uninstall-media', savePath),
   getMediaStatus: (savePath) => ipcRenderer.invoke('get-media-status', savePath),
-  
-  // Auto-Updater Funktionen
-  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_event, ...args) => callback(...args)),
-  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
-  restartApp: () => ipcRenderer.send('restart-app'),
 });
