@@ -6,38 +6,70 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-// Get secrets from Firebase Functions config
+// Secrets & Config
 const DISCORD_BOT_TOKEN = functions.config().discord.token;
 const DISCORD_CLIENT_ID = functions.config().discord.client_id;
 const DISCORD_CLIENT_SECRET = functions.config().discord.client_secret;
 const DISCORD_REDIRECT_URI = functions.config().discord.redirect_uri;
+const SIGNING_KEY = functions.config().backup.signing_key; // Lädt den Schlüssel aus der Config
 
-
-// Create an Express app to handle HTTP requests
 const app = express();
 app.use(cors({ origin: true }));
 
 // Middleware to authenticate requests
 const authenticate = async (req, res, next) => {
     if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
-        res.status(403).send('Unauthorized');
-        return;
+        return res.status(403).send('Unauthorized');
     }
     const idToken = req.headers.authorization.split('Bearer ')[1];
     try {
         const decodedIdToken = await admin.auth().verifyIdToken(idToken);
         req.user = decodedIdToken;
         next();
-        return;
     } catch (e) {
         res.status(403).send('Unauthorized');
-        return;
     }
 };
+
+// --- API Endpoint for signing backups ---
+app.post("/signBackup", authenticate, async (req, res) => {
+    const hash = req.body.hash;
+    const userId = req.user.uid;
+
+    if (!hash || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) {
+        return res.status(400).json({ error: "A valid SHA-256 hash must be provided." });
+    }
+    
+    if (!SIGNING_KEY) {
+        console.error("Backup signing key is not configured in Firebase Functions config.");
+        return res.status(500).json({ error: "Server configuration error: Signing key is missing." });
+    }
+
+    try {
+        const signer = crypto.createSign("sha256");
+        signer.update(hash);
+        signer.end();
+        const signature = signer.sign(SIGNING_KEY, "hex");
+
+        const profileRef = db.doc(`profiles/${userId}`);
+        const profileSnap = await profileRef.get();
+        const username = profileSnap.exists ? profileSnap().data.username : "Unknown User";
+
+        return res.status(200).json({
+            signature,
+            signerUid: userId,
+            signerUsername: username,
+        });
+    } catch (error) {
+        console.error("Error creating signature:", error);
+        return res.status(500).json({ error: "An unexpected error occurred while creating the signature." });
+    }
+});
 
 // --- HTTP Endpoint to handle the initial Discord auth redirect ---
 app.get("/discordAuthRedirect", (req, res) => {

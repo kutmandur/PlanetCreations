@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
 const { getManifestPath, getSnapshot } = require('./MediaManager');
+const crypto = require('crypto');
+const fetch = require('node-fetch');
 
 const backupCategoryMap = {
     '.park2': 'Parks',
@@ -16,18 +18,53 @@ function getBackupBaseDir(app) {
     return path.join(app.getPath('documents'), 'PlanetCreations');
 }
 
-// ✅ NEUE FUNKTION: Führt ein Backup für eine Liste von Dateien durch
-async function backupAllCreations(app, files, note) {
+async function verifyBackup(backupZipPath) {
+    const zip = new AdmZip(backupZipPath);
+    const metaEntry = zip.getEntry('metadata.json');
+    if (!metaEntry) {
+        throw new Error('Invalid backup file: metadata.json is missing.');
+    }
+    const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+
+    if (!metadata.isSigned) {
+        return { status: 'unsigned' };
+    }
+
+    try {
+        const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/getPublicKey');
+        if (!response.ok) {
+            throw new Error('Could not fetch public key for verification.');
+        }
+        const publicKey = await response.text();
+
+        const { signature, ...metadataWithoutSignature } = metadata;
+        const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
+        const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
+
+        const verifier = crypto.createVerify('sha256');
+        verifier.update(hash);
+        verifier.end();
+        
+        const isVerified = verifier.verify(publicKey, signature, 'hex');
+
+        return { status: isVerified ? 'verified' : 'invalid' };
+
+    } catch (error) {
+        console.error("Verification failed:", error);
+        return { status: 'invalid', error: error.message };
+    }
+}
+
+async function backupAllCreations(app, files, note, isSigned, idToken) {
     let successCount = 0;
     for (const file of files) {
-        const success = createBackup(app, file.path, note);
+        const success = await createBackup(app, file.path, note, isSigned, idToken);
         if (success) {
             successCount++;
         }
     }
     return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.` };
 }
-
 
 function deleteBackup(app, backupFilePath) {
     try {
@@ -48,7 +85,7 @@ function deleteBackup(app, backupFilePath) {
     }
 }
 
-function createBackup(app, sourceFilePath, note) {
+async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null) {
     if (!fs.existsSync(sourceFilePath)) return false;
     try {
         const fileExtension = path.extname(sourceFilePath).toLowerCase();
@@ -61,13 +98,14 @@ function createBackup(app, sourceFilePath, note) {
         
         const timestamp = new Date();
         const dateString = timestamp.toISOString().split('T')[0];
-        const existingBackups = fs.readdirSync(backupDir).filter(f => f.startsWith(baseName) && f.endsWith('.zip'));
+        const existingBackups = fs.readdirSync(backupDir).filter(f => f.startsWith(baseName) && f.endsWith('.PlanetCreations'));
         const newVersion = existingBackups.length + 1;
         
-        const zipFileName = `${baseName}_${dateString}_v${newVersion}.zip`;
+        const zipFileName = `${baseName}_${dateString}_v${newVersion}.PlanetCreations`;
         const destZipPath = path.join(backupDir, zipFileName);
 
-        const metadata = { note, originalFileName: fileName, originalFilePath: sourceFilePath, backupDate: timestamp.toISOString(), version: newVersion, filePath: destZipPath, backupType: 'creation' };
+        const metadata = { note, originalFileName: fileName, originalFilePath: sourceFilePath, backupDate: timestamp.toISOString(), version: newVersion, filePath: destZipPath, backupType: 'creation', isSigned: false };
+        
         const zip = new AdmZip();
         zip.addLocalFile(sourceFilePath);
         
@@ -75,12 +113,39 @@ function createBackup(app, sourceFilePath, note) {
         if (fs.existsSync(mediaManifestPath)) {
             zip.addLocalFile(mediaManifestPath, '', 'media_manifest.json');
         }
+
+        if (isSigned && idToken) {
+            const metadataString = JSON.stringify(metadata, null, 2);
+            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
+
+            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ hash: hash }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to get signature from server.');
+            }
+
+            const { signature, signerUid, signerUsername } = await response.json();
+            
+            metadata.isSigned = true;
+            metadata.signature = signature;
+            metadata.signerUid = signerUid;
+            metadata.signerUsername = signerUsername;
+        }
+
         zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
         zip.writeZip(destZipPath);
         return true;
     } catch (error) {
-        console.error(`[BackupManager] Failed to create ZIP backup:`, error);
-        return false;
+        console.error(`[BackupManager] Failed to create backup:`, error);
+        throw error;
     }
 }
 
@@ -93,7 +158,7 @@ function listAllBackups(app) {
         const categoryDir = path.join(baseDir, category);
         if (!fs.existsSync(categoryDir)) continue;
 
-        const backupFiles = fs.readdirSync(categoryDir).filter(f => f.endsWith('.zip'));
+        const backupFiles = fs.readdirSync(categoryDir).filter(f => f.endsWith('.PlanetCreations'));
         for (const file of backupFiles) {
             try {
                 const zipPath = path.join(categoryDir, file);
@@ -117,7 +182,7 @@ function listAllBackups(app) {
     return allBackups;
 }
 
-function backupCreationMedia(app, sourceFilePath) {
+async function backupCreationMedia(app, sourceFilePath, note, isSigned = false, idToken = null) {
     try {
         const snapshot = getSnapshot(sourceFilePath);
         if (!snapshot || !snapshot.files || snapshot.files.length === 0) {
@@ -132,10 +197,10 @@ function backupCreationMedia(app, sourceFilePath) {
         const baseName = fileName.replace(/\.[^/.]+$/, "");
         const timestamp = new Date();
         const dateString = timestamp.toISOString().split('T')[0];
-        const existingBackups = fs.readdirSync(destDir).filter(f => f.startsWith(`CustomMediaBackup-${baseName}`) && f.endsWith('.zip'));
+        const existingBackups = fs.readdirSync(destDir).filter(f => f.startsWith(`CustomMediaBackup-${baseName}`) && f.endsWith('.PlanetCreations'));
         const newVersion = existingBackups.length + 1;
         
-        const zipFileName = `CustomMediaBackup-${baseName}_${dateString}_v${newVersion}.zip`;
+        const zipFileName = `CustomMediaBackup-${baseName}_${dateString}_v${newVersion}.PlanetCreations`;
         const destZipPath = path.join(destDir, zipFileName);
 
         const zip = new AdmZip();
@@ -152,25 +217,53 @@ function backupCreationMedia(app, sourceFilePath) {
         }
 
         const metadata = {
-            note: `Media backup for ${baseName}`,
+            note: note || `Media backup for ${baseName}`,
             originalFileName: fileName,
             originalFilePath: sourceFilePath,
             backupDate: timestamp.toISOString(),
             version: newVersion,
             filePath: destZipPath,
-            backupType: 'media'
+            backupType: 'media',
+            isSigned: false
         };
-        zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
         
         if (zip.getEntries().length <= 2) {
             return { success: false, message: 'Associated media files could not be found.' };
         }
+        
+        if (isSigned && idToken) {
+            const metadataString = JSON.stringify(metadata, null, 2);
+            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
 
+            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ hash: hash }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to get signature from server.');
+            }
+
+            const { signature, signerUid, signerUsername } = await response.json();
+            
+            metadata.isSigned = true;
+            metadata.signature = signature;
+            metadata.signerUid = signerUid;
+            metadata.signerUsername = signerUsername;
+        }
+
+        zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
         zip.writeZip(destZipPath);
+
         return { success: true, message: `Media backup for '${baseName}' created successfully!` };
     } catch (error) {
         console.error(`[BackupManager] Failed to create creation media backup:`, error);
-        return { success: false, message: `Error: ${error.message}` };
+        throw error;
     }
 }
 
@@ -178,7 +271,7 @@ async function importMediaBackup(app, dialog) {
     const { canceled, filePaths } = await dialog.showOpenDialog({
         title: 'Select Media Backup File',
         defaultPath: app.getPath('downloads'),
-        filters: [{ name: 'Media Backup Files', extensions: ['zip'] }],
+        filters: [{ name: 'PlanetCreations Media Backup', extensions: ['PlanetCreations'] }],
         properties: ['openFile']
     });
 
@@ -220,9 +313,19 @@ async function importMediaBackup(app, dialog) {
     }
 }
 
-function restoreBackup(app, backupZipPath, originalFilePath) {
+async function restoreBackup(app, backupZipPath, originalFilePath) {
     try {
-        if (!fs.existsSync(backupZipPath)) return false;
+        const verificationResult = await verifyBackup(backupZipPath);
+        
+        if (!fs.existsSync(backupZipPath)) return { success: false, status: 'error', message: 'Backup file not found.' };
+
+        if (verificationResult.status === 'unsigned') {
+            return { success: true, status: 'unsigned' };
+        }
+        if (verificationResult.status === 'invalid') {
+            return { success: false, status: 'invalid', message: 'This backup has an invalid signature and cannot be restored.' };
+        }
+        
         const zip = new AdmZip(backupZipPath);
         const metaEntry = zip.getEntry('metadata.json');
         if (!metaEntry) throw new Error("metadata.json not found.");
@@ -237,10 +340,10 @@ function restoreBackup(app, backupZipPath, originalFilePath) {
             fs.mkdirSync(path.dirname(destManifestPath), { recursive: true });
             fs.writeFileSync(destManifestPath, mediaManifestEntry.getData());
         }
-        return true;
+        return { success: true, status: 'verified' };
     } catch (error) {
         console.error(`[BackupManager] Failed to restore backup:`, error);
-        return false;
+        return { success: false, status: 'error', message: error.message };
     }
 }
 
@@ -252,4 +355,5 @@ module.exports = {
     importMediaBackup,
     deleteBackup,
     backupAllCreations,
+    verifyBackup,
 };
