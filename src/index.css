@@ -1,7 +1,6 @@
 html, body, #root {
   height: 100vh;
   width: 100vw;
-  /* overflow: hidden;  <-- DIESE ZEILE ENTFERNEN */
   margin: 0;
   padding: 0;
 }
@@ -10,14 +9,12 @@ html, body, #root {
 @tailwind utilities;
 
 html {
-  overflow-y: scroll; /* This line prevents the page from jumping */
+  overflow-y: scroll; 
 }
 
-/* Add the updated custom rollercoaster animation styles below */
 @layer utilities {
   @keyframes coaster-spin {
     0% {
-      /* Uses a CSS variable for a dynamic animation path */
       transform: rotate(0deg) translateX(var(--coaster-radius)) rotate(0deg);
     }
     100% {
@@ -27,5 +24,20 @@ html {
 
   .animate-coaster-spin {
     animation: coaster-spin 1.5s linear infinite;
+  }
+
+  @keyframes grow-shrink {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 1;
+    }
+  }
+
+  .animate-grow-shrink {
+    animation: grow-shrink 2s infinite ease-in-out;
   }
 }
