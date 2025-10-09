@@ -3,7 +3,6 @@ import { db, auth } from '../../firebase/config';
 import { doc, collection, query, where, getDocs, documentId, writeBatch } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { deleteCommunityAsAdmin } from '../../firebase/community';
-import Spinner from '../ui/Spinner';
 import { containsBlacklistedWord, ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';

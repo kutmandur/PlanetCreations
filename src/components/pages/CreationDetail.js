@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { onSnapshot, doc, getDoc, collection, updateDoc, writeBatch, serverTimestamp, deleteDoc, setDoc, query, where, documentId, getDocs, increment, arrayUnion } from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS } from '../../utils/helpers';

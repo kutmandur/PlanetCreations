@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom'; 
 import {
-    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch, arrayUnion, query, where, documentId, deleteDoc
+    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId
 } from 'firebase/firestore';
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
