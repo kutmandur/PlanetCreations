@@ -17,6 +17,8 @@ import EventSubmissionRules from '../eventform/EventSubmissionRules';
 import EventDiscordSettings from '../eventform/EventDiscordSettings';
 import EventVisibility from '../eventform/EventVisibility';
 
+const defaultReminder = { days: 0, hours: 0, minutes: 0 };
+
 const EventForm = ({ user, setModalMessage }) => {
     const { eventId, communityId } = useParams();
     const navigate = useNavigate();
@@ -55,7 +57,6 @@ const EventForm = ({ user, setModalMessage }) => {
     const [videoItems, setVideoItems] = useState([]);
     const IMAGE_LIMIT = 10;
     const VIDEO_LIMIT = 3;
-    const defaultReminder = { days: 0, hours: 0, minutes: 0 };
     const [reminders, setReminders] = useState([defaultReminder, defaultReminder, defaultReminder]);
     const [voteReminders, setVoteReminders] = useState([defaultReminder, defaultReminder, defaultReminder]);
     const [previousEvents, setPreviousEvents] = useState([]);
@@ -185,7 +186,7 @@ const EventForm = ({ user, setModalMessage }) => {
             finally { setLoading(false); }
         };
         loadFormData();
-    }, [eventId, communityId, isEditing, navigate, setModalMessage, formatDateForInput, formatDateForLocalInput, defaultReminder, parseReminderString]);
+    }, [eventId, communityId, isEditing, navigate, setModalMessage, formatDateForInput, formatDateForLocalInput, parseReminderString]);
     
     useEffect(() => {
         if (isEditing && originalEventDates && timezone) {
