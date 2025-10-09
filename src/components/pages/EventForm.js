@@ -75,11 +75,11 @@ const EventForm = ({ user, setModalMessage }) => {
     ]).current;
 
     // --- ALL LOGIC & HANDLERS LIVE IN THE PARENT COMPONENT ---
-    const parseReminderString = (str) => {
-        if (!str || str === 'none' || str.length < 2) return defaultReminder;
+    const parseReminderString = useCallback((str) => {
+        if (!str || str === 'none' || str.length < 2) return { days: 0, hours: 0, minutes: 0 };
         const unit = str.slice(-1);
         let totalMinutes = parseInt(str.slice(0, -1), 10);
-        if (isNaN(totalMinutes)) return defaultReminder;
+        if (isNaN(totalMinutes)) return { days: 0, hours: 0, minutes: 0 };
 
         if (unit === 'h') totalMinutes *= 60;
         if (unit === 'd') totalMinutes *= 1440;
@@ -89,7 +89,7 @@ const EventForm = ({ user, setModalMessage }) => {
         const minutes = totalMinutes % 60;
         
         return { days, hours, minutes };
-    };
+    }, []);
     
     const formatDateForLocalInput = useCallback((date = new Date()) => {
         const offset = date.getTimezoneOffset() * 60000;
@@ -185,7 +185,7 @@ const EventForm = ({ user, setModalMessage }) => {
             finally { setLoading(false); }
         };
         loadFormData();
-    }, [eventId, communityId, isEditing, navigate, setModalMessage, formatDateForInput, formatDateForLocalInput]);
+    }, [eventId, communityId, isEditing, navigate, setModalMessage, formatDateForInput, formatDateForLocalInput, defaultReminder, parseReminderString]);
     
     useEffect(() => {
         if (isEditing && originalEventDates && timezone) {
