@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { db, auth } from '../../firebase/config';
 import { doc, collection, query, where, getDocs, documentId, writeBatch } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -8,18 +8,16 @@ import { containsBlacklistedWord, ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';
 
-const API_BASE_URL = "https://us-central1-planetcreationsdotnet.cloudfunctions.net/api";
-
 const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPasswordConfirm, onCancel, blacklist, userProfile }) => {
   const [name, setName] = useState(communityToEdit.name || '');
   const [description, setDescription] = useState(communityToEdit.description || '');
   const [bannerImageUrl, setBannerImageUrl] = useState(communityToEdit.bannerImageUrl || '');
   const [profileImageUrl, setProfileImageUrl] = useState(communityToEdit.profileImageUrl || '');
   const [discordServerId, setDiscordServerId] = useState(communityToEdit.discordServerId || '');
-  const [suggestedRanks, setSuggestedRanks] = useState([]);
-  const [isFetchingRanks, setIsFetchingRanks] = useState(false);
   const [isServerIdInputVisible, setIsServerIdInputVisible] = useState(!!communityToEdit.discordServerId);
   const isAdmin = userProfile?.role === 'admin';
+  
+  const suggestedRanks = communityToEdit.discordRoles || [];
 
   const customRanks =
     communityToEdit.ranks?.filter(r => r.name !== 'Owner' && r.name !== 'Moderator').sort((a, b) => a.weight - b.weight) || [];
@@ -51,6 +49,12 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
   
   const GRAB_HANDLE_ICON = "M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5";
 
+  // UPDATED: The set now also includes the Moderator's role ID to correctly filter all used roles.
+  const usedRoleIds = new Set([
+    moderatorRankData.discordRoleId,
+    ...ranks.map(r => r.discordRoleId)
+  ].filter(Boolean)); // .filter(Boolean) removes any empty or null values
+
   const slugify = (text) => {
     return text.toString().toLowerCase()
         .replace(/\s+/g, '-')
@@ -59,35 +63,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
         .replace(/^-+/, '')
         .replace(/-+$/, '');
   };
-
-  const fetchDiscordRanks = useCallback(async (isSilent = false) => {
-    if (!discordServerId) {
-      if (!isSilent) setModalMessage('Please enter a Discord Server ID.');
-      return;
-    }
-    setIsFetchingRanks(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/getDiscordRoles?serverId=${discordServerId}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to fetch ranks: ${errorText}`);
-      }
-      const fetchedRanks = await response.json();
-      setSuggestedRanks(fetchedRanks);
-    } catch (error) {
-      console.error('Error fetching Discord ranks:', error);
-      if (!isSilent) setModalMessage(error.message);
-    } finally {
-      setIsFetchingRanks(false);
-    }
-  }, [discordServerId, setModalMessage]);
-
-  useEffect(() => {
-    if (discordServerId) {
-      fetchDiscordRanks(true);
-    }
-  }, [discordServerId, fetchDiscordRanks]);
 
   const handleRankChange = (index, field, value) => {
     const newRanks = [...ranks];
@@ -303,8 +278,11 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
         
         <div>
           <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Discord Integration</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <a
+          <p className="text-sm text-gray-600 mb-4">
+            The bot automatically syncs roles from your server. Link your server ID and then use the dropdowns below to link ranks to their corresponding Discord roles.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <a
               href="https://discord.com/oauth2/authorize?client_id=1407474623511269427&permissions=268435456&integration_type=0&scope=bot"
               target="_blank"
               rel="noopener noreferrer"
@@ -321,14 +299,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
             >
               {discordServerId ? 'Server ID Linked' : 'Link Server ID'}
             </button>
-            <button
-              type="button"
-              onClick={() => fetchDiscordRanks(false)}
-              disabled={isFetchingRanks || !discordServerId}
-              className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-75"
-            >
-              {isFetchingRanks ? <Spinner /> : 'Import Ranks'}
-            </button>
           </div>
           {isServerIdInputVisible && (
             <div className="mt-2">
@@ -343,9 +313,11 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
           )}
           {suggestedRanks.length > 0 && (
             <div className="mt-4">
-              <h4 className="font-bold text-sm text-gray-600 mb-2">Suggested Ranks from Discord:</h4>
+              <h4 className="font-bold text-sm text-gray-600 mb-2">Synced Ranks from Discord:</h4>
               <div className="flex flex-wrap gap-2">
-                {suggestedRanks.map(rank => (
+                {suggestedRanks
+                  .filter(rank => !usedRoleIds.has(rank.id))
+                  .map(rank => (
                   <button
                     key={rank.id}
                     type="button"
@@ -414,7 +386,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
                 </div>
 
                 {ranks.map((rank, index) => {
-                    const linkedRole = suggestedRanks.find(r => r.id === rank.discordRoleId);
                     const isDefault = index === defaultRankIndex;
                     return (
                         <div 
@@ -455,7 +426,6 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
                                     />
                                 </div>
                                  <div className="mt-2"><InfoBox /></div>
-                                {linkedRole && <p className="text-xs text-gray-500 pl-1">Linked to: <span className="font-semibold" style={{color: linkedRole.color}}>{linkedRole.name}</span></p>}
                             </div>
                             <div className="flex flex-col space-y-2 flex-shrink-0">
                                 <input type="color" value={rank.color} onChange={(e) => handleRankChange(index, 'color', e.target.value)} className="h-10 w-12 p-1 border rounded-lg cursor-pointer flex-shrink-0" />

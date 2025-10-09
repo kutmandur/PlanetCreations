@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom'; 
 import {
-    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch, arrayUnion, query, where, documentId
+    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch, arrayUnion, query, where, documentId, deleteDoc
 } from 'firebase/firestore';
-import { db } from '../../firebase/config';
+import { db, auth } from '../../firebase/config';
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import HighlightableTextarea from '../ui/HighlightableTextarea';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import InfoBox from '../ui/InfoBox';
+import SelectBackupModal from '../modals/SelectBackupModal';
 
 // --- Sub-component: DlcSelector ---
 const DlcSelector = ({ gameDlcs, selectedDlcs, onDlcChange, color }) => {
@@ -122,34 +124,18 @@ const MediaPreview = ({ item, onRemove, provided }) => {
         const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
         return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
     };
-
     const isVideo = item.type === 'video';
     const thumbnailUrl = isVideo ? getYoutubeThumbnail(item.url) : item.url;
-
     return (
-        <div 
-            ref={provided.innerRef}
-            {...provided.draggableProps}
-            {...provided.dragHandleProps}
-            className="w-40 h-24 rounded-lg overflow-hidden relative group flex-shrink-0"
-        >
-            <img src={thumbnailUrl} alt="Media preview" className="w-full h-full object-cover" 
-                 onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x225/333333/ffffff?text=Error'; }}
-            />
+        <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} className="w-40 h-24 rounded-lg overflow-hidden relative group flex-shrink-0">
+            <img src={thumbnailUrl} alt="Media preview" className="w-full h-full object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x225/333333/ffffff?text=Error'; }}/>
             <div className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center">
                 <Icon path={isVideo ? ICONS.video : ICONS.image} className="w-8 h-8 text-white" />
             </div>
-            <button 
-                type="button" 
-                onClick={() => onRemove(item.id, item.type)}
-                className="absolute top-1 right-1 w-6 h-6 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors opacity-0 group-hover:opacity-100"
-            >
-                &times;
-            </button>
+            <button type="button" onClick={() => onRemove(item.id, item.type)} className="absolute top-1 right-1 w-6 h-6 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors opacity-0 group-hover:opacity-100">&times;</button>
         </div>
     );
 };
-
 
 // --- Main Component: CreationForm ---
 const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blacklist }) => {
@@ -178,9 +164,17 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [allTags, setAllTags] = useState([]);
     const [suggestedTags, setSuggestedTags] = useState([]);
     const [tagInput, setTagInput] = useState('');
-    
     const [imageItems, setImageItems] = useState([]);
     const [videoItems, setVideoItems] = useState([]);
+
+    const [backupInfo, setBackupInfo] = useState(null);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [isUploading, setIsUploading] = useState(false);
+    const [backupUrl, setBackupUrl] = useState('');
+    const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+    const [isPreparingUpload, setIsPreparingUpload] = useState(false);
+
+
     const IMAGE_LIMIT = 25;
     const VIDEO_LIMIT = 5;
 
@@ -241,7 +235,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     setMods(data.mods?.join(', ') || '');
                     setRequiredDlcs(data.requiredDlcs || []);
                     setSelectedCommunities(data.communityIds || []);
-                    setCustomFieldData(data.communitySpecificData || {}); 
+                    setCustomFieldData(data.communitySpecificData || {});
+                    setBackupUrl(data.backupUrl || '');
+                    if (data.backupUrl) {
+                        setBackupInfo({ name: 'Existing Backup Attached', path: null, signed: data.backupIsSigned || false });
+                    }
                 } else {
                     setModalMessage("Creation not found.");
                     navigate('/');
@@ -351,33 +349,22 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         e.preventDefault();
         const pastedText = e.clipboardData.getData('text');
         const links = pastedText.split(/[\s,]+/).filter(Boolean);
-        
         const currentItems = mediaType === 'image' ? imageItems : videoItems;
         const limit = mediaType === 'image' ? IMAGE_LIMIT : VIDEO_LIMIT;
-        
         const availableSlots = limit - currentItems.length;
         if (availableSlots <= 0) {
             setModalMessage(`You have already reached the maximum limit of ${limit} ${mediaType}s.`);
             return;
         }
-
         const newMedia = [];
         const linksToAdd = links.slice(0, availableSlots);
         const remainingLinks = links.slice(availableSlots);
-
         linksToAdd.forEach(link => {
-            const isDuplicate = currentItems.some(item => item.url === link);
-            if(isDuplicate) return;
-            newMedia.push({
-                id: `${mediaType}-${Date.now()}-${Math.random()}`,
-                type: mediaType,
-                url: link
-            });
+            if(currentItems.some(item => item.url === link)) return;
+            newMedia.push({ id: `${mediaType}-${Date.now()}-${Math.random()}`, type: mediaType, url: link });
         });
-
         if (mediaType === 'image') setImageItems(prev => [...prev, ...newMedia]);
         else setVideoItems(prev => [...prev, ...newMedia]);
-
         if (remainingLinks.length > 0) {
             setModalMessage(`You can only add ${limit} ${mediaType}s. ${remainingLinks.length} link(s) were not added as they exceeded the limit.`);
         }
@@ -394,11 +381,116 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         const [reorderedItem] = items.splice(result.source.index, 1);
         items.splice(result.destination.index, 0, reorderedItem);
         if (mediaType === 'image') setImageItems(items);
-        else setVideoItems(items);
+        else setVideoItems(prev => items);
     };
+    
+    const handleFileSelectedForUpload = async (file) => {
+        setIsBackupModalOpen(false);
+        if (!file || !file.path) return;
+    
+        if (!window.electronAPI) {
+            setModalMessage("This feature is only available in the desktop client.");
+            return;
+        }
+    
+        setIsPreparingUpload(true);
+    
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const result = await window.electronAPI.prepareBackupForUpload(file.path, idToken);
+    
+            if (!result.success) {
+                setModalMessage(result.message || "Could not prepare backup file.");
+                setIsPreparingUpload(false);
+                return;
+            }
+    
+            setBackupInfo({ name: result.fileName, path: result.filePath, signed: result.isSigned });
+            
+            const fileDataUrl = await window.electronAPI.readFileAsDataURL(result.filePath);
+            const fileBlob = await (await fetch(fileDataUrl)).blob();
+    
+            const functions = getFunctions();
+            const getUploadUrl = httpsCallable(functions, 'getUploadUrl');
+            const { data } = await getUploadUrl({
+                fileName: result.fileName,
+                contentType: fileBlob.type || 'application/zip',
+            });
+            
+            const { uploadUrl, finalFileUrl } = data;
+    
+            setIsPreparingUpload(false);
+            setIsUploading(true);
+            setUploadProgress(0);
+    
+            const xhr = new XMLHttpRequest();
+            xhr.open("PUT", uploadUrl, true);
+            xhr.setRequestHeader("Content-Type", fileBlob.type || 'application/zip');
+            
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const progress = (event.loaded / event.total) * 100;
+                    setUploadProgress(progress);
+                }
+            };
+            
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    setBackupUrl(finalFileUrl);
+                    setIsUploading(false);
+                    setModalMessage("Backup file successfully attached!");
+                } else {
+                    console.error("Upload failed with status:", xhr.status, xhr.responseText);
+                    setModalMessage(`Upload failed: Server responded with status ${xhr.status}.`);
+                    setIsUploading(false);
+                    setBackupInfo(null);
+                }
+            };
+    
+            xhr.onerror = () => {
+                console.error("Upload failed due to a network error.");
+                setModalMessage("Upload failed. Please check your network connection.");
+                setIsUploading(false);
+                setBackupInfo(null);
+            };
+    
+            xhr.send(fileBlob);
+    
+        } catch (error) {
+            console.error("Error during backup attachment:", error);
+            setModalMessage(`An error occurred: ${error.message}`);
+            setIsPreparingUpload(false);
+            setBackupInfo(null);
+        }
+    };
+
+    const handleRemoveBackup = () => {
+        if (backupUrl && backupUrl.includes('/temp-uploads/')) {
+            const functions = getFunctions();
+            const deleteTempFile = httpsCallable(functions, 'deleteTempFile');
+            deleteTempFile({ tempUrl: backupUrl }).catch(err => console.error("Failed to delete temp file:", err));
+        }
+        setBackupInfo(null);
+        setBackupUrl('');
+    };
+
+    const handleAttachFileClick = () => {
+        if (window.electronAPI?.isElectron) {
+            setIsBackupModalOpen(true);
+        } else {
+            navigate('/client-info');
+        }
+    };
+
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        if (isUploading) {
+            setModalMessage("Please wait for the backup upload to finish.");
+            return;
+        }
+
         setLoading(true);
         const stripBlacklisted = (text) => {
             if (!text || !blacklist.length) return text;
@@ -412,6 +504,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag && !containsBlacklistedWord(tag, blacklist));
             const finalMods = (usesMods && game !== 'planet-coaster-2') ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
             const communityAssignments = userCommunities.filter(c => selectedCommunities.includes(c.id)).map(c => ({ communityId: c.id, communityName: c.name }));
+            
             const existingTagIds = allTags.map(t => t.id);
             const newTagsToCreate = finalTags.filter(t => !existingTagIds.includes(t) && !containsBlacklistedWord(t, blacklist));
             if (newTagsToCreate.length > 0) {
@@ -422,35 +515,59 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 });
                 await tagBatch.commit();
             }
-            let creationData = { 
-                game, 
-                title: stripBlacklisted(title), 
-                description: stripBlacklisted(description), 
-                shareCode: stripBlacklisted(shareCode), 
-                imageUrls: finalImageUrls, videoUrls: finalVideoUrls, 
+
+            const creationData = { 
+                game, title: stripBlacklisted(title), description: stripBlacklisted(description), 
+                shareCode: stripBlacklisted(shareCode), imageUrls: finalImageUrls, videoUrls: finalVideoUrls, 
                 customMediaLink, tags: finalTags, mods: finalMods, 
-                modStatus: usesMods ? 'UsingMods' : 'noMods', 
-                updatedAt: serverTimestamp(), 
+                modStatus: usesMods ? 'UsingMods' : 'noMods', updatedAt: serverTimestamp(), 
                 category, status, platform,
-                requiredDlcs,
-                communityIds: selectedCommunities,
-                communityAssignments,
-                communitySpecificData: customFieldData
+                requiredDlcs, communityIds: selectedCommunities,
+                communityAssignments, communitySpecificData: customFieldData,
+                backupUrl: backupUrl || null,
+                backupIsSigned: backupInfo?.signed || false,
             };
+            
             if (creationToEditId) {
                 const docRef = doc(db, 'creations', creationToEditId);
-                const mainUpdateData = { ...creationData };
+                const originalDoc = await getDoc(docRef);
+                const originalData = originalDoc.data();
                 
+                const mainUpdateData = { ...creationData };
                 if (changelogEntry.trim()) {
                     mainUpdateData.changelog = arrayUnion({ text: changelogEntry.trim(), timestamp: serverTimestamp() });
                 }
                 
-                await updateDoc(docRef, mainUpdateData);
+                const batch = writeBatch(db);
+                batch.update(docRef, mainUpdateData);
+
+                const originalCommunityIds = new Set(originalData.communityIds || []);
+                const newCommunityIds = new Set(selectedCommunities);
+
+                const communitiesToAdd = selectedCommunities.filter(id => !originalCommunityIds.has(id));
+                communitiesToAdd.forEach(communityId => {
+                    const linkRef = doc(db, 'communitys', communityId, 'creations', creationToEditId);
+                    batch.set(linkRef, {
+                        creationId: creationToEditId,
+                        linkedAt: serverTimestamp(),
+                        userId: user.uid
+                    });
+                });
+
+                const communitiesToRemove = [...originalCommunityIds].filter(id => !newCommunityIds.has(id));
+                communitiesToRemove.forEach(communityId => {
+                    const linkRef = doc(db, 'communitys', communityId, 'creations', creationToEditId);
+                    batch.delete(linkRef);
+                });
+                
+                await batch.commit();
+                
                 setModalMessage("Creation updated successfully!");
                 navigate(`/creation/${creationToEditId}`);
+
             } else {
                 const profileDoc = await getDoc(doc(db, 'profiles', user.uid));
-                creationData = {
+                const newCreationData = {
                     ...creationData,
                     userId: user.uid,
                     username: profileDoc.data().username,
@@ -461,13 +578,17 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     changelog: []
                 };
                 
-                const newDocRef = await addDoc(collection(db, 'creations'), creationData);
+                const newDocRef = await addDoc(collection(db, 'creations'), newCreationData);
                 
                 if (selectedCommunities.length > 0) {
                     const linkBatch = writeBatch(db);
                     selectedCommunities.forEach(communityId => {
                         const linkRef = doc(db, 'communitys', communityId, 'creations', newDocRef.id);
-                        linkBatch.set(linkRef, { addedAt: serverTimestamp(), userId: user.uid });
+                        linkBatch.set(linkRef, {
+                            creationId: newDocRef.id,
+                            linkedAt: serverTimestamp(),
+                            userId: user.uid 
+                        });
                     });
                     await linkBatch.commit();
                 }
@@ -510,10 +631,17 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const selectedTags = tags.split(',').map(t => t.trim()).filter(Boolean);
 
-    if (loading) return <Spinner />;
+    if (loading && !creationToEditId) return <Spinner />;
 
     return (
         <div className="max-w-4xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg">
+            <SelectBackupModal 
+                isOpen={isBackupModalOpen}
+                onClose={() => setIsBackupModalOpen(false)}
+                onFileSelect={handleFileSelectedForUpload}
+                game={game}
+            />
+
             <h2 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'New Creation'}</h2>
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="flex justify-center my-6">
@@ -550,6 +678,68 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </div>
                 {creationToEditId && (<div><label className="block text-gray-700 font-bold mb-2">Changelog (What's new?)</label><textarea value={changelogEntry} onChange={(e) => setChangelogEntry(e.target.value)} rows="3" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} placeholder="e.g., Added new lighting..." ></textarea></div>)}
                 
+                <div>
+                    <label className="block text-gray-700 font-bold mb-2">Add savegame file</label>
+                    <div className={`p-4 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
+                        
+                        {window.electronAPI?.isElectron ? (
+                            <>
+                                {isPreparingUpload && (
+                                    <div className="flex flex-col items-center justify-center text-gray-600 py-4">
+                                        <Spinner />
+                                        <p className="mt-2 font-semibold">Preparing upload...</p>
+                                    </div>
+                                )}
+                    
+                                {!isPreparingUpload && !backupInfo && !isUploading && (
+                                    <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
+                                        <Icon path={ICONS.upload} className="w-5 h-5" />
+                                        Add savegame file
+                                    </button>
+                                )}
+                    
+                                {!isPreparingUpload && isUploading && (
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-700 mb-1">Uploading {backupInfo.name}...</p>
+                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                            <div className={`${color.bg} h-2.5 rounded-full`} style={{ width: `${uploadProgress}%` }}></div>
+                                        </div>
+                                        <p className="text-center text-sm text-gray-500 mt-1">{Math.round(uploadProgress)}%</p>
+                                    </div>
+                                )}
+                    
+                                {!isPreparingUpload && backupInfo && !isUploading && (
+                                    <div className="flex items-center justify-between p-2 bg-green-100 border border-green-300 rounded-lg">
+                                        <div className="flex items-center gap-2">
+                                            <Icon path={ICONS.checkCircle} className="w-6 h-6 text-green-600" />
+                                            <div>
+                                                <p className="font-semibold text-green-800">{backupInfo.name}</p>
+                                                <p className={`text-xs ${backupInfo.signed ? 'text-blue-600' : 'text-gray-500'}`}>{backupInfo.signed ? 'Official signed backup' : 'Local save file'}</p>
+                                            </div>
+                                        </div>
+                                        <button type="button" onClick={handleRemoveBackup} className="text-red-500 hover:text-red-700 font-bold">&times;</button>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
+                                <Icon path={ICONS.download} className="w-5 h-5" />
+                                Add File with the Client
+                            </button>
+                        )}
+
+                        <div className="mt-3 text-xs text-gray-500 bg-gray-100 p-3 rounded-lg">
+                            <p className="font-semibold mb-1 text-gray-700">Why add a savegame?</p>
+                            <ul className="list-disc list-inside space-y-1">
+                                <li>Client Users can one click import your creation to their game.</li>
+                                <li>If you connected custom media to the creation in the client and provide a download link for the custom media backup, the media can be one click installed by others.</li>
+                                {!window.electronAPI?.isElectron && <li className="font-bold">Requires the PlanetCreations Client for Windows.</li>}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Image URLs</label>
                     <div className="p-3 border rounded-lg">
@@ -649,9 +839,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </div>
 
                 {userCommunities.length > 0 && (<div><label className="block text-gray-700 font-bold mb-2">Assign to Communities</label><div className="p-3 border rounded-lg flex flex-wrap gap-2">{userCommunities.map(c => <button key={c.id} type="button" onClick={() => handleCommunitySelect(c.id)} className={`flex items-center text-sm font-medium px-3 py-1.5 rounded-full transition-colors ${selectedCommunities.includes(c.id) ? 'bg-blue-600 text-white ring-2 ring-offset-1 ring-blue-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}><span>{c.name}</span></button>)}</div></div>)}
-                {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomData={setCustomFieldData} />)}
+                {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomFieldData={setCustomFieldData} />)}
                 <div className="flex space-x-4 pt-4">
-                    <button type="submit" disabled={loading} className={`w-full ${color.bg} ${color.hoverBg} text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors`}>{loading ? <Spinner size="small" /> : (creationToEditId ? 'Save Changes' : 'Submit Creation')}</button>
+                    <button type="submit" disabled={loading || isUploading} className={`w-full ${color.bg} ${color.hoverBg} text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors`}>{loading ? <Spinner size="small" /> : (creationToEditId ? 'Save Changes' : 'Submit Creation')}</button>
                     <button type="button" onClick={() => navigate(-1)} className="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors">Cancel</button>
                 </div>
             </form>

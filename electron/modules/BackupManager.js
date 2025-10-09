@@ -19,47 +19,56 @@ function getBackupBaseDir(app) {
 }
 
 async function verifyBackup(backupZipPath) {
-    const zip = new AdmZip(backupZipPath);
-    const metaEntry = zip.getEntry('metadata.json');
-    if (!metaEntry) {
-        throw new Error('Invalid backup file: metadata.json is missing.');
-    }
-    const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-
-    if (!metadata.isSigned) {
-        return { status: 'unsigned' };
-    }
-
     try {
-        const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/getPublicKey');
-        if (!response.ok) {
-            throw new Error('Could not fetch public key for verification.');
+        const zip = new AdmZip(backupZipPath);
+        const metaEntry = zip.getEntry('metadata.json');
+        if (!metaEntry) {
+            throw new Error('Invalid backup file: metadata.json is missing.');
         }
-        const publicKey = await response.text();
+        const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
 
-        const { signature, ...metadataWithoutSignature } = metadata;
-        const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
-        const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
+        if (!metadata.isSigned) {
+            return { status: 'unsigned' };
+        }
 
-        const verifier = crypto.createVerify('sha256');
-        verifier.update(hash);
-        verifier.end();
-        
-        const isVerified = verifier.verify(publicKey, signature, 'hex');
+        try {
+            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/getPublicKey');
+            if (!response.ok) {
+                // throw new Error('Could not fetch public key for verification.');
+                 // Fallback, wenn der Server nicht erreichbar ist, um die App nicht zu blockieren
+                console.warn('Could not fetch public key, verification skipped.');
+                return { status: 'unsigned' };
+            }
+            const publicKey = await response.text();
 
-        return { status: isVerified ? 'verified' : 'invalid' };
+            const { signature, ...metadataWithoutSignature } = metadata;
+            const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
+            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
 
-    } catch (error) {
-        console.error("Verification failed:", error);
-        return { status: 'invalid', error: error.message };
+            const verifier = crypto.createVerify('sha256');
+            verifier.update(hash);
+            verifier.end();
+            
+            const isVerified = verifier.verify(publicKey, signature, 'hex');
+
+            return { status: isVerified ? 'verified' : 'invalid' };
+
+        } catch (error) {
+            console.error("Verification failed:", error);
+            return { status: 'invalid', error: error.message };
+        }
+    } catch(err) {
+        console.error("Could not read backup for verification:", err);
+        return { status: 'invalid', error: err.message };
     }
 }
+
 
 async function backupAllCreations(app, files, note, isSigned, idToken) {
     let successCount = 0;
     for (const file of files) {
-        const success = await createBackup(app, file.path, note, isSigned, idToken);
-        if (success) {
+        const backupPath = await createBackup(app, file.path, note, isSigned, idToken);
+        if (backupPath) {
             successCount++;
         }
     }
@@ -69,7 +78,7 @@ async function backupAllCreations(app, files, note, isSigned, idToken) {
 function deleteBackup(app, backupFilePath) {
     try {
         const baseDir = getBackupBaseDir(app);
-        if (!backupFilePath.startsWith(baseDir)) {
+        if (!backupFilePath.startsWith(baseDir) && !backupFilePath.startsWith(app.getPath('temp'))) {
             return { success: false, message: 'Error: Invalid backup path.' };
         }
 
@@ -85,12 +94,12 @@ function deleteBackup(app, backupFilePath) {
     }
 }
 
-async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null) {
-    if (!fs.existsSync(sourceFilePath)) return false;
+async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null, targetDir = null) {
+    if (!fs.existsSync(sourceFilePath)) return null;
     try {
         const fileExtension = path.extname(sourceFilePath).toLowerCase();
         const category = backupCategoryMap[fileExtension] || 'Misc';
-        const backupDir = path.join(getBackupBaseDir(app), category);
+        const backupDir = targetDir || path.join(getBackupBaseDir(app), category);
         fs.mkdirSync(backupDir, { recursive: true });
 
         const fileName = path.basename(sourceFilePath);
@@ -98,13 +107,13 @@ async function createBackup(app, sourceFilePath, note, isSigned = false, idToken
         
         const timestamp = new Date();
         const dateString = timestamp.toISOString().split('T')[0];
-        const existingBackups = fs.readdirSync(backupDir).filter(f => f.startsWith(baseName) && f.endsWith('.PlanetCreations'));
-        const newVersion = existingBackups.length + 1;
+        // Wenn es ein temporäres Verzeichnis ist, brauchen wir keine Versionierung
+        const versionString = targetDir ? 'temp' : `v${fs.readdirSync(backupDir).filter(f => f.startsWith(baseName) && f.endsWith('.PlanetCreations')).length + 1}`;
         
-        const zipFileName = `${baseName}_${dateString}_v${newVersion}.PlanetCreations`;
+        const zipFileName = `${baseName}_${dateString}_${versionString}.PlanetCreations`;
         const destZipPath = path.join(backupDir, zipFileName);
 
-        const metadata = { note, originalFileName: fileName, originalFilePath: sourceFilePath, backupDate: timestamp.toISOString(), version: newVersion, filePath: destZipPath, backupType: 'creation', isSigned: false };
+        const metadata = { note, originalFileName: fileName, originalFilePath: sourceFilePath, backupDate: timestamp.toISOString(), filePath: destZipPath, backupType: 'creation', isSigned: false };
         
         const zip = new AdmZip();
         zip.addLocalFile(sourceFilePath);
@@ -115,7 +124,11 @@ async function createBackup(app, sourceFilePath, note, isSigned = false, idToken
         }
 
         if (isSigned && idToken) {
-            const metadataString = JSON.stringify(metadata, null, 2);
+            // Kopiere Metadaten ohne Signatur-relevante Felder für den Hash
+            const signableMeta = { ...metadata };
+            delete signableMeta.filePath; // Der Pfad kann sich ändern, sollte nicht Teil der Signatur sein
+
+            const metadataString = JSON.stringify(signableMeta, null, 2);
             const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
 
             const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
@@ -142,12 +155,13 @@ async function createBackup(app, sourceFilePath, note, isSigned = false, idToken
 
         zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
         zip.writeZip(destZipPath);
-        return true;
+        return destZipPath; // GIB DEN PFAD ZURÜCK
     } catch (error) {
         console.error(`[BackupManager] Failed to create backup:`, error);
         throw error;
     }
 }
+
 
 function listAllBackups(app) {
     const allBackups = {};
@@ -232,7 +246,10 @@ async function backupCreationMedia(app, sourceFilePath, note, isSigned = false, 
         }
         
         if (isSigned && idToken) {
-            const metadataString = JSON.stringify(metadata, null, 2);
+            const signableMeta = { ...metadata };
+            delete signableMeta.filePath;
+
+            const metadataString = JSON.stringify(signableMeta, null, 2);
             const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
 
             const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
@@ -320,7 +337,8 @@ async function restoreBackup(app, backupZipPath, originalFilePath) {
         if (!fs.existsSync(backupZipPath)) return { success: false, status: 'error', message: 'Backup file not found.' };
 
         if (verificationResult.status === 'unsigned') {
-            return { success: true, status: 'unsigned' };
+            // Wir erlauben die Wiederherstellung unsignierter Backups, aber der Benutzer wird gewarnt.
+            // Die Warnung muss im Frontend passieren, hier geben wir nur den Status zurück.
         }
         if (verificationResult.status === 'invalid') {
             return { success: false, status: 'invalid', message: 'This backup has an invalid signature and cannot be restored.' };
@@ -330,22 +348,30 @@ async function restoreBackup(app, backupZipPath, originalFilePath) {
         const metaEntry = zip.getEntry('metadata.json');
         if (!metaEntry) throw new Error("metadata.json not found.");
         const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+        
+        // Backup des aktuellen "live" Spielstands vor der Wiederherstellung
         if (fs.existsSync(originalFilePath)) {
-            fs.copyFileSync(originalFilePath, `${originalFilePath}.pre-restore`);
+            const preRestoreBackupDir = path.join(path.dirname(originalFilePath), 'Pre-Restore Backups');
+            fs.mkdirSync(preRestoreBackupDir, { recursive: true });
+            const backupFileName = `${path.basename(originalFilePath)}.${Date.now()}.pre-restore`;
+            fs.copyFileSync(originalFilePath, path.join(preRestoreBackupDir, backupFileName));
         }
+
         zip.extractEntryTo(metadata.originalFileName, path.dirname(originalFilePath), false, true);
+        
         const mediaManifestEntry = zip.getEntry('media_manifest.json');
         if (mediaManifestEntry) {
             const destManifestPath = getManifestPath(originalFilePath);
             fs.mkdirSync(path.dirname(destManifestPath), { recursive: true });
             fs.writeFileSync(destManifestPath, mediaManifestEntry.getData());
         }
-        return { success: true, status: 'verified' };
+        return { success: true, status: verificationResult.status };
     } catch (error) {
         console.error(`[BackupManager] Failed to restore backup:`, error);
         return { success: false, status: 'error', message: error.message };
     }
 }
+
 
 module.exports = {
     createBackup,

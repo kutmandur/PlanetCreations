@@ -1,0 +1,14 @@
+[
+  {
+    "corsRuleName": "allowUploadsAndDownloads",
+    "allowedOrigins": ["*"],
+    "allowedHeaders": ["*"],
+    "allowedOperations": [
+      "s3_put_object",
+      "b2_download_file_by_id",
+      "b2_download_file_by_name"
+    ],
+    "exposeHeaders": ["ETag"],
+    "maxAgeSeconds": 3600
+  }
+]

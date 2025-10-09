@@ -145,10 +145,6 @@ const AppContent = () => {
                 setUpdateInfo(null);
                 setUpdateDownloaded(true);
             });
-            // NEUER LISTENER FÜR URL-IMPORT
-            window.electronAPI.onBackupImportStatus((status) => {
-                setModalMessage(status.message);
-            });
         }
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
