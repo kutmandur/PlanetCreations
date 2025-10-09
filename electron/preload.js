@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- Auto-Import Funktionen ---
   onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
   importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
+  onBackupImportStatus: (callback) => ipcRenderer.on('backup-import-status', (_event, status) => callback(status)),
+
+  // --- NEUE FUNKTIONEN FÜR DAS MODAL ---
+  listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),
+  prepareBackupForUpload: (filePath, idToken) => ipcRenderer.invoke('prepare-backup-for-upload', filePath, idToken),
+
 
   // --- Kern-Funktionen ---
   selectMode: (mode) => ipcRenderer.send('select-mode', mode),

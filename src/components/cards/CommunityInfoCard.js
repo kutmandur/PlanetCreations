@@ -29,16 +29,6 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
             return `rgba(249, 250, 251, 1)`;
         }
     };
-
-    const slugify = (text) => {
-        if (!text) return '';
-        return text.toString().toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/[^\w-]+/g, '')
-            .replace(/--+/g, '-')
-            .replace(/^-+/, '')
-            .replace(/-+$/, '');
-    };
     
     const handleCopyToClipboard = (text) => {
         navigator.clipboard.writeText(text);
@@ -108,7 +98,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                 className="w-full sm:w-1/3 p-4 flex flex-col items-center text-center border-r sm:flex-shrink-0"
                 style={{ backgroundColor: hexToRgba(themeColor) }}
             >
-                <Link to={`/community/${slugify(communityInfo.communityName)}`} className="flex flex-col items-center">
+                <Link to={`/community/${communityInfo.slug}`} className="flex flex-col items-center">
                     <img 
                         src={communityInfo.communityProfileImageUrl || 'https://placehold.co/96x96/e2e8f0/64748b?text=C'}
                         alt={`${communityInfo.communityName} profile`}

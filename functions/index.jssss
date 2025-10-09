@@ -9,13 +9,16 @@ const path = require("path");
 const crypto = require("crypto");
 const S3 = require("aws-sdk/clients/s3");
 
+// Aktualisierte Imports für v2-Funktionen
+const { onDocumentCreated, onDocumentDeleted, onDocumentWritten, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+
 admin.initializeApp();
 const db = admin.firestore();
 
-// --- Konfiguration für DigitalOcean Spaces ---
+// Konfiguration für DigitalOcean Spaces
 const s3 = new S3({
   endpoint: functions.config().do.endpoint,
-  region: 'nyc3', // Sicherstellen, dass die korrekte Region hier steht
+  region: 'nyc3', 
   accessKeyId: functions.config().do.key_id,
   secretAccessKey: functions.config().do.secret,
   signatureVersion: "v4",
@@ -167,25 +170,25 @@ app.get("/discordCallback", async (req, res) => {
 exports.api = functions.https.onRequest(app);
 
 
-// --- Callable Functions ---
+// --- Callable Functions (v1) ---
 
 exports.getUploadUrl = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+    throw new functions.https.HttpsError("unauthenticated", "You must be logged in to upload files.");
   }
   const fileName = data.fileName;
   const contentType = data.contentType;
+  const userId = context.auth.uid;
   if (!fileName || !contentType) {
-    throw new functions.https.HttpsError("invalid-argument", "File name and content type must be provided.");
+    throw new functions.https.HttpsError("invalid-argument", "The function must be called with 'fileName' and 'contentType'.");
   }
   
-  const filePath = `temp-uploads/${context.auth.uid}/${Date.now()}-${fileName}`;
-
+  const filePath = `creation-backups/${userId}/${Date.now()}-${fileName}`;
   const params = {
     Bucket: functions.config().do.bucket_name,
     Key: filePath,
     ContentType: contentType,
-    Expires: 60 * 10,
+    Expires: 60 * 5, 
   };
   try {
     const uploadUrl = await s3.getSignedUrlPromise("putObject", params);
@@ -197,30 +200,7 @@ exports.getUploadUrl = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.deleteTempFile = functions.https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
-    }
-    const tempUrl = data.tempUrl;
-    if (!tempUrl || !tempUrl.includes('/temp-uploads/')) {
-      throw new functions.https.HttpsError("invalid-argument", "A valid temporary URL must be provided.");
-    }
-    try {
-        const urlParts = new URL(tempUrl);
-        const filePath = decodeURIComponent(urlParts.pathname.substring(1));
-        await s3.deleteObject({
-            Bucket: functions.config().do.bucket_name,
-            Key: filePath,
-        }).promise();
-        return { success: true };
-    } catch (error) {
-        console.error(`Failed to delete temp file: ${tempUrl}`, error);
-        throw new functions.https.HttpsError('internal', 'Could not delete temporary file.');
-    }
-});
-
-
- exports.voteOnCreation = functions.https.onCall(async (data, context) => {
+exports.voteOnCreation = functions.https.onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to vote.');
     }
@@ -504,124 +484,98 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
 
 
 
-// --- Trigger Functions (Alles Gen 1) ---
+// --- Trigger Functions (Alle auf v2 aktualisiert) ---
 
-exports.onCreationWrite = functions.firestore
-    .document('creations/{creationId}')
-    .onWrite(async (change, context) => {
-        const dataAfter = change.after.exists ? change.after.data() : null;
-        const dataBefore = change.before.exists ? change.before.data() : null;
-
-        const urlAfter = dataAfter ? dataAfter.backupUrl : null;
-        const urlBefore = dataBefore ? dataBefore.backupUrl : null;
-
-        if (urlAfter && urlAfter.includes('/temp-uploads/') && urlAfter !== urlBefore) {
-            try {
-                const bucketName = functions.config().do.bucket_name;
-                const urlParts = new URL(urlAfter);
-                const sourcePath = decodeURIComponent(urlParts.pathname.substring(1));
-                const fileName = sourcePath.split('/').pop();
-                
-                const destinationPath = `creation-backups/${dataAfter.userId}/${fileName}`;
-
-                await s3.copyObject({
-                    Bucket: bucketName,
-                    CopySource: `/${bucketName}/${sourcePath}`,
-                    Key: destinationPath,
-                    ACL: 'public-read'
-                }).promise();
-                console.log(`Successfully copied ${sourcePath} to ${destinationPath} and made public.`);
-
-                await s3.deleteObject({
-                    Bucket: bucketName,
-                    Key: sourcePath,
-                }).promise();
-                console.log(`Successfully deleted temporary file: ${sourcePath}`);
-
-                const newPublicUrl = `${functions.config().do.public_url}/${destinationPath}`;
-                await change.after.ref.update({ backupUrl: newPublicUrl });
-            } catch (error) {
-                console.error(`Failed to process temp file for creation ${context.params.creationId}. URL: ${urlAfter}`, error);
-                await change.after.ref.update({ backupProcessingError: error.message });
-            }
-        }
-        
-        if (urlBefore && urlBefore !== urlAfter && !urlBefore.includes('/temp-uploads/')) {
-             try {
-                const oldUrlParts = new URL(urlBefore);
-                const oldFilePath = decodeURIComponent(oldUrlParts.pathname.substring(1));
-                await s3.deleteObject({
-                    Bucket: functions.config().do.bucket_name,
-                    Key: oldFilePath,
-                }).promise();
-                console.log(`Successfully deleted old file: ${oldFilePath} for creation ${context.params.creationId}.`);
-            } catch (deleteError) {
-                console.error(`Failed to delete old file: ${urlBefore}`, deleteError);
-            }
-        }
-
+exports.onCreationCreate = onDocumentCreated('creations/{creationId}', async (event) => {
+    const snap = event.data;
+    if (!snap) {
+        console.log("No data associated with the event.");
         return null;
-    });
+    }
+    const newData = snap.data();
+    const backupUrl = newData.backupUrl;
 
-exports.onCreationDelete = functions.firestore
-    .document('creations/{creationId}')
-    .onDelete(async (snap, context) => {
-        const deletedData = snap.data();
-        const backupUrl = deletedData.backupUrl;
+    if (!backupUrl) {
+        console.log(`Creation ${event.params.creationId} was created without a backupUrl.`);
+        return null;
+    }
 
-        // Lösche keine temporären Dateien, da diese automatisch ablaufen
-        if (!backupUrl || backupUrl.includes('/temp-uploads/')) {
-            console.log(`Creation ${context.params.creationId} had no permanent backupUrl. No file to delete.`);
-            return null;
-        }
+    try {
+        const urlParts = new URL(backupUrl);
+        const filePath = decodeURIComponent(urlParts.pathname.substring(1));
+        const params = {
+            Bucket: functions.config().do.bucket_name,
+            Key: filePath,
+            ACL: 'public-read',
+        };
+        await s3.putObjectAcl(params).promise();
+        console.log(`Successfully set ACL for new creation's file: ${filePath}`);
+        return null;
+    } catch (error) {
+        console.error(`Failed to set ACL for file on creation ${event.params.creationId}. URL: ${backupUrl}`, error);
+        return null;
+    }
+});
 
-        try {
-            const urlParts = new URL(backupUrl);
-            const filePath = decodeURIComponent(urlParts.pathname.substring(1));
-            const params = {
-                Bucket: functions.config().do.bucket_name,
-                Key: filePath,
-            };
-            console.log(`Attempting to delete file: ${filePath} from bucket: ${params.Bucket}`);
-            await s3.deleteObject(params).promise();
-            console.log(`Successfully deleted file: ${filePath}`);
-            return null;
-        } catch (error) {
-            console.error(`Failed to delete file for creation ${context.params.creationId}. URL: ${backupUrl}`, error);
-            return null;
-        }
-    });
+exports.onCreationDelete = onDocumentDeleted('creations/{creationId}', async (event) => {
+    const snap = event.data;
+    if (!snap) {
+        console.log("No data associated with the event for deletion.");
+        return null;
+    }
+    const deletedData = snap.data();
+    const backupUrl = deletedData.backupUrl;
 
-exports.onMemberJoin = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onCreate(async (snap, context) => {
-        const communityId = context.params.communityId;
-        const communityRef = db.doc(`communitys/${communityId}`);
-        return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(1) });
-    });
+    if (!backupUrl) {
+        console.log(`Creation ${event.params.creationId} had no backupUrl. No file to delete.`);
+        return null;
+    }
 
-exports.onMemberLeave = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onDelete(async (snap, context) => {
-        const communityId = context.params.communityId;
-        const communityRef = db.doc(`communitys/${communityId}`);
-        return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(-1) });
-    });
+    try {
+        const urlParts = new URL(backupUrl);
+        const filePath = decodeURIComponent(urlParts.pathname.substring(1));
+        const params = {
+            Bucket: functions.config().do.bucket_name,
+            Key: filePath,
+        };
+        console.log(`Attempting to delete file: ${filePath} from bucket: ${params.Bucket}`);
+        await s3.deleteObject(params).promise();
+        console.log(`Successfully deleted file: ${filePath}`);
+        return null;
+    } catch (error) {
+        console.error(`Failed to delete file for creation ${event.params.creationId}. URL: ${backupUrl}`, error);
+        return null;
+    }
+});
 
-exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWrite(async (change, context) => {
-    const afterData = change.after.data();
-    const beforeData = change.before.data();
+exports.onMemberJoin = onDocumentCreated('communitys/{communityId}/members/{userId}', async (event) => {
+    const communityId = event.params.communityId;
+    const communityRef = db.doc(`communitys/${communityId}`);
+    return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(1) });
+});
+
+exports.onMemberLeave = onDocumentDeleted('communitys/{communityId}/members/{userId}', async (event) => {
+    const communityId = event.params.communityId;
+    const communityRef = db.doc(`communitys/${communityId}`);
+    return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(-1) });
+});
+
+exports.onProfileWrite = onDocumentWritten("profiles/{userId}", async (event) => {
+    if (!event.data) return null;
+    const afterData = event.data.after.data();
+    const beforeData = event.data.before.data();
     if (afterData && (!beforeData || beforeData.username !== afterData.username)) {
         const username = afterData.username;
         const usernameLowercase = username.toLowerCase();
-        return change.after.ref.set({ username_lowercase: usernameLowercase }, { merge: true });
+        return event.data.after.ref.set({ username_lowercase: usernameLowercase }, { merge: true });
     }
     return null;
 });
 
-exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite(async (change, context) => {
-    const userId = context.params.userId;
-    const userData = change.after.data();
+exports.setCustomClaims = onDocumentWritten("users/{userId}", async (event) => {
+    if (!event.data) return null;
+    const userId = event.params.userId;
+    const userData = event.data.after.data();
     if (!userData || !userData.role) { return null; }
     const newRole = userData.role;
     try {
@@ -636,10 +590,12 @@ exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite
     }
 });
 
-exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUpdate(async (change, context) => {
-    const userId = context.params.userId;
-    const beforeData = change.before.data();
-    const afterData = change.after.data();
+exports.onProfileUpdate = onDocumentUpdated('profiles/{userId}', async (event) => {
+    if (!event.data) return null;
+
+    const userId = event.params.userId;
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
 
     const usernameChanged = beforeData.username !== afterData.username;
     const profilePicChanged = beforeData.profilePictureUrl !== afterData.profilePictureUrl;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
@@ -6,37 +6,17 @@ import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
 const DiscordManager = ({ community, setModalMessage, setConfirmation }) => {
-    const [channels, setChannels] = useState([]);
-    const [isFetchingChannels, setIsFetchingChannels] = useState(false);
+    // UPDATED: Directly read the channels from the community object passed in as a prop.
+    const channels = community.discordChannels || [];
+    
+    // State hooks for UI interactions remain the same.
     const [discordChannelMapping, setDiscordChannelMapping] = useState(community.discordChannelMapping || {});
     const [isSaving, setIsSaving] = useState(false);
     const [newClassName, setNewClassName] = useState('');
     const [isUpdatingClasses, setIsUpdatingClasses] = useState(false);
 
-    const fetchDiscordChannels = useCallback(async (isSilent = false) => {
-        if (!community.discordServerId) {
-            if (!isSilent) setModalMessage('Please set a Discord Server ID in the community settings first.');
-            return;
-        }
-        setIsFetchingChannels(true);
-        try {
-            const response = await fetch(`https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/getDiscordChannels?serverId=${community.discordServerId}`);
-            if (!response.ok) throw new Error(await response.text());
-            const fetchedChannels = await response.json();
-            setChannels(fetchedChannels);
-            if (!isSilent && fetchedChannels.length > 0) setModalMessage(`Found ${fetchedChannels.length} text channels.`);
-        } catch (error) {
-            if (!isSilent) setModalMessage(`Error fetching channels: ${error.message}`);
-        } finally {
-            setIsFetchingChannels(false);
-        }
-    }, [community.discordServerId, setModalMessage]);
-
-    useEffect(() => {
-        if (community.discordServerId && channels.length === 0) {
-            fetchDiscordChannels(true);
-        }
-    }, [community.discordServerId, channels.length, fetchDiscordChannels]);
+    // REMOVED: The fetchDiscordChannels function and its related useEffect are no longer needed,
+    // as the bot now handles syncing this data automatically in the background.
     
     const handleChannelMappingChange = (className, selectedChannelId) => {
         setDiscordChannelMapping(prev => {
@@ -128,16 +108,7 @@ const DiscordManager = ({ community, setModalMessage, setConfirmation }) => {
                 </p>
             </div>
 
-            <div className="text-center mb-6">
-                <button 
-                    type="button" 
-                    onClick={() => fetchDiscordChannels(false)} 
-                    disabled={isFetchingChannels || !community.discordServerId} 
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-75"
-                >
-                    {isFetchingChannels ? <Spinner size="small" /> : 'Fetch / Refresh Channels'}
-                </button>
-            </div>
+            {/* REMOVED: The "Fetch / Refresh Channels" button is no longer necessary. */}
 
             <div className="mb-6 p-4 border rounded-lg bg-gray-50">
                 <h4 className="font-semibold text-gray-700 mb-2">Add New Class</h4>
@@ -190,7 +161,10 @@ const DiscordManager = ({ community, setModalMessage, setConfirmation }) => {
                     ))}
                 </div>
             ) : (
-                !isFetchingChannels && <p className="text-center text-gray-500">No channels found. Ensure your Server ID is correct in Settings and click "Fetch Channels".</p>
+                // UPDATED: The empty state message is more helpful now.
+                <p className="text-center text-gray-500">
+                    No channels have been synced yet. Ensure the bot has been invited to your Discord server and has the correct permissions.
+                </p>
             )}
 
             <div className="flex justify-end mt-6">
