@@ -14,6 +14,116 @@ const backupCategoryMap = {
     '.zooauto': 'Auto Save'
 };
 
+// Erlaubte Dateiendungen für Game-Files
+const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
+
+// Maximale Dateigröße für Uploads (300 MB)
+const MAX_UPLOAD_SIZE_BYTES = 300 * 1024 * 1024;
+
+/**
+ * Prüft ob eine Datei ein gültiges Game-File ist
+ */
+function isValidGameFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return ALLOWED_GAME_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Validiert eine Backup-Datei für den Upload
+ * Prüft: Dateiendung, Größe (max 300MB), Signatur
+ * @returns {Object} { valid: boolean, error?: string, isSigned: boolean, fileSize: number }
+ */
+async function validateBackupForUpload(backupFilePath) {
+    try {
+        // 1. Prüfe ob Datei existiert
+        if (!fs.existsSync(backupFilePath)) {
+            return { valid: false, error: 'File not found.' };
+        }
+
+        // 2. Prüfe Dateiendung
+        const ext = path.extname(backupFilePath).toLowerCase();
+        if (ext !== '.planetcreations') {
+            return { valid: false, error: 'Invalid file type. Only .PlanetCreations backup files are allowed.' };
+        }
+
+        // 3. Prüfe Dateigröße
+        const stats = fs.statSync(backupFilePath);
+        const fileSizeBytes = stats.size;
+        if (fileSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+            const sizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
+            return {
+                valid: false,
+                error: `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`,
+                fileSize: fileSizeBytes
+            };
+        }
+
+        // 4. Prüfe ob es ein gültiges Backup-Archiv ist
+        let zip;
+        try {
+            zip = new AdmZip(backupFilePath);
+        } catch (e) {
+            return { valid: false, error: 'Invalid or corrupted backup file.' };
+        }
+
+        const metaEntry = zip.getEntry('metadata.json');
+        if (!metaEntry) {
+            return { valid: false, error: 'Invalid backup file: metadata.json is missing.' };
+        }
+
+        let metadata;
+        try {
+            metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+        } catch (e) {
+            return { valid: false, error: 'Invalid backup file: metadata.json is corrupted.' };
+        }
+
+        // 5. Prüfe ob das Original-File ein gültiges Game-File war
+        if (metadata.originalFileName) {
+            const originalExt = path.extname(metadata.originalFileName).toLowerCase();
+            if (!ALLOWED_GAME_EXTENSIONS.includes(originalExt)) {
+                return {
+                    valid: false,
+                    error: `Invalid backup content. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) are allowed.`
+                };
+            }
+        }
+
+        // 6. Prüfe Signatur (Client-seitig nur zur Info - die echte Validierung erfolgt serverseitig)
+        // Der Server validiert die Signatur erneut und ist die einzige vertrauenswürdige Quelle
+        const isSigned = metadata.isSigned === true && !!metadata.signature;
+
+        // Warnung für unsignierte Backups (aber kein harter Fehler - Server entscheidet)
+        if (!isSigned) {
+            return {
+                valid: true, // Client erlaubt Upload, Server wird ablehnen
+                isSigned: false,
+                fileSize: fileSizeBytes,
+                warning: 'This backup is not signed. The server will reject unsigned backups.',
+                metadata: {
+                    originalFileName: metadata.originalFileName,
+                    backupDate: metadata.backupDate
+                }
+            };
+        }
+
+        return {
+            valid: true,
+            isSigned: true,
+            fileSize: fileSizeBytes,
+            metadata: {
+                originalFileName: metadata.originalFileName,
+                backupDate: metadata.backupDate,
+                signerUsername: metadata.signerUsername
+            }
+        };
+
+    } catch (error) {
+        console.error('[BackupManager] Validation error:', error);
+        return { valid: false, error: `Validation failed: ${error.message}` };
+    }
+}
+
 function getBackupBaseDir(app) {
     return path.join(app.getPath('documents'), 'PlanetCreations');
 }
@@ -45,10 +155,11 @@ async function verifyBackup(backupZipPath) {
             const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
             const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
 
-            const verifier = crypto.createVerify('sha256');
+            // Verifiziere die Signatur des Hashes (nicht des Hashes erneut hashen)
+            const verifier = crypto.createVerify('RSA-SHA256');
             verifier.update(hash);
             verifier.end();
-            
+
             const isVerified = verifier.verify(publicKey, signature, 'hex');
 
             return { status: isVerified ? 'verified' : 'invalid' };
@@ -96,6 +207,13 @@ function deleteBackup(app, backupFilePath) {
 
 async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null, targetDir = null) {
     if (!fs.existsSync(sourceFilePath)) return null;
+
+    // Prüfe ob es ein gültiges Game-File ist
+    if (!isValidGameFile(sourceFilePath)) {
+        const ext = path.extname(sourceFilePath).toLowerCase();
+        throw new Error(`Invalid file type "${ext}". Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be backed up.`);
+    }
+
     try {
         const fileExtension = path.extname(sourceFilePath).toLowerCase();
         const category = backupCategoryMap[fileExtension] || 'Misc';
@@ -166,7 +284,7 @@ async function createBackup(app, sourceFilePath, note, isSigned = false, idToken
 function listAllBackups(app) {
     const allBackups = {};
     const baseDir = getBackupBaseDir(app);
-    const categories = ['Parks', 'Blueprints', 'Auto Save', 'Custom Media'];
+    const categories = ['Parks', 'Blueprints', 'Auto Save', 'Custom Media', 'Workshop', 'Misc'];
 
     for (const category of categories) {
         const categoryDir = path.join(baseDir, category);
@@ -180,11 +298,13 @@ function listAllBackups(app) {
                 const metaEntry = zip.getEntry('metadata.json');
                 if (metaEntry) {
                     const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+                    const backupData = { ...metadata, category: category };
+
                     const saveName = path.basename(metadata.originalFileName).replace(/\.[^/.]+$/, "");
                     if (!allBackups[saveName]) {
                         allBackups[saveName] = [];
                     }
-                    allBackups[saveName].push(metadata);
+                    allBackups[saveName].push(backupData);
                 }
             } catch (e) { console.error(`[BackupManager] Could not read metadata from ${file}:`, e); }
         }
@@ -382,4 +502,8 @@ module.exports = {
     deleteBackup,
     backupAllCreations,
     verifyBackup,
+    validateBackupForUpload,
+    isValidGameFile,
+    ALLOWED_GAME_EXTENSIONS,
+    MAX_UPLOAD_SIZE_BYTES,
 };

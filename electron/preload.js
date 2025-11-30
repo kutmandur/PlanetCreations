@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
   importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
   onBackupImportStatus: (callback) => ipcRenderer.on('backup-import-status', (_event, status) => callback(status)),
+  onBackupsUpdated: (callback) => ipcRenderer.on('backups-updated', (_event) => callback()), // NEU: Listener für Refresh
 
   // --- NEUE FUNKTIONEN FÜR DAS MODAL ---
   listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),

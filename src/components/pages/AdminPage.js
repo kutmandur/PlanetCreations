@@ -388,7 +388,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                 </div>
                             </div>
                         </div>
-                        <div className="mt-6 flex justify-center">
+                        <div className="mt-6 flex justify-center gap-4">
                             <button onClick={handleSeedDlcs} disabled={seedingDlcs} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
                                 {seedingDlcs ? <Spinner size="small" /> : 'Seed All DLCs to Database'}
                             </button>

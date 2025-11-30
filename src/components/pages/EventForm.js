@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, updateDoc, arrayUnion, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
-import { getGameColor } from '../../utils/helpers';
+import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 
 // Import all sub-components from their new location
 import EventGameSelector from '../eventform/EventGameSelector';
@@ -19,7 +19,7 @@ import EventVisibility from '../eventform/EventVisibility';
 
 const defaultReminder = { days: 0, hours: 0, minutes: 0 };
 
-const EventForm = ({ user, setModalMessage }) => {
+const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     const { eventId, communityId } = useParams();
     const navigate = useNavigate();
     const isEditing = !!eventId;
@@ -281,6 +281,21 @@ const EventForm = ({ user, setModalMessage }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // Blacklist validation
+        const textsToCheck = [
+            title,
+            description,
+            ...rules,
+            ...customFields.map(f => f.label)
+        ];
+        for (const text of textsToCheck) {
+            if (containsBlacklistedWord(text, blacklist)) {
+                setModalMessage('Your event contains a forbidden word. Please revise it.');
+                return;
+            }
+        }
+
         setLoading(true);
         const formatReminder = (reminder) => {
             const totalMinutes = (reminder.days * 1440) + (reminder.hours * 60) + reminder.minutes;

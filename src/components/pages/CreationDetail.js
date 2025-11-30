@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
@@ -11,15 +12,27 @@ import CommunityInfoCard from '../cards/CommunityInfoCard';
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
     const id = creationIdOverride || idFromUrl;
+    const queryClient = useQueryClient();
 
-    const [creation, setCreation] = useState(null);
-    const [loading, setLoading] = useState(true);
+    // Versuche Creation aus Cache zu laden für sofortige Anzeige
+    const cachedCreation = queryClient.getQueryData(['creation', id]);
+
+    const [creation, setCreation] = useState(cachedCreation || null);
+    const [loadingCreation, setLoadingCreation] = useState(!cachedCreation);
     const [isVoting, setIsVoting] = useState(false);
     const [isFollowing, setIsFollowing] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
-    const [creatorProfile, setCreatorProfile] = useState(null);
+
+    // Versuche Profil aus Cache zu laden
+    const cachedProfile = cachedCreation?.userId
+        ? queryClient.getQueryData(['profile', cachedCreation.userId])
+        : null;
+    const [creatorProfile, setCreatorProfile] = useState(cachedProfile || null);
+
+    // Sekundäre Daten (laden im Hintergrund)
     const [communityDetails, setCommunityDetails] = useState([]);
+    const [loadingCommunities, setLoadingCommunities] = useState(false);
     const [eventDetails, setEventDetails] = useState(null);
     const [userVote, setUserVote] = useState(null);
     const navigate = useNavigate();
@@ -39,7 +52,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     useEffect(() => {
         let isMounted = true;
         if (!id) {
-            setLoading(false);
+            setLoadingCreation(false);
             return;
         }
 
@@ -50,71 +63,103 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 const creationData = { id: creationDoc.id, ...creationDoc.data() };
                 setCreation(creationData);
 
+                // Parallele Datenabfragen starten
+                const fetchPromises = [];
+
+                // 1. Creator Profil - zuerst aus Cache prüfen
                 if (creationData.userId) {
-                    const profileRef = doc(db, 'profiles', creationData.userId);
-                    const profileSnap = await getDoc(profileRef);
-                    if (profileSnap.exists()) setCreatorProfile(profileSnap.data());
-                }
-
-                if (creationData.communityIds && creationData.communityIds.length > 0) {
-                    const communityQuery = query(collection(db, 'communitys'), where(documentId(), 'in', creationData.communityIds));
-                    const communitySnapshots = await getDocs(communityQuery);
-                    const communitiesMap = new Map(communitySnapshots.docs.map(doc => [doc.id, { id: doc.id, ...doc.data() }]));
-
-                    const detailsPromises = (creationData.communityAssignments || []).map(async (assignment) => {
-                        const communityData = communitiesMap.get(assignment.communityId);
-                        if (!communityData) return null;
-
-                        const memberRef = doc(db, 'communitys', assignment.communityId, 'members', creationData.userId);
-                        const linkRef = doc(db, 'communitys', assignment.communityId, 'creations', creationData.id);
-                        
-                        const [memberSnap, linkSnap] = await Promise.all([getDoc(memberRef), getDoc(linkRef)]);
-
-                        if (memberSnap.exists()) {
-                            const memberData = memberSnap.data();
-                            const creatorRanks = (memberData.roles || []).map(roleName => {
-                                return communityData.ranks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-                            }).filter(Boolean);
-
-                            return {
-                                communityId: assignment.communityId,
-                                communityName: communityData.name,
-                                communityProfileImageUrl: communityData.profileImageUrl,
-                                themeColor: communityData.themeColor,
-                                creatorRanksInCommunity: creatorRanks,
-                                customFieldsSchema: communityData.customCreationFields,
-                                customData: creationData.communitySpecificData?.[assignment.communityId],
-                                showcaseVideoUrl: linkSnap.exists() ? linkSnap.data().showcaseVideoUrl : null,
-                                slug: communityData.slug
-                            };
-                        }
-                        return null;
-                    });
-                    const resolvedDetails = (await Promise.all(detailsPromises)).filter(Boolean);
-                    setCommunityDetails(resolvedDetails);
-                }
-
-                if (creationData.eventIds && creationData.eventIds.length > 0) {
-                    const firstEventId = creationData.eventIds[0];
-                    const eventRef = doc(db, 'events', firstEventId);
-                    const eventSnap = await getDoc(eventRef);
-                    if (eventSnap.exists()) {
-                        setEventDetails({ id: eventSnap.id, ...eventSnap.data() });
+                    const cachedProfile = queryClient.getQueryData(['profile', creationData.userId]);
+                    if (cachedProfile) {
+                        setCreatorProfile(cachedProfile);
+                    } else {
+                        fetchPromises.push(
+                            getDoc(doc(db, 'profiles', creationData.userId))
+                                .then(snap => {
+                                    if (isMounted && snap.exists()) {
+                                        const profileData = snap.data();
+                                        setCreatorProfile(profileData);
+                                        // Im Cache speichern für zukünftige Nutzung
+                                        queryClient.setQueryData(['profile', creationData.userId], profileData);
+                                    }
+                                })
+                        );
                     }
+                }
+
+                // 2. Event Details
+                if (creationData.eventIds && creationData.eventIds.length > 0) {
+                    fetchPromises.push(
+                        getDoc(doc(db, 'events', creationData.eventIds[0]))
+                            .then(snap => {
+                                if (isMounted) {
+                                    setEventDetails(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+                                }
+                            })
+                    );
                 } else {
                     setEventDetails(null);
                 }
 
+                // 3. Community Details (komplexer, aber auch parallel)
+                if (creationData.communityIds && creationData.communityIds.length > 0) {
+                    setLoadingCommunities(true);
+                    fetchPromises.push(
+                        (async () => {
+                            const communityQuery = query(collection(db, 'communitys'), where(documentId(), 'in', creationData.communityIds));
+                            const communitySnapshots = await getDocs(communityQuery);
+                            const communitiesMap = new Map(communitySnapshots.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
+
+                            const detailsPromises = (creationData.communityAssignments || []).map(async (assignment) => {
+                                const communityData = communitiesMap.get(assignment.communityId);
+                                if (!communityData) return null;
+
+                                const [memberSnap, linkSnap] = await Promise.all([
+                                    getDoc(doc(db, 'communitys', assignment.communityId, 'members', creationData.userId)),
+                                    getDoc(doc(db, 'communitys', assignment.communityId, 'creations', creationData.id))
+                                ]);
+
+                                if (memberSnap.exists()) {
+                                    const memberData = memberSnap.data();
+                                    const creatorRanks = (memberData.roles || []).map(roleName => {
+                                        return communityData.ranks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+                                    }).filter(Boolean);
+
+                                    return {
+                                        communityId: assignment.communityId,
+                                        communityName: communityData.name,
+                                        communityProfileImageUrl: communityData.profileImageUrl,
+                                        themeColor: communityData.themeColor,
+                                        creatorRanksInCommunity: creatorRanks,
+                                        customFieldsSchema: communityData.customCreationFields,
+                                        customData: creationData.communitySpecificData?.[assignment.communityId],
+                                        showcaseVideoUrl: linkSnap.exists() ? linkSnap.data().showcaseVideoUrl : null,
+                                        slug: communityData.slug
+                                    };
+                                }
+                                return null;
+                            });
+                            const resolvedDetails = (await Promise.all(detailsPromises)).filter(Boolean);
+                            if (isMounted) {
+                                setCommunityDetails(resolvedDetails);
+                                setLoadingCommunities(false);
+                            }
+                        })()
+                    );
+                }
+
+                // Alle parallelen Anfragen abwarten
+                await Promise.all(fetchPromises);
+
                 const videoCount = creationData.videoUrls?.length || 0;
                 const imageCount = creationData.imageUrls?.length || 0;
                 const initialIndex = imageCount > 0 ? videoCount : 0;
-                setActiveMediaIndex(initialIndex);
+                if (isMounted) setActiveMediaIndex(initialIndex);
 
             } else {
                 setModalMessage("Creation not found.");
                 if (!creationIdOverride) navigate('/');
             }
-            setLoading(false);
+            if (isMounted) setLoadingCreation(false);
         });
 
         return () => { isMounted = false; unsubscribe(); };
@@ -249,7 +294,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         });
     };
 
-    if (loading) return <Spinner gameId={creation?.game} />;
+    // Zeige Spinner nur wenn noch keine gecachte Creation vorhanden ist
+    if (loadingCreation && !creation) return <Spinner gameId={creation?.game} />;
     if (!creation) return null;
 
     const isOwner = user && user.uid === creation.userId;
@@ -398,11 +444,23 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 <div className="w-full lg:w-1/3 space-y-8">
                     <div className="bg-white rounded-lg shadow-md p-6">
                         <Link to={`/profile/${creation.userId}`} className="flex items-center mb-4 cursor-pointer">
-                            <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover mr-4"/>
-                            <div>
-                                <p className="text-sm text-gray-500">Creator</p>
-                                <span className={`text-xl font-bold ${color.text} hover:underline`}>{displayUsername}</span>
-                            </div>
+                            {creatorProfile ? (
+                                <>
+                                    <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover mr-4"/>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Creator</p>
+                                        <span className={`text-xl font-bold ${color.text} hover:underline`}>{displayUsername}</span>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mr-4"></div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Creator</p>
+                                        <div className="h-6 w-32 bg-gray-200 rounded animate-pulse"></div>
+                                    </div>
+                                </>
+                            )}
                         </Link>
                         <div className="mt-6 pt-6 border-t text-sm text-gray-600 space-y-4">
                             <div className="flex items-center justify-between"><span className="font-bold">Status:</span><span className={`px-2 py-1 rounded-full font-semibold text-xs ${creation.status === 'finished' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>{creation.status === 'finished' ? 'Finished' : 'Work in Progress'}</span></div>
@@ -439,9 +497,17 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         </div>
                         
                         {creation.customMediaLink && (<div className="mt-4"><p className="text-sm font-bold text-gray-600 mb-1">Custom Media</p><button onClick={() => setExternalLink(creation.customMediaLink)} className={`${color.text} hover:underline break-all text-left`}>Download Link</button></div>)}
-                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<span key={tag} className="bg-gray-200 text-gray-800 text-sm font-semibold px-2.5 py-1 rounded-full">{tag}</span>))}</div></div>
+                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 text-gray-800 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 transition-colors cursor-pointer">{tag}</button>))}</div></div>
                     </div>
-                    {communityDetails.length > 0 && (<div className="space-y-4">{communityDetails.map(communityInfo => (<CommunityInfoCard key={communityInfo.communityId} communityInfo={communityInfo} setModalMessage={setModalMessage} />))}</div>)}
+                    {loadingCommunities ? (
+                        <div className="bg-white rounded-lg shadow-md p-6 animate-pulse">
+                            <div className="h-6 bg-gray-200 rounded w-1/2 mb-4"></div>
+                            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                        </div>
+                    ) : communityDetails.length > 0 && (
+                        <div className="space-y-4">{communityDetails.map(communityInfo => (<CommunityInfoCard key={communityInfo.communityId} communityInfo={communityInfo} setModalMessage={setModalMessage} />))}</div>
+                    )}
                 </div>
             </div>
         </div>

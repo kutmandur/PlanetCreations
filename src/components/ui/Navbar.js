@@ -3,9 +3,9 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
 import Icon from './Icon';
 import NotificationDropdown from './NotificationDropdown';
+import PreloadLink from './PreloadLink';
+import { preloadRoute } from '../../utils/preload';
 
-// 1. Das Logo wird jetzt direkt importiert.
-//    (Passe den Pfad an, falls deine Navbar.js in einem tieferen Ordner liegt)
 import logo from '../../assets/logo.png'; 
 
 const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
@@ -61,23 +61,35 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
 
                 <nav className="flex items-center space-x-4">
                     {isElectron && (
-                        <Link to={switchModePath}>
+                        <PreloadLink to={switchModePath}>
                             <button className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors">
                                 <Icon path={switchModeIcon} className="w-5 h-5" solid />
                                 <span>{switchModeText}</span>
                             </button>
-                        </Link>
+                        </PreloadLink>
                     )}
 
                     {user ? (
                         <>
                             {isModerator && (
-                                <button onClick={() => navigate('/moderation')} className="p-2 rounded-full hover:bg-gray-700" title="Moderation Panel">
+                                <button
+                                    onClick={() => navigate('/moderation')}
+                                    onMouseEnter={() => preloadRoute('/moderation')}
+                                    onTouchStart={() => preloadRoute('/moderation')}
+                                    className="p-2 rounded-full hover:bg-gray-700"
+                                    title="Moderation Panel"
+                                >
                                     <Icon path={SHIELD_ICON_PATH} className="w-6 h-6 text-yellow-500" solid />
                                 </button>
                             )}
                             {isAdmin && (
-                                <button onClick={() => navigate('/admin')} className="p-2 rounded-full hover:bg-gray-700" title="Admin Management">
+                                <button
+                                    onClick={() => navigate('/admin')}
+                                    onMouseEnter={() => preloadRoute('/admin')}
+                                    onTouchStart={() => preloadRoute('/admin')}
+                                    className="p-2 rounded-full hover:bg-gray-700"
+                                    title="Admin Management"
+                                >
                                     <Icon path={SHIELD_ICON_PATH} className="w-6 h-6 text-red-500" solid />
                                 </button>
                             )}
@@ -96,10 +108,20 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
                                 </button>
                                 {isProfileMenuOpen && (
                                     <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-30">
-                                        <button onClick={() => { navigate(`/profile/${user.uid}`); setIsProfileMenuOpen(false); }} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                        <button
+                                            onClick={() => { navigate(`/profile/${user.uid}`); setIsProfileMenuOpen(false); }}
+                                            onMouseEnter={() => preloadRoute(`/profile/${user.uid}`)}
+                                            onTouchStart={() => preloadRoute(`/profile/${user.uid}`)}
+                                            className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        >
                                             Profile
                                         </button>
-                                        <button onClick={() => { navigate('/settings'); setIsProfileMenuOpen(false); }} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                        <button
+                                            onClick={() => { navigate('/settings'); setIsProfileMenuOpen(false); }}
+                                            onMouseEnter={() => preloadRoute('/settings')}
+                                            onTouchStart={() => preloadRoute('/settings')}
+                                            className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        >
                                             Settings
                                         </button>
                                         <button onClick={handleLogoutAndRedirect} className="w-full text-left block px-4 py-2 text-sm text-red-700 hover:bg-red-50">
@@ -110,7 +132,12 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
                             </div>
                         </>
                     ) : (
-                        <button onClick={() => navigate('/login')} className={`bg-blue-500 hover:bg-blue-600 text-white font-bold px-4 py-2 rounded-md transition-colors`}>
+                        <button
+                            onClick={() => navigate('/login')}
+                            onMouseEnter={() => preloadRoute('/login')}
+                            onTouchStart={() => preloadRoute('/login')}
+                            className={`bg-blue-500 hover:bg-blue-600 text-white font-bold px-4 py-2 rounded-md transition-colors`}
+                        >
                             Login / Register
                         </button>
                     )}

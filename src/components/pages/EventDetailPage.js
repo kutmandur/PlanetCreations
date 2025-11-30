@@ -9,7 +9,7 @@ import { ICONS } from '../../utils/helpers';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 
-const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView }) => {
+const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView, blacklist = [] }) => {
     const { eventId } = useParams();
     const navigate = useNavigate();
     const [event, setEvent] = useState(null);
@@ -427,12 +427,13 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                 )}
             </div>
             {isSubmissionModalOpen && (
-                <EventSubmissionModal 
+                <EventSubmissionModal
                     user={user}
                     event={event}
                     community={community}
                     onClose={handleSubmissionSuccess}
                     setModalMessage={setModalMessage}
+                    blacklist={blacklist}
                 />
             )}
         </div>

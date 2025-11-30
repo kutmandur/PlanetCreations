@@ -4,12 +4,13 @@ import { collection, query, where, getDocs, doc, writeBatch, serverTimestamp, ar
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import Icon from '../ui/Icon';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, containsBlacklistedWord } from '../../utils/helpers';
 
-const SubmissionForm = ({ creation, event, onConfirm, community }) => {
+const SubmissionForm = ({ creation, event, onConfirm, community, blacklist = [] }) => {
     const [customFieldData, setCustomFieldData] = useState({});
     const [checkedRules, setCheckedRules] = useState([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
 
     const handleFieldChange = (fieldId, value) => {
         setCustomFieldData(prev => ({ ...prev, [fieldId]: value }));
@@ -33,6 +34,14 @@ const SubmissionForm = ({ creation, event, onConfirm, community }) => {
     const canSubmit = allRulesChecked && allRequiredFieldsFilled;
 
     const handleSubmit = async () => {
+        // Validate custom field data against blacklist
+        for (const value of Object.values(customFieldData)) {
+            if (containsBlacklistedWord(String(value), blacklist)) {
+                setError('Your submission contains a forbidden word. Please revise it.');
+                return;
+            }
+        }
+        setError('');
         setIsSubmitting(true);
         try {
             const batch = writeBatch(db);
@@ -100,6 +109,7 @@ const SubmissionForm = ({ creation, event, onConfirm, community }) => {
                     </div>
                 </div>
             )}
+            {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
             <button
                 onClick={handleSubmit}
                 disabled={!canSubmit || isSubmitting}
@@ -113,7 +123,7 @@ const SubmissionForm = ({ creation, event, onConfirm, community }) => {
 };
 
 
-const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage }) => {
+const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage, blacklist = [] }) => {
     const [userCreations, setUserCreations] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -203,11 +213,12 @@ const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage
                                         <CreationCard creation={creation} isLink={false} />
                                     </div>
                                     {selectedCreationId === creation.id && (
-                                        <SubmissionForm 
+                                        <SubmissionForm
                                             creation={creation}
                                             event={event}
                                             community={community}
                                             onConfirm={handleConfirmSubmission}
+                                            blacklist={blacklist}
                                         />
                                     )}
                                 </div>

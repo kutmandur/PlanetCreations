@@ -8,9 +8,23 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const S3 = require("aws-sdk/clients/s3");
+const AdmZip = require("adm-zip");
+const { algoliasearch } = require("algoliasearch");
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// --- Algolia Client Setup ---
+const algoliaAppId = functions.config().algolia?.app_id;
+const algoliaAdminKey = functions.config().algolia?.admin_key;
+let algoliaClient = null;
+
+if (algoliaAppId && algoliaAdminKey) {
+    algoliaClient = algoliasearch(algoliaAppId, algoliaAdminKey);
+    console.log("Algolia client initialized successfully.");
+} else {
+    console.warn("Algolia credentials not configured. Sync functions will be skipped.");
+}
 
 // --- Konfiguration für DigitalOcean Spaces ---
 const s3 = new S3({
@@ -167,6 +181,132 @@ app.get("/discordCallback", async (req, res) => {
 exports.api = functions.https.onRequest(app);
 
 
+// --- Konstanten für Backup-Validierung ---
+const MAX_BACKUP_SIZE_BYTES = 300 * 1024 * 1024; // 300 MB
+const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
+
+/**
+ * Serverseitige Validierung eines Backup-Files aus S3
+ * Prüft: Archiv-Integrität, metadata.json, Game-File-Typ, Signatur
+ * @param {Buffer} fileBuffer - Das Backup als Buffer
+ * @param {string} publicKey - Der öffentliche Schlüssel zur Signaturprüfung
+ * @returns {Object} { valid: boolean, error?: string, metadata?: object, verificationStatus: string }
+ */
+function validateBackupBuffer(fileBuffer, publicKey) {
+    try {
+        // 1. Prüfe ob es ein gültiges ZIP-Archiv ist
+        let zip;
+        try {
+            zip = new AdmZip(fileBuffer);
+        } catch (e) {
+            return { valid: false, error: 'Invalid or corrupted backup file.', verificationStatus: 'invalid' };
+        }
+
+        // 2. Prüfe ob metadata.json existiert
+        const metaEntry = zip.getEntry('metadata.json');
+        if (!metaEntry) {
+            return { valid: false, error: 'Invalid backup file: metadata.json is missing.', verificationStatus: 'invalid' };
+        }
+
+        // 3. Parse metadata.json
+        let metadata;
+        try {
+            metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+        } catch (e) {
+            return { valid: false, error: 'Invalid backup file: metadata.json is corrupted.', verificationStatus: 'invalid' };
+        }
+
+        // 4. Prüfe ob das Original-File ein gültiges Game-File war
+        if (!metadata.originalFileName) {
+            return { valid: false, error: 'Invalid backup: originalFileName is missing.', verificationStatus: 'invalid' };
+        }
+
+        const originalExt = path.extname(metadata.originalFileName).toLowerCase();
+        if (!ALLOWED_GAME_EXTENSIONS.includes(originalExt)) {
+            return {
+                valid: false,
+                error: `Invalid backup content. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) are allowed.`,
+                verificationStatus: 'invalid'
+            };
+        }
+
+        // 5. Prüfe ob das Backup signiert ist
+        if (!metadata.isSigned || !metadata.signature) {
+            return {
+                valid: false,
+                error: 'Only signed backups can be uploaded. Please create a signed backup using the desktop client.',
+                verificationStatus: 'unsigned',
+                metadata
+            };
+        }
+
+        // 6. Verifiziere die Signatur
+        if (!publicKey) {
+            console.error('Public key not available for signature verification');
+            return { valid: false, error: 'Server configuration error: Cannot verify signature.', verificationStatus: 'error' };
+        }
+
+        try {
+            const { signature, ...metadataWithoutSignature } = metadata;
+            const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
+            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
+
+            const verifier = crypto.createVerify('RSA-SHA256');
+            verifier.update(hash);
+            verifier.end();
+
+            const isVerified = verifier.verify(publicKey, signature, 'hex');
+
+            if (!isVerified) {
+                return {
+                    valid: false,
+                    error: 'Backup signature is invalid. The file may have been tampered with.',
+                    verificationStatus: 'invalid',
+                    metadata
+                };
+            }
+
+            // Signatur ist gültig
+            return {
+                valid: true,
+                verificationStatus: 'verified',
+                metadata: {
+                    originalFileName: metadata.originalFileName,
+                    backupDate: metadata.backupDate,
+                    signerUid: metadata.signerUid,
+                    signerUsername: metadata.signerUsername,
+                    backupType: metadata.backupType
+                }
+            };
+
+        } catch (verifyError) {
+            console.error('Signature verification error:', verifyError);
+            return {
+                valid: false,
+                error: 'Signature verification failed: ' + verifyError.message,
+                verificationStatus: 'invalid'
+            };
+        }
+
+    } catch (error) {
+        console.error('Backup validation error:', error);
+        return { valid: false, error: 'Validation failed: ' + error.message, verificationStatus: 'error' };
+    }
+}
+
+/**
+ * Generiert den öffentlichen Schlüssel aus dem privaten Signing Key
+ */
+function getPublicKeyFromPrivate(privateKey) {
+    try {
+        const keyObject = crypto.createPublicKey(privateKey);
+        return keyObject.export({ type: 'spki', format: 'pem' });
+    } catch (error) {
+        console.error('Failed to derive public key:', error);
+        return null;
+    }
+}
+
 // --- Callable Functions ---
 
 exports.getUploadUrl = functions.https.onCall(async (data, context) => {
@@ -175,10 +315,30 @@ exports.getUploadUrl = functions.https.onCall(async (data, context) => {
   }
   const fileName = data.fileName;
   const contentType = data.contentType;
+  const fileSize = data.fileSize; // Dateigröße vom Client
+
   if (!fileName || !contentType) {
     throw new functions.https.HttpsError("invalid-argument", "File name and content type must be provided.");
   }
-  
+
+  // Validierung: Dateiendung prüfen
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext !== '.planetcreations') {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Invalid file type. Only .PlanetCreations backup files are allowed."
+    );
+  }
+
+  // Validierung: Dateigröße prüfen (falls vom Client mitgesendet)
+  if (fileSize && fileSize > MAX_BACKUP_SIZE_BYTES) {
+    const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`
+    );
+  }
+
   const filePath = `temp-uploads/${context.auth.uid}/${Date.now()}-${fileName}`;
 
   const params = {
@@ -186,11 +346,15 @@ exports.getUploadUrl = functions.https.onCall(async (data, context) => {
     Key: filePath,
     ContentType: contentType,
     Expires: 60 * 10,
+    // Content-Length-Range Header für S3 - begrenzt Upload-Größe serverseitig
+    Conditions: [
+      ["content-length-range", 0, MAX_BACKUP_SIZE_BYTES]
+    ]
   };
   try {
     const uploadUrl = await s3.getSignedUrlPromise("putObject", params);
     const finalFileUrl = `${functions.config().do.public_url}/${filePath}`;
-    return { uploadUrl, finalFileUrl };
+    return { uploadUrl, finalFileUrl, maxSizeBytes: MAX_BACKUP_SIZE_BYTES };
   } catch (error) {
     console.error("Error creating signed URL for DigitalOcean Spaces", error);
     throw new functions.https.HttpsError("internal", "Could not create upload URL.");
@@ -440,7 +604,7 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
 exports.getAllUserEmails = functions.https.onCall(async (data, context) => {
   if (!context.auth || context.auth.token.role !== 'admin') {
     throw new functions.https.HttpsError(
-      'permission-denied', 
+      'permission-denied',
       'This function can only be called by an administrator.'
     );
   }
@@ -506,7 +670,9 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
 
 // --- Trigger Functions (Alles Gen 1) ---
 
-exports.onCreationWrite = functions.firestore
+exports.onCreationWrite = functions
+    .runWith({ memory: '512MB', timeoutSeconds: 120 }) // Mehr Speicher für ZIP-Verarbeitung
+    .firestore
     .document('creations/{creationId}')
     .onWrite(async (change, context) => {
         const dataAfter = change.after.exists ? change.after.data() : null;
@@ -516,12 +682,81 @@ exports.onCreationWrite = functions.firestore
         const urlBefore = dataBefore ? dataBefore.backupUrl : null;
 
         if (urlAfter && urlAfter.includes('/temp-uploads/') && urlAfter !== urlBefore) {
+            const bucketName = functions.config().do.bucket_name;
+            let sourcePath = null;
+
             try {
-                const bucketName = functions.config().do.bucket_name;
                 const urlParts = new URL(urlAfter);
-                const sourcePath = decodeURIComponent(urlParts.pathname.substring(1));
+                sourcePath = decodeURIComponent(urlParts.pathname.substring(1));
                 const fileName = sourcePath.split('/').pop();
-                
+
+                // === SERVERSEITIGE VALIDIERUNG ===
+
+                // 1. Prüfe Dateiendung
+                const fileExt = path.extname(fileName).toLowerCase();
+                if (fileExt !== '.planetcreations') {
+                    console.error(`Invalid file extension for creation ${context.params.creationId}: ${fileExt}`);
+                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await change.after.ref.update({
+                        backupUrl: null,
+                        backupIsSigned: false,
+                        backupProcessingError: 'Invalid file type. Only .PlanetCreations files are allowed.'
+                    });
+                    return null;
+                }
+
+                // 2. Prüfe Dateigröße
+                const headResult = await s3.headObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                const fileSizeBytes = headResult.ContentLength;
+
+                if (fileSizeBytes > MAX_BACKUP_SIZE_BYTES) {
+                    const sizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
+                    console.error(`File too large for creation ${context.params.creationId}: ${sizeMB} MB`);
+                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await change.after.ref.update({
+                        backupUrl: null,
+                        backupIsSigned: false,
+                        backupProcessingError: `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`
+                    });
+                    return null;
+                }
+
+                // 3. Lade die Datei herunter und validiere sie vollständig (inkl. Signatur)
+                console.log(`Downloading backup for validation: ${sourcePath}`);
+                const fileData = await s3.getObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                const fileBuffer = fileData.Body;
+
+                // Hole den öffentlichen Schlüssel aus dem privaten Signing Key
+                const publicKey = getPublicKeyFromPrivate(SIGNING_KEY);
+                if (!publicKey) {
+                    console.error('Could not derive public key from signing key');
+                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await change.after.ref.update({
+                        backupUrl: null,
+                        backupIsSigned: false,
+                        backupProcessingError: 'Server configuration error: Cannot verify backup signatures.'
+                    });
+                    return null;
+                }
+
+                // Validiere das Backup vollständig (Archiv, Metadata, Game-File-Typ, Signatur)
+                const validation = validateBackupBuffer(fileBuffer, publicKey);
+                console.log(`Validation result for creation ${context.params.creationId}:`, validation.verificationStatus);
+
+                if (!validation.valid) {
+                    console.error(`Backup validation failed for creation ${context.params.creationId}: ${validation.error}`);
+                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await change.after.ref.update({
+                        backupUrl: null,
+                        backupIsSigned: false,
+                        backupProcessingError: validation.error
+                    });
+                    return null;
+                }
+
+                // === VALIDIERUNG BESTANDEN - Datei verschieben ===
+                console.log(`Backup validated successfully for creation ${context.params.creationId}. Moving to permanent storage.`);
+
                 const destinationPath = `creation-backups/${dataAfter.userId}/${fileName}`;
 
                 await s3.copyObject({
@@ -539,13 +774,34 @@ exports.onCreationWrite = functions.firestore
                 console.log(`Successfully deleted temporary file: ${sourcePath}`);
 
                 const newPublicUrl = `${functions.config().do.public_url}/${destinationPath}`;
-                await change.after.ref.update({ backupUrl: newPublicUrl });
+                await change.after.ref.update({
+                    backupUrl: newPublicUrl,
+                    backupFileSize: fileSizeBytes,
+                    backupIsSigned: true, // Vom Server verifiziert
+                    backupSignerUid: validation.metadata.signerUid || null,
+                    backupSignerUsername: validation.metadata.signerUsername || null,
+                    backupOriginalFileName: validation.metadata.originalFileName || null,
+                    backupProcessingError: null // Fehler zurücksetzen
+                });
+
             } catch (error) {
                 console.error(`Failed to process temp file for creation ${context.params.creationId}. URL: ${urlAfter}`, error);
-                await change.after.ref.update({ backupProcessingError: error.message });
+                // Versuche die temporäre Datei zu löschen
+                if (sourcePath) {
+                    try {
+                        await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    } catch (deleteError) {
+                        console.error(`Failed to cleanup temp file after error: ${sourcePath}`, deleteError);
+                    }
+                }
+                await change.after.ref.update({
+                    backupUrl: null,
+                    backupIsSigned: false,
+                    backupProcessingError: error.message
+                });
             }
         }
-        
+
         if (urlBefore && urlBefore !== urlAfter && !urlBefore.includes('/temp-uploads/')) {
              try {
                 const oldUrlParts = new URL(urlBefore);
@@ -696,3 +952,179 @@ exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUp
         return null;
     }
 });
+
+// --- Algolia Sync Functions ---
+
+const ALGOLIA_INDEX_NAME = 'creations';
+
+/**
+ * Sync creation data to Algolia when a creation is created or updated.
+ * Only syncs if Algolia credentials are configured.
+ */
+exports.syncCreationToAlgolia = functions.firestore
+    .document('creations/{creationId}')
+    .onWrite(async (change, context) => {
+        // Skip if Algolia is not configured
+        if (!algoliaClient) {
+            console.log("Algolia not configured, skipping sync.");
+            return null;
+        }
+
+        const creationId = context.params.creationId;
+
+        // Handle deletion
+        if (!change.after.exists) {
+            try {
+                await algoliaClient.deleteObjects({
+                    indexName: ALGOLIA_INDEX_NAME,
+                    objectIDs: [creationId]
+                });
+                console.log(`Deleted creation ${creationId} from Algolia.`);
+            } catch (error) {
+                console.error(`Failed to delete creation ${creationId} from Algolia:`, error);
+            }
+            return null;
+        }
+
+        // Handle create/update
+        const data = change.after.data();
+
+        // Prepare Algolia record with searchable fields
+        const algoliaRecord = {
+            objectID: creationId,
+            title: data.title || '',
+            description: data.description || '',
+            tags: data.tags || [],
+            category: data.category || '',
+            game: data.game || '',
+            platform: data.platform || 'pc',
+            requiredDlcs: data.requiredDlcs || [],
+            modStatus: data.modStatus || 'NoMods',
+            likes: data.likes || 0,
+            dislikes: data.dislikes || 0,
+            createdAt: data.createdAt?.toMillis() || Date.now(),
+            imageUrl: data.imageUrls?.[0] || null,
+            username: data.username || '',
+            userId: data.userId || '',
+            userProfilePictureUrl: data.userProfilePictureUrl || null,
+            status: data.status || 'wip'
+        };
+
+        try {
+            await algoliaClient.saveObjects({
+                indexName: ALGOLIA_INDEX_NAME,
+                objects: [algoliaRecord]
+            });
+            console.log(`Synced creation ${creationId} to Algolia.`);
+        } catch (error) {
+            console.error(`Failed to sync creation ${creationId} to Algolia:`, error);
+        }
+
+        return null;
+    });
+
+/**
+ * Initial sync of all creations to Algolia.
+ * Call this once via HTTP to populate the index.
+ * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/initialAlgoliaSync
+ */
+app.get("/initialAlgoliaSync", authenticate, async (req, res) => {
+    // Only allow admins to run this
+    const userId = req.user.uid;
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({ error: "Only admins can perform initial sync." });
+    }
+
+    if (!algoliaClient) {
+        return res.status(500).json({ error: "Algolia is not configured." });
+    }
+
+    try {
+        const snapshot = await db.collection('creations').get();
+
+        const records = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                objectID: doc.id,
+                title: data.title || '',
+                description: data.description || '',
+                tags: data.tags || [],
+                category: data.category || '',
+                game: data.game || '',
+                platform: data.platform || 'pc',
+                requiredDlcs: data.requiredDlcs || [],
+                modStatus: data.modStatus || 'NoMods',
+                likes: data.likes || 0,
+                dislikes: data.dislikes || 0,
+                createdAt: data.createdAt?.toMillis() || Date.now(),
+                imageUrl: data.imageUrls?.[0] || null,
+                username: data.username || '',
+                userId: data.userId || '',
+                userProfilePictureUrl: data.userProfilePictureUrl || null,
+                status: data.status || 'wip'
+            };
+        });
+
+        // Batch save to Algolia
+        await algoliaClient.saveObjects({
+            indexName: ALGOLIA_INDEX_NAME,
+            objects: records
+        });
+
+        console.log(`Initial sync completed: ${records.length} creations synced to Algolia.`);
+        res.json({ success: true, message: `Synced ${records.length} creations to Algolia.` });
+    } catch (error) {
+        console.error("Initial Algolia sync failed:", error);
+        res.status(500).json({ error: "Initial sync failed: " + error.message });
+    }
+});
+
+/**
+ * Scheduled function to clean up unverified user accounts after 48 hours.
+ * Runs daily at 3:00 AM Europe/Berlin time.
+ * Deletes users who haven't verified their email within 48 hours of account creation.
+ */
+exports.cleanupUnverifiedUsers = functions.pubsub
+    .schedule('0 3 * * *')
+    .timeZone('Europe/Berlin')
+    .onRun(async (context) => {
+        const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours ago
+
+        console.log(`Starting cleanup of unverified users created before ${cutoff.toISOString()}`);
+
+        let deletedCount = 0;
+        let pageToken;
+
+        // Paginate through all users (Firebase limits to 1000 per request)
+        do {
+            const listUsersResult = await admin.auth().listUsers(1000, pageToken);
+            pageToken = listUsersResult.pageToken;
+
+            for (const user of listUsersResult.users) {
+                // Check: Not email verified AND created more than 48 hours ago
+                if (!user.emailVerified && new Date(user.metadata.creationTime) < cutoff) {
+                    console.log(`Deleting unverified user: ${user.email} (created: ${user.metadata.creationTime})`);
+
+                    try {
+                        // Delete user from Firebase Auth
+                        await admin.auth().deleteUser(user.uid);
+
+                        // Delete associated Firestore documents
+                        await Promise.allSettled([
+                            db.doc(`users/${user.uid}`).delete(),
+                            db.doc(`profiles/${user.uid}`).delete()
+                        ]);
+
+                        deletedCount++;
+                    } catch (error) {
+                        console.error(`Failed to delete user ${user.uid}:`, error);
+                    }
+                }
+            }
+        } while (pageToken);
+
+        console.log(`Cleanup completed. Deleted ${deletedCount} unverified users.`);
+        return null;
+    });

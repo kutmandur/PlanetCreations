@@ -1,36 +1,44 @@
-import React from 'react';
+import React, { useCallback, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { getGameColor } from '../../utils/helpers';
-// ✅ 1. Import query client and the new fetch function
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchCommunityBySlug } from '../../firebase/communitiesService';
+import { preloadComponent } from '../../utils/preload';
 
-const CommunityCard = ({ community }) => {
-    // ✅ 2. Get an instance of the query client
+// Hilfsfunktion außerhalb der Komponente (kein Re-Create bei jedem Render)
+const hexToRgba = (hex, alpha = 0.1) => {
+    if (!hex) return `rgba(209, 213, 219, ${alpha})`;
+    try {
+        const [r, g, b] = hex.match(/\w\w/g).map(x => parseInt(x, 16));
+        return `rgba(${r},${g},${b},${alpha})`;
+    } catch (e) {
+        return `rgba(209, 213, 219, ${alpha})`;
+    }
+};
+
+const GAME_PILLS = {
+    'planet-coaster': 'PC1',
+    'planet-coaster-2': 'PC2',
+    'planet-zoo': 'PZ'
+};
+
+const CommunityCard = memo(({ community }) => {
     const queryClient = useQueryClient();
 
-    const hexToRgba = (hex, alpha = 0.1) => { /* ... */ };
-
     const themeColor = community.themeColor || '#6B7280';
-    const GAME_PILLS = {
-        'planet-coaster': 'PC1',
-        'planet-coaster-2': 'PC2',
-        'planet-zoo': 'PZ'
-    };
     const allowedGames = community.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo'];
 
-    // ✅ 3. Create the pre-fetch handler
-    const handlePrefetch = () => {
+    const handlePrefetch = useCallback(() => {
         if (community.slug) {
             queryClient.prefetchQuery({
                 queryKey: ['community', community.slug],
                 queryFn: () => fetchCommunityBySlug(community.slug),
             });
         }
-    };
+        preloadComponent('CommunityDetailPage');
+    }, [queryClient, community.slug]);
 
     return (
-        // ✅ 4. Add the onMouseEnter and onTouchStart event handlers
         <Link 
             to={`/community/${community.slug}`}
             onMouseEnter={handlePrefetch}
@@ -77,6 +85,6 @@ const CommunityCard = ({ community }) => {
             </article>
         </Link>
     );
-};
+});
 
 export default CommunityCard;

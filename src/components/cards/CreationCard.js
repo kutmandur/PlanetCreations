@@ -1,11 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase/config';
 import { fetchCreationById } from '../../firebase/creationsService';
 import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
+import { preloadComponent } from '../../utils/preload';
 
-const CreationCard = ({ creation, isLink = true, onTagClick }) => {
+// Hilfsfunktion außerhalb der Komponente (kein Re-Create bei jedem Render)
+const getYoutubeThumbnail = (url) => {
+    if (!url) return null;
+    const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
+    return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+};
+
+const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     const queryClient = useQueryClient();
     const [hoverIndex, setHoverIndex] = useState(0);
     const intervalRef = useRef(null);
@@ -14,58 +24,66 @@ const CreationCard = ({ creation, isLink = true, onTagClick }) => {
     const imageUrls = creation.imageUrls || [];
     const videoUrls = creation.videoUrls || [];
 
-    const getYoutubeThumbnail = (url) => {
-        if (!url) return null;
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    };
-    
     const slideshowImages = imageUrls.filter(Boolean);
     const initialThumbnail = imageUrls.length > 0 ? imageUrls[0] : videoUrls.length > 0 ? getYoutubeThumbnail(videoUrls[0]) : 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
 
-    const handlePrefetch = () => {
+    const handlePrefetch = useCallback(() => {
+        // Prefetch der Creation-Daten via React Query
         queryClient.prefetchQuery({
             queryKey: ['creation', creation.id],
             queryFn: () => fetchCreationById(creation.id),
         });
-    };
 
-    const startSlideshow = () => {
+        // Prefetch des Creator-Profils (wichtig für schnelle Detail-Ansicht)
+        if (creation.userId) {
+            queryClient.prefetchQuery({
+                queryKey: ['profile', creation.userId],
+                queryFn: async () => {
+                    const snap = await getDoc(doc(db, 'profiles', creation.userId));
+                    return snap.exists() ? snap.data() : null;
+                },
+            });
+        }
+
+        // Preload der CreationDetail Komponente
+        preloadComponent('CreationDetail');
+    }, [queryClient, creation.id, creation.userId]);
+
+    const startSlideshow = useCallback(() => {
         if (intervalRef.current) return;
         if (slideshowImages.length > 1) {
             intervalRef.current = setInterval(() => {
                 setHoverIndex(prevIndex => (prevIndex + 1) % slideshowImages.length);
             }, 1500);
         }
-    };
-    
-    const handleMouseEnter = () => {
+    }, [slideshowImages.length]);
+
+    const handleMouseEnter = useCallback(() => {
         startSlideshow();
         handlePrefetch();
-    };
+    }, [startSlideshow, handlePrefetch]);
 
-    const stopSlideshow = () => {
+    const stopSlideshow = useCallback(() => {
         if (intervalRef.current) {
             clearInterval(intervalRef.current);
             intervalRef.current = null;
         }
-        if (hoverIndex !== 0) {
-            setHoverIndex(0);
-        }
-    };
-    
-    const handleProfileClick = (e) => {
-        e.stopPropagation();
-        navigate(`/profile/${creation.userId}`);
-    };
+        setHoverIndex(0);
+    }, []);
 
-    const handleTagClick = (e, tag) => {
+    const handleProfileClick = useCallback((e) => {
+        e.stopPropagation();
+        preloadComponent('ProfilePage');
+        navigate(`/profile/${creation.userId}`);
+    }, [navigate, creation.userId]);
+
+    const handleTagClick = useCallback((e, tag) => {
         e.preventDefault();
         e.stopPropagation();
         if (onTagClick) {
             onTagClick(tag);
         }
-    };
+    }, [onTagClick]);
 
     const CardContent = () => (
         <article className="bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full">
@@ -135,6 +153,6 @@ const CreationCard = ({ creation, isLink = true, onTagClick }) => {
             <CardContent />
         </div>
     );
-};
+});
 
 export default CreationCard;
