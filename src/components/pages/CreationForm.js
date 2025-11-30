@@ -396,7 +396,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         setIsPreparingUpload(true);
     
         try {
-            const idToken = await auth.currentUser.getIdToken();
+            const idToken = await auth.currentUser.getIdToken(true);
             const result = await window.electronAPI.prepareBackupForUpload(file.path, idToken);
     
             if (!result.success) {
@@ -415,6 +415,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             const { data } = await getUploadUrl({
                 fileName: result.fileName,
                 contentType: fileBlob.type || 'application/zip',
+                fileSize: result.fileSize || fileBlob.size, // Dateigröße für serverseitige Validierung
             });
             
             const { uploadUrl, finalFileUrl } = data;

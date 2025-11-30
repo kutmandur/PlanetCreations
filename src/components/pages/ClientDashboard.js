@@ -215,7 +215,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
             }
             try {
                 setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
-                idToken = await user.getIdToken();
+                idToken = await user.getIdToken(true);
             } catch (error) {
                 alert("Could not get authentication token. Please try again.");
                 setGlobalLoader({ isLoading: false, message: '' });
@@ -284,7 +284,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
     );
 };
 
-const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
+const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView }) => {
     const [allBackups, setAllBackups] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -296,14 +296,20 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
     const SORT_OPTIONS = [ { value: 'date_desc', label: 'Date (Newest)' }, { value: 'date_asc', label: 'Date (Oldest)' }, { value: 'name_asc', label: 'Name (A-Z)' }, { value: 'name_desc', label: 'Name (Z-A)' }, { value: 'count_desc', label: 'Backup Count (Most)' }, { value: 'count_asc', label: 'Backup Count (Fewest)' }, ];
     
     const fetchBackups = useCallback(async () => {
+        let isMounted = true;
         setLoading(true);
         if (window.electronAPI) {
             try {
                 const backups = await window.electronAPI.listAllBackups();
-                setAllBackups(backups);
+                if (isMounted) {
+                    setAllBackups(backups);
+                }
             } catch(e){ console.error(e); }
         }
-        setLoading(false);
+        if (isMounted) {
+            setLoading(false);
+        }
+        return () => { isMounted = false; };
     }, []);
 
     useEffect(() => {
@@ -313,30 +319,42 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
 
     const processedBackups = useMemo(() => {
         if (!allBackups) return [];
-        const gameBackups = Object.entries(allBackups).map(([saveName, backups]) => ({saveName, backups}));
-        
-        const filteredByType = gameBackups.filter(({saveName, backups}) => {
+        const allBackupEntries = Object.entries(allBackups).map(([saveName, backups]) => ({saveName, backups}));
+
+        const filteredItems = allBackupEntries.filter(({saveName, backups}) => {
             const firstBackup = backups[0];
             if (!firstBackup) return false;
 
+            // 1. Filter by Main View (Workshop vs. Restore)
+            const isWorkshopItem = firstBackup.category === 'Workshop';
+            if (activeView === 'workshop' && !isWorkshopItem) return false;
+            if (activeView === 'restore' && isWorkshopItem) return false;
+
+            // 2. Filter by Game
             const pathLower = firstBackup.originalFilePath.toLowerCase();
             const gameMatches = (activeGame === 'Planet Coaster 2' && pathLower.includes('planet coaster 2')) || (activeGame === 'Planet Zoo' && pathLower.includes('planet zoo'));
             if (!gameMatches) return false;
 
+            // 3. Filter by File Type (Sub-Tab)
             if (activeTab === 'customMedia') {
                 return firstBackup.backupType === 'media';
-            } else {
-                return firstBackup.backupType === 'creation';
             }
-        }).filter(({saveName, backups}) => {
-            if (activeTab === 'customMedia') return true;
-            const firstBackup = backups[0];
-            return (activeTab === 'parks' && (firstBackup.originalFileName.endsWith('.park2') || firstBackup.originalFileName.endsWith('.zoo'))) ||
-                   (activeTab === 'blueprints' && (firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint'))) ||
-                   (activeTab === 'autosaves' && (firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto')));
+            
+            if (firstBackup.backupType !== 'creation') return false;
+
+            switch (activeTab) {
+                case 'parks':
+                    return firstBackup.originalFileName.endsWith('.park2') || firstBackup.originalFileName.endsWith('.zoo');
+                case 'blueprints':
+                    return firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint');
+                case 'autosaves':
+                    return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto');
+                default:
+                    return false;
+            }
         });
         
-        const filteredByName = filteredByType.filter(item => item.saveName.toLowerCase().includes(searchTerm.toLowerCase()));
+        const filteredByName = filteredItems.filter(item => item.saveName.toLowerCase().includes(searchTerm.toLowerCase()));
         
         const [key, direction] = sortOption.split('_');
         return filteredByName.sort((a, b) => {
@@ -350,7 +368,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
             if (valA > valB) return direction === 'asc' ? 1 : -1;
             return 0;
         });
-    }, [allBackups, activeGame, activeTab, searchTerm, sortOption]);
+    }, [allBackups, activeGame, activeTab, searchTerm, sortOption, activeView]);
 
     const handleToggleBackupSelection = (saveName, backup) => {
         setSelectedBackups(prev => {
@@ -367,34 +385,41 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader }) => {
     const handleRestoreSelected = async () => {
         const selectedToRestore = Object.values(selectedBackups);
         if (selectedToRestore.length === 0) return;
-    
+
         setGlobalLoader({ isLoading: true, message: `Verifying ${selectedToRestore.length} backup(s)...` });
-    
-        let restoreTasks = [];
+
+        let restoredCount = 0;
+        let skippedCount = 0;
+
         for (const backup of selectedToRestore) {
-            const result = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
-            if (result.status === 'invalid') {
+            // Erste Verifizierung - prüft nur den Status
+            const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
+
+            if (verifyResult.status === 'invalid') {
                 alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
+                skippedCount++;
                 continue;
             }
-            if (result.status === 'unsigned') {
+
+            if (verifyResult.status === 'unsigned') {
                 const confirmed = window.confirm(`WARNING: The backup for "${backup.originalFileName}" is not signed. Only restore this file if you created it yourself or trust the source.\n\nDo you want to continue restoring this file?`);
-                if (confirmed) {
-                    restoreTasks.push(backup);
+                if (!confirmed) {
+                    skippedCount++;
+                    continue;
                 }
             }
-            if (result.status === 'verified') {
-                restoreTasks.push(backup);
+
+            // Die Wiederherstellung wurde bereits durch restoreBackup durchgeführt
+            if (verifyResult.success) {
+                restoredCount++;
+            } else {
+                alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
+                skippedCount++;
             }
         }
-    
-        if (restoreTasks.length > 0) {
-            setGlobalLoader({ isLoading: true, message: `Restoring ${restoreTasks.length} backup(s)...` });
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        
+
         setGlobalLoader({ isLoading: false, message: '' });
-        alert(`${restoreTasks.length} of ${selectedToRestore.length} backups were restored.`);
+        alert(`${restoredCount} of ${selectedToRestore.length} backups were restored successfully.`);
         setSelectedBackups({});
         fetchBackups();
     };
@@ -548,7 +573,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
             }
             try {
                 setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
-                idToken = await user.getIdToken();
+                idToken = await user.getIdToken(true);
             } catch (error) {
                 alert("Could not get authentication token. Please try again.");
                 setGlobalLoader({ isLoading: false, message: '' });
@@ -617,7 +642,10 @@ const ClientDashboard = ({ user }) => {
     const FILE_TYPE_TABS = useMemo(() => {
         const baseTabs = [ { id: 'parks', name: 'Parks' }, { id: 'blueprints', name: 'Blueprints' }, { id: 'autosaves', name: 'Autosaves' }, ];
         if (activeView === 'restore') {
-            return [ ...baseTabs, { id: 'customMedia', name: 'Custom Media' }, ];
+            return [ ...baseTabs, { id: 'customMedia', name: 'Custom Media' }];
+        }
+        if (activeView === 'workshop') {
+            return baseTabs; // Workshop-Tab hat keine "Custom Media" Option
         }
         return baseTabs;
     }, [activeView]);
@@ -627,7 +655,7 @@ const ClientDashboard = ({ user }) => {
     useEffect(() => {
         const currentTabExists = FILE_TYPE_TABS.some(tab => tab.id === activeTab);
         if (!currentTabExists) {
-            setActiveTab(FILE_TYPE_TABS[0].id);
+            setActiveTab(FILE_TYPE_TABS[0]?.id || null);
         }
     }, [activeView, FILE_TYPE_TABS, activeTab]);
 
@@ -639,18 +667,26 @@ const ClientDashboard = ({ user }) => {
     
     const handleScan = useCallback(async (basePath) => {
         if (!basePath) return;
+        let isMounted = true;
         setLoading(true);
         setScanResults(null);
         if (window.electronAPI) {
             try {
                 const filesByGame = await window.electronAPI.scanGames(basePath);
-                setScanResults(filesByGame);
+                if (isMounted) {
+                    setScanResults(filesByGame);
+                }
             } catch (error) {
                 console.error("Error scanning games:", error);
-                alert(`An error occurred: ${error.message}`);
+                if (isMounted) {
+                    alert(`An error occurred: ${error.message}`);
+                }
             }
         }
-        setLoading(false);
+        if (isMounted) {
+            setLoading(false);
+        }
+        return () => { isMounted = false; };
     }, []);
 
     useEffect(() => {
@@ -671,33 +707,53 @@ const ClientDashboard = ({ user }) => {
     const handleBackupCreated = () => {
         setBackupRefreshKey(key => key + 1);
     };
+
+    useEffect(() => {
+        const handleBackupsUpdated = () => {
+            setBackupRefreshKey(key => key + 1);
+        };
+
+        if (window.electronAPI?.onBackupsUpdated) {
+            const unsubscribe = window.electronAPI.onBackupsUpdated(handleBackupsUpdated);
+            return () => {
+                if (typeof unsubscribe === 'function') {
+                    unsubscribe();
+                }
+            };
+        }
+    }, []);
     
     const handleAutoImport = useCallback(async (filePath) => {
-        if (!filePath) return;
+        if (!filePath || !window.electronAPI) return;
 
         setGlobalLoader({ isLoading: true, message: `Importing file...` });
-        const result = await window.electronAPI.importBackupFromPath(filePath);
-        setGlobalLoader({ isLoading: false, message: '' });
+        try {
+            const result = await window.electronAPI.importBackupFromPath(filePath);
+            setGlobalLoader({ isLoading: false, message: '' });
 
-        if (result.status === 'canceled' || !result.message) return;
+            if (result.status === 'canceled' || !result.message) return;
 
-        if (result.status === 'invalid') {
-            alert(`SIGNATURE INVALID: ${result.message}`);
-            return;
-        }
-
-        let confirmed = true;
-        if (result.status === 'unsigned') {
-            confirmed = window.confirm('WARNING: This backup is not signed. It should only be used if you created it yourself or received it from a trusted source.\n\nDo you want to continue importing this backup?');
-        }
-
-        if (confirmed) {
-            alert(result.message);
-            if (result.success) {
-                handleBackupCreated();
+            if (result.status === 'invalid') {
+                alert(`SIGNATURE INVALID: ${result.message}`);
+                return;
             }
+
+            let confirmed = true;
+            if (result.status === 'unsigned') {
+                confirmed = window.confirm('WARNING: This backup is not signed. It should only be used if you created it yourself or received it from a trusted source.\n\nDo you want to continue importing this backup?');
+            }
+
+            if (confirmed) {
+                alert(result.message);
+                if (result.success) {
+                    handleBackupCreated();
+                }
+            }
+        } catch (error) {
+            setGlobalLoader({ isLoading: false, message: '' });
+            alert(`Import failed: ${error.message}`);
         }
-    }, [setGlobalLoader]);
+    }, []);
 
     useEffect(() => {
         if (window.electronAPI?.onFileImportTriggered) {
@@ -770,7 +826,7 @@ const ClientDashboard = ({ user }) => {
 
     const subHeaderProps = { gameTabs: GAME_TABS, activeGame, setActiveGame, gameTabRefs, gameGliderRef, fileTypeTabs: FILE_TYPE_TABS, activeTab, setActiveTab, fileTypeTabRefs, fileTypeGliderRef, activeGameColor };
     
-    const MAIN_TABS = useMemo(() => [ { id: 'backup', name: 'Backup' }, { id: 'restore', name: 'Restore' }, { id: 'media', name: 'Media Manager' }, ], []);
+    const MAIN_TABS = useMemo(() => [ { id: 'backup', name: 'Backup' }, { id: 'restore', name: 'Restore' }, { id: 'workshop', name: 'Workshop' }, { id: 'media', name: 'Media Manager' }, ], []);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
 
@@ -789,7 +845,9 @@ const ClientDashboard = ({ user }) => {
             case 'backup':
                 return <FileBrowser onBackupCreated={handleBackupCreated} refreshKey={backupRefreshKey} {...props} />;
             case 'restore':
-                return <BackupRestore refreshKey={backupRefreshKey} {...props} />;
+                return <BackupRestore refreshKey={backupRefreshKey} activeView={activeView} {...props} />;
+            case 'workshop':
+                return <BackupRestore refreshKey={backupRefreshKey} activeView={activeView} {...props} />;
             case 'media':
                 return <MediaManager {...props} />;
             default:

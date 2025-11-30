@@ -8,7 +8,7 @@ const log = require('electron-log');
 const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
-const { createBackup, listAllBackups, restoreBackup, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup } = require('./modules/BackupManager');
+const { createBackup, listAllBackups, restoreBackup, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
 
 const isDev = !app.isPackaged;
@@ -61,7 +61,7 @@ async function checkForUpdatesViaAPI() {
 }
 
 // --- HILFSFUNKTION FÜR DEN IMPORT ---
-async function importBackupFromFile(filePath) {
+async function importBackupFromFile(filePath, overrideCategory = null) {
     try {
         const verificationResult = await verifyBackup(filePath);
         if (verificationResult.status === 'invalid') {
@@ -74,8 +74,11 @@ async function importBackupFromFile(filePath) {
         
         const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
         
-        let category = 'Misc';
-        if (metadata.backupType === 'media') {
+        let category;
+
+        if (overrideCategory) {
+            category = overrideCategory;
+        } else if (metadata.backupType === 'media') {
             category = 'Custom Media';
         } else {
             const fileExtension = path.extname(metadata.originalFileName).toLowerCase();
@@ -86,7 +89,9 @@ async function importBackupFromFile(filePath) {
         fs.mkdirSync(backupDir, { recursive: true });
 
         const destPath = path.join(backupDir, path.basename(filePath));
-        if (fs.existsSync(destPath)) return { success: false, status: 'exists', message: `Backup '${path.basename(filePath)}' already exists.` };
+        if (fs.existsSync(destPath)) {
+            return { success: false, status: 'exists', message: `Backup '${path.basename(filePath)}' already exists.` };
+        }
         
         fs.copyFileSync(filePath, destPath);
 
@@ -100,9 +105,17 @@ async function importBackupFromFile(filePath) {
 
 // --- FUNKTION: URL verarbeiten, herunterladen und importieren ---
 async function handleUrlImport(urlToHandle) {
-    if (!mainWindow) return;
-    mainWindow.webContents.send('backup-import-status', { type: 'info', message: 'Starting download from URL...' });
+    if (!mainWindow || mainWindow.isDestroyed()) return;
 
+    const sendStatus = (type, message) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('backup-import-status', { type, message });
+        }
+    };
+
+    sendStatus('info', 'Starting download from URL...');
+
+    let tempPath = null;
     try {
         const parsedUrl = new URL(urlToHandle);
         const downloadUrl = parsedUrl.searchParams.get('url');
@@ -111,31 +124,47 @@ async function handleUrlImport(urlToHandle) {
             throw new Error('No download URL found in the link.');
         }
 
+        // URL-Validierung: Nur HTTPS erlauben
+        const downloadParsed = new URL(downloadUrl);
+        if (downloadParsed.protocol !== 'https:') {
+            throw new Error('Only HTTPS downloads are allowed for security reasons.');
+        }
+
         const response = await fetch(downloadUrl);
         if (!response.ok) {
             throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
         }
 
         const buffer = await response.buffer();
-        const fileName = path.basename(new URL(downloadUrl).pathname);
-        const tempPath = path.join(app.getPath('temp'), fileName);
-        
+        const fileName = path.basename(downloadParsed.pathname);
+        tempPath = path.join(app.getPath('temp'), fileName);
+
         fs.writeFileSync(tempPath, buffer);
-        mainWindow.webContents.send('backup-import-status', { type: 'info', message: 'Download complete. Importing backup...' });
+        sendStatus('info', 'Download complete. Importing backup...');
 
-        const importResult = await importBackupFromFile(tempPath);
-        
+        const importResult = await importBackupFromFile(tempPath, 'Workshop');
+
         if (importResult.success) {
-            mainWindow.webContents.send('backup-import-status', { type: 'success', message: `Successfully imported '${fileName}'!` });
+            sendStatus('success', `Successfully imported '${fileName}' to Workshop!`);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('backups-updated');
+            }
         } else {
-            mainWindow.webContents.send('backup-import-status', { type: 'error', message: importResult.message || 'Failed to import backup.' });
+            sendStatus('error', importResult.message || 'Failed to import backup.');
         }
-
-        fs.unlinkSync(tempPath);
 
     } catch (error) {
         console.error('URL Import Error:', error);
-        mainWindow.webContents.send('backup-import-status', { type: 'error', message: `An error occurred: ${error.message}` });
+        sendStatus('error', `An error occurred: ${error.message}`);
+    } finally {
+        // Temp-Datei immer aufräumen
+        if (tempPath && fs.existsSync(tempPath)) {
+            try {
+                fs.unlinkSync(tempPath);
+            } catch (e) {
+                console.error('Failed to clean up temp file:', e);
+            }
+        }
     }
 }
 
@@ -146,15 +175,17 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
     const url = commandLine.pop();
-    if (url.startsWith('planetcreations://')) {
+    if (url && url.startsWith('planetcreations://')) {
         handleUrlImport(url);
-    } else if (url.endsWith('.PlanetCreations')) {
-        mainWindow.webContents.send('import-file-triggered', url);
+    } else if (url && url.endsWith('.PlanetCreations')) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('import-file-triggered', url);
+        }
     }
   });
 }
@@ -256,6 +287,23 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.handle('read-file-as-data-url', (event, filePath) => {
     try {
+        // Sicherheitsprüfung: Nur erlaubte Pfade zulassen
+        if (!filePath || typeof filePath !== 'string') return null;
+
+        const normalizedPath = path.normalize(filePath);
+        const allowedPaths = [
+            app.getPath('documents'),
+            app.getPath('userData'),
+            app.getPath('temp'),
+            path.join(app.getPath('home'), 'Saved Games')
+        ];
+
+        const isAllowed = allowedPaths.some(allowed => normalizedPath.startsWith(allowed));
+        if (!isAllowed) {
+            console.warn(`[Security] Blocked file read attempt: ${filePath}`);
+            return null;
+        }
+
         if (!fs.existsSync(filePath)) return null;
         const data = fs.readFileSync(filePath);
         const base64Data = data.toString('base64');
@@ -290,11 +338,10 @@ ipcMain.handle('import-backup-from-path', (event, filePath) => {
     return importBackupFromFile(filePath);
 });
 
-// *** NEUER IPC HANDLER ZUM AUFLISTEN ALLER DATEIEN ***
 ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     const storedPath = getStoredPath();
     if (!storedPath) {
-        return {}; // Kein Pfad konfiguriert
+        return {}; 
     }
 
     const gameFiles = scanGamesFromPath(storedPath);
@@ -335,7 +382,6 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     return gameFiles;
 });
 
-// *** NEUER IPC HANDLER ZUR VORBEREITUNG DES UPLOADS ***
 ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => {
     if (!filePath) {
         return { success: false, message: 'No file path provided.' };
@@ -345,26 +391,57 @@ ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => 
 
     try {
         if (fileExt === '.planetcreations') {
-            const verification = await verifyBackup(filePath);
+            // Existierendes Backup: Vollständige Validierung durchführen
+            const validation = await validateBackupForUpload(filePath);
+
+            if (!validation.valid) {
+                return { success: false, message: validation.error };
+            }
+
             return {
                 success: true,
                 filePath: filePath,
                 fileName: path.basename(filePath),
-                isSigned: verification.status === 'verified',
+                isSigned: validation.isSigned,
+                fileSize: validation.fileSize,
+                metadata: validation.metadata,
             };
         } else {
+            // Neues Backup aus Game-File erstellen
+            // Prüfe zuerst ob es ein gültiges Game-File ist
+            if (!isValidGameFile(filePath)) {
+                return {
+                    success: false,
+                    message: `Invalid file type. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be uploaded.`
+                };
+            }
+
+            // Quelldatei-Größe wird nicht geprüft - die Datei wird komprimiert
+            // Die finale Backup-Größe wird nach dem Erstellen und serverseitig geprüft
+
             const tempDir = app.getPath('temp');
             const newBackupPath = await createBackup(app, filePath, "Uploaded with creation", true, idToken, tempDir);
-            
+
             if (!newBackupPath) {
-                 throw new Error("Backup creation function did not return a valid path.");
+                throw new Error("Backup creation function did not return a valid path.");
+            }
+
+            // Validiere das erstellte Backup
+            const validation = await validateBackupForUpload(newBackupPath);
+            if (!validation.valid) {
+                // Lösche das fehlerhafte Backup
+                if (fs.existsSync(newBackupPath)) {
+                    fs.unlinkSync(newBackupPath);
+                }
+                return { success: false, message: validation.error };
             }
 
             return {
                 success: true,
                 filePath: newBackupPath,
                 fileName: path.basename(newBackupPath),
-                isSigned: true,
+                isSigned: validation.isSigned,
+                fileSize: validation.fileSize,
             };
         }
     } catch (error) {

@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
+import { containsBlacklistedWord } from '../../utils/helpers';
 
-const ReportModal = ({ targetType, onConfirm, onCancel }) => {
+const ReportModal = ({ targetType, onConfirm, onCancel, blacklist = [] }) => {
     const [reason, setReason] = useState('');
+    const [error, setError] = useState('');
 
     const handleConfirm = () => {
+        if (containsBlacklistedWord(reason, blacklist)) {
+            setError('Your report contains a forbidden word. Please revise it.');
+            return;
+        }
         if (reason.trim()) {
+            setError('');
             onConfirm(reason);
         }
     };
@@ -19,11 +26,12 @@ const ReportModal = ({ targetType, onConfirm, onCancel }) => {
                     <textarea
                         id="report-reason"
                         value={reason}
-                        onChange={(e) => setReason(e.target.value)}
+                        onChange={(e) => { setReason(e.target.value); setError(''); }}
                         rows="4"
                         className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500"
                         placeholder={`Why are you reporting this ${targetType}?`}
                     />
+                    {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
                 </div>
                 <div className="flex justify-end space-x-4 mt-6">
                     <button onClick={onCancel} className="bg-gray-300 hover:bg-gray-400 text-black font-bold py-2 px-6 rounded-lg">

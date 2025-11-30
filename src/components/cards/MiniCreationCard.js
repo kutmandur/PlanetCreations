@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import PreloadLink from '../ui/PreloadLink';
 
 const MiniCreationCard = ({ creation }) => {
     const getYoutubeThumbnail = (url) => {
@@ -14,7 +14,7 @@ const MiniCreationCard = ({ creation }) => {
         : 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
 
     return (
-        <Link to={`/creation/${creation.id}`}>
+        <PreloadLink to={`/creation/${creation.id}`}>
             <article 
                 className="bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full"
             >
@@ -44,7 +44,7 @@ const MiniCreationCard = ({ creation }) => {
                     </h3>
                 </div>
             </article>
-        </Link>
+        </PreloadLink>
     );
 };
 

@@ -23,6 +23,42 @@ service cloud.firestore {
       return isLoggedIn() && exists(memberPath) && get(memberPath).data.roles.hasAny(['owner', 'moderator']);
     }
 
+    // --- Data Validation Functions ---
+
+    // Validiert Creation-Daten bei Create
+    function isValidCreationCreate(data) {
+      return data.keys().hasAll(['title', 'game', 'category', 'userId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.game in ['planet-coaster', 'planet-coaster-2', 'planet-zoo'] &&
+             data.category is string && data.category.size() <= 50 &&
+             data.userId == request.auth.uid &&
+             (!('likes' in data.keys()) || data.likes == 0) &&
+             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
+             (!('tags' in data.keys()) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    // Validiert Creation-Daten bei Update (verhindert Likes-Manipulation durch normale User)
+    function isValidCreationUpdate(data, existing) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.userId == existing.userId &&
+             data.game == existing.game &&
+             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
+             (!('tags' in data.keys()) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    // Validiert Profile-Daten
+    function isValidProfileData(data) {
+      return (!('username' in data.keys()) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 30)) &&
+             (!('bio' in data.keys()) || (data.bio is string && data.bio.size() <= 500));
+    }
+
+    // Validiert Community-Daten
+    function isValidCommunityData(data) {
+      return data.keys().hasAll(['name', 'ownerId']) &&
+             data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
+             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 2000));
+    }
+
     // --- Rules for Collections ---
 
     match /events/{eventId} {
@@ -43,8 +79,9 @@ service cloud.firestore {
 
     match /communitys/{communityId} {
       allow read: if true;
-      allow create: if isInfluencer() || isModerator();
-      allow update, delete: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+      allow create: if (isInfluencer() || isModerator()) && isValidCommunityData(request.resource.data);
+      allow update: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+      allow delete: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
 
       match /members/{userId} {
         allow read: if true;
@@ -61,8 +98,13 @@ service cloud.firestore {
 
     match /creations/{creationId} {
       allow read: if true;
-      allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
+      allow create: if isLoggedIn() &&
+          request.resource.data.userId == request.auth.uid &&
+          isValidCreationCreate(request.resource.data);
+      allow update: if isLoggedIn() && (
+          (isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
+          isModerator()
+      );
       allow delete: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
 
       match /votes/{userId} {
@@ -86,8 +128,8 @@ service cloud.firestore {
     
     match /profiles/{userId} {
       allow read: if true;
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidProfileData(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data);
       allow delete: if isOwner(userId) || isAdmin();
 
       match /communityMemberships/{communityId} {

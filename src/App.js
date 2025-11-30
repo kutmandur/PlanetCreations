@@ -6,6 +6,8 @@ import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/fi
 
 import { auth, db, isConfigured } from './firebase/config';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import PreloadLink from './components/ui/PreloadLink';
+import { preloadCriticalComponents, preloadRoute } from './utils/preload';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -43,7 +45,22 @@ const EventManager = React.lazy(() => import('./components/management/EventManag
 const LegalPage = React.lazy(() => import('./components/pages/LegalPage'));
 const ClientInfoPage = React.lazy(() => import('./components/pages/ClientInfoPage'));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+    defaultOptions: {
+        queries: {
+            // Daten bleiben für die gesamte Session "fresh" (30 Minuten)
+            staleTime: 1000 * 60 * 30,
+            // Daten bleiben für 1 Stunde im Cache (auch wenn nicht mehr verwendet)
+            gcTime: 1000 * 60 * 60,
+            // Nicht automatisch neu laden beim Fensterfokus
+            refetchOnWindowFocus: false,
+            // Nicht automatisch neu laden bei Reconnect
+            refetchOnReconnect: false,
+            // Bei Fehler nicht automatisch wiederholen
+            retry: 1,
+        },
+    },
+});
 
 const AppContent = () => {
     const location = useLocation();
@@ -151,6 +168,9 @@ const AppContent = () => {
             });
         }
 
+        // Kritische Komponenten nach App-Start vorladen
+        preloadCriticalComponents();
+
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
     }, []);
 
@@ -197,7 +217,7 @@ const AppContent = () => {
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { window.open(externalLink, '_blank'); setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
             {passwordConfirm && <PasswordConfirmationModal message={passwordConfirm.message} onConfirm={(password) => { passwordConfirm.onConfirm(password); setPasswordConfirm(null); }} onCancel={() => setPasswordConfirm(null)} />}
-            {reportModal && <ReportModal targetType={reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} />}
+            {reportModal && <ReportModal targetType={reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
             {strikeModal && <StrikeModal onConfirm={(reason) => { strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
             {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>{renderPopoverContent()}</PopoverModal>}
             {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
@@ -241,15 +261,15 @@ const AppContent = () => {
                             <Route path="/community/:communityName" element={<CommunityDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
                             <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" setModalMessage={setModalMessage} />} />
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
-                            <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} />} />
+                            <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
                             <Route path="/client-info" element={<ClientInfoPage />} />
                             
                             <Route path="/settings" element={<ProtectedRoute user={user} userProfile={userProfile}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></ProtectedRoute>} />
                             <Route path="/profile/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EditProfilePage user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreationForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} initialGame={activeTab} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/creation/:id/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><CreationForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
-                            <Route path="/community/:communityId/create-event" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
-                            <Route path="/event/:eventId/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
+                            <Route path="/community/:communityId/create-event" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
+                            <Route path="/event/:eventId/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/event/:eventId/manage" element={<ProtectedRoute user={user} userProfile={userProfile}><EventManager user={user} userProfile={userProfile} setModalMessage={setModalMessage} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/create-community" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="influencer"><CreateCommunityForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/manager/:id" element={<ProtectedRoute user={user} userProfile={userProfile} checkCommunityOwnership={true} setShowRickRoll={setShowRickRoll}><CommunityManagerPage setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} setConfirmation={setConfirmation} blacklist={blacklist} userProfile={userProfile} setPopoverView={setPopoverView} /></ProtectedRoute>} />
@@ -263,18 +283,18 @@ const AppContent = () => {
             {!isOfflineMode && <ToggleViewButton />}
 
             {showNewCreationButton && (
-                <Link to="/create">
+                <PreloadLink to="/create">
                     <FloatingActionButton activeTab={activeTab} />
-                </Link>
+                </PreloadLink>
             )}
 
             {!isOfflineMode && (
                 <footer className="text-center p-4 mt-8 text-gray-500 flex-shrink-0">
                     <div className="flex justify-center items-center space-x-4 text-sm">
                         <span>&copy; 2025 PlanetCreations.net</span>
-                        <Link to="/terms-of-service" className="hover:text-gray-800 hover:underline">Terms of Service</Link>
-                        <Link to="/impressum" className="hover:text-gray-800 hover:underline">Impressum / Legal Notice</Link>
-                        <Link to="/client-info" className="hover:text-gray-800 hover:underline">About the Client</Link>
+                        <PreloadLink to="/terms-of-service" className="hover:text-gray-800 hover:underline">Terms of Service</PreloadLink>
+                        <PreloadLink to="/impressum" className="hover:text-gray-800 hover:underline">Impressum / Legal Notice</PreloadLink>
+                        <PreloadLink to="/client-info" className="hover:text-gray-800 hover:underline">About the Client</PreloadLink>
                     </div>
                 </footer>
             )}

@@ -12,6 +12,7 @@
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
     "adm-zip": "^0.5.16",
+    "algoliasearch": "^5.15.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.1.1",
     "firebase": "^10.12.2",

@@ -1,8 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, doc, getDocs, getDoc, orderBy, limit, startAfter } from 'firebase/firestore';
 import { joinCommunity, leaveCommunity, deleteCommunityAsAdmin } from '../../firebase/community';
+import {
+    cacheCreations,
+    getCreationsFromCache,
+    fetchCreationsByIds,
+    cacheCommunityCreationList,
+    getCachedCommunityCreationList,
+    cacheCommunityCreationMeta,
+    getCachedCommunityCreationMeta
+} from '../../utils/creationCache';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import MiniCreationCard from '../cards/MiniCreationCard';
@@ -16,6 +26,7 @@ const TABS = ['Creations', 'Members', 'Events'];
 
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
     const { communityName } = useParams();
+    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -84,10 +95,49 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
         const fetchData = async () => {
             const communityId = community.id;
+
+            // Prüfe ob Community-Creations gecacht sind
+            const cachedList = getCachedCommunityCreationList(queryClient, communityId);
+            const cachedMeta = getCachedCommunityCreationMeta(queryClient, communityId);
+
+            if (cachedList && cachedMeta) {
+                // Creations aus dem zentralen Cache holen
+                const { cached, missingIds } = getCreationsFromCache(queryClient, cachedList.creationIds);
+
+                if (missingIds.length === 0) {
+                    // Alles im Cache - sofort anzeigen
+                    if (isMounted) {
+                        setCreations(cached);
+                        setPinnedIds(Object.keys(cachedMeta).filter(id => cachedMeta[id]?.pinned));
+                    }
+                } else {
+                    // Fehlende nachladen
+                    const loaded = await fetchCreationsByIds(missingIds);
+                    cacheCreations(queryClient, loaded);
+                    const allCreations = [...cached, ...loaded];
+                    if (isMounted) {
+                        setCreations(allCreations);
+                        setPinnedIds(Object.keys(cachedMeta).filter(id => cachedMeta[id]?.pinned));
+                    }
+                }
+
+                // Members trotzdem laden (werden nicht gecacht)
+                const membersQuery = collection(db, 'communitys', communityId, 'members');
+                const membersSnapshot = await getDocs(membersQuery);
+                const memberPromises = membersSnapshot.docs.map(async (memberDoc) => {
+                    const profileSnap = await getDoc(doc(db, 'profiles', memberDoc.id));
+                    return { id: memberDoc.id, ...memberDoc.data(), ...(profileSnap.exists() ? profileSnap.data() : {}) };
+                });
+                const resolvedMembers = await Promise.all(memberPromises);
+                if (isMounted) setMembers(resolvedMembers);
+                return;
+            }
+
+            // Kein Cache - alles laden
             const membersQuery = collection(db, 'communitys', communityId, 'members');
             const creationsQuery = query(collection(db, 'creations'), where('communityIds', 'array-contains', communityId));
             const pinnedQuery = query(collection(db, 'communitys', communityId, 'creations'), where('pinned', '==', true));
-            
+
             const [membersSnapshot, creationsSnapshot, pinnedSnapshot] = await Promise.all([
                 getDocs(membersQuery),
                 getDocs(creationsQuery),
@@ -99,10 +149,21 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 return { id: memberDoc.id, ...memberDoc.data(), ...(profileSnap.exists() ? profileSnap.data() : {}) };
             });
             const resolvedMembers = await Promise.all(memberPromises);
-            
+
             const creationsData = creationsSnapshot.docs.map(cDoc => ({ id: cDoc.id, ...cDoc.data() }));
             const finalPinnedIds = pinnedSnapshot.docs.map(pDoc => pDoc.id);
-            
+
+            // Im Cache speichern
+            cacheCreations(queryClient, creationsData);
+            cacheCommunityCreationList(queryClient, communityId, creationsData.map(c => c.id));
+
+            // Metadaten cachen (pinned status)
+            const metaData = {};
+            pinnedSnapshot.docs.forEach(pDoc => {
+                metaData[pDoc.id] = { pinned: true, ...pDoc.data() };
+            });
+            cacheCommunityCreationMeta(queryClient, communityId, metaData);
+
             if (isMounted) {
                 setMembers(resolvedMembers);
                 setCreations(creationsData);
@@ -111,7 +172,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         };
         fetchData();
         return () => { isMounted = false; };
-    }, [community]);
+    }, [community, queryClient]);
     
     useEffect(() => {
         if (!community) return;

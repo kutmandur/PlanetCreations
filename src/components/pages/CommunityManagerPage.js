@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { doc, onSnapshot, collection, getDocs, getDoc, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import { cacheCreations, cacheCommunityCreationList, cacheCommunityCreationMeta } from '../../utils/creationCache';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
@@ -15,6 +17,7 @@ import ShowcaseManager from '../management/ShowcaseManager';
 
 const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirmation, blacklist, userProfile, setPopoverView }) => {
     const { id: communityId } = useParams();
+    const queryClient = useQueryClient();
     const [community, setCommunity] = useState(null);
     const [loading, setLoading] = useState(true);
     const [isEditing, setIsEditing] = useState(false);
@@ -78,7 +81,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             const membersRef = collection(db, 'communitys', communityId, 'members');
 
             const [linksSnapshot, membersSnapshot] = await Promise.all([getDocs(linksRef), getDocs(membersRef)]);
-            
+
             const linksMap = new Map(linksSnapshot.docs.map(doc => [doc.id, doc.data()]));
             const memberRolesMap = new Map(membersSnapshot.docs.map(doc => [doc.id, doc.data().roles || []]));
 
@@ -90,7 +93,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                 const creatorRanks = creatorRoles.map(roleName => {
                     return communityRanks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
                 }).filter(Boolean);
-                
+
                 return {
                     ...creation,
                     pinned: linkData.pinned || false,
@@ -101,6 +104,18 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                     creatorRanks: creatorRanks
                 };
             });
+
+            // Basis-Creations im zentralen Cache speichern (ohne Community-spezifische Felder)
+            cacheCreations(queryClient, creationData);
+            // Community-Liste cachen
+            cacheCommunityCreationList(queryClient, communityId, creationData.map(c => c.id));
+            // Community-Metadaten cachen
+            const metaData = {};
+            linksSnapshot.docs.forEach(doc => {
+                metaData[doc.id] = doc.data();
+            });
+            cacheCommunityCreationMeta(queryClient, communityId, metaData);
+
             if (isMounted) {
                 setCreations(creationsWithDetails);
                 setLoading(false);
@@ -112,7 +127,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             unsubscribeMembers();
             unsubscribeCreations();
         };
-    }, [community, communityId]);
+    }, [community, communityId, queryClient]);
 
     useEffect(() => {
         if (!loading) {
