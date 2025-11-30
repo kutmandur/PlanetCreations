@@ -389,7 +389,6 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         setGlobalLoader({ isLoading: true, message: `Verifying ${selectedToRestore.length} backup(s)...` });
 
         let restoredCount = 0;
-        let skippedCount = 0;
 
         for (const backup of selectedToRestore) {
             // Erste Verifizierung - prüft nur den Status
@@ -397,14 +396,12 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
 
             if (verifyResult.status === 'invalid') {
                 alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
-                skippedCount++;
                 continue;
             }
 
             if (verifyResult.status === 'unsigned') {
                 const confirmed = window.confirm(`WARNING: The backup for "${backup.originalFileName}" is not signed. Only restore this file if you created it yourself or trust the source.\n\nDo you want to continue restoring this file?`);
                 if (!confirmed) {
-                    skippedCount++;
                     continue;
                 }
             }
@@ -414,7 +411,6 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 restoredCount++;
             } else {
                 alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
-                skippedCount++;
             }
         }
 

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
 import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 import { auth, db, isConfigured } from './firebase/config';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import PreloadLink from './components/ui/PreloadLink';
-import { preloadCriticalComponents, preloadRoute } from './utils/preload';
+import { preloadCriticalComponents } from './utils/preload';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';

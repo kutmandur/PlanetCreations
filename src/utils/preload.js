@@ -164,10 +164,12 @@ export function preloadCriticalComponents() {
     }, 2000);
 }
 
-export default {
+const preloadUtils = {
     preloadComponent,
     preloadComponents,
     preloadRoute,
     createPreloadHandlers,
     preloadCriticalComponents,
 };
+
+export default preloadUtils;
