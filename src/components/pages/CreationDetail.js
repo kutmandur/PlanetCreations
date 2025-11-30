@@ -163,7 +163,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         });
 
         return () => { isMounted = false; unsubscribe(); };
-    }, [id, navigate, setModalMessage, creationIdOverride]);
+    }, [id, navigate, setModalMessage, creationIdOverride, queryClient]);
     
     useEffect(() => {
         if (!user || !id || !creation) return;
