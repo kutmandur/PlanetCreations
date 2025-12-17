@@ -44,6 +44,9 @@ const EventForm = React.lazy(() => import('./components/pages/EventForm'));
 const EventManager = React.lazy(() => import('./components/management/EventManager'));
 const LegalPage = React.lazy(() => import('./components/pages/LegalPage'));
 const ClientInfoPage = React.lazy(() => import('./components/pages/ClientInfoPage'));
+const CollaborationDetailPage = React.lazy(() => import('./components/pages/CollaborationDetailPage'));
+const CreateCollaborationForm = React.lazy(() => import('./components/pages/CreateCollaborationForm'));
+const JoinCollaborationPage = React.lazy(() => import('./components/pages/JoinCollaborationPage'));
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -263,7 +266,9 @@ const AppContent = () => {
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
                             <Route path="/client-info" element={<ClientInfoPage />} />
-                            
+                            <Route path="/collaboration/:collaborationId" element={<CollaborationDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
+                            <Route path="/collaboration/join/:inviteCode" element={<JoinCollaborationPage user={user} setModalMessage={setModalMessage} />} />
+
                             <Route path="/settings" element={<ProtectedRoute user={user} userProfile={userProfile}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></ProtectedRoute>} />
                             <Route path="/profile/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EditProfilePage user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreationForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} initialGame={activeTab} blacklist={blacklist} /></ProtectedRoute>} />
@@ -272,9 +277,10 @@ const AppContent = () => {
                             <Route path="/event/:eventId/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/event/:eventId/manage" element={<ProtectedRoute user={user} userProfile={userProfile}><EventManager user={user} userProfile={userProfile} setModalMessage={setModalMessage} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/create-community" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="influencer"><CreateCommunityForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
+                            <Route path="/collaboration/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreateCollaborationForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
                             <Route path="/manager/:id" element={<ProtectedRoute user={user} userProfile={userProfile} checkCommunityOwnership={true} setShowRickRoll={setShowRickRoll}><CommunityManagerPage setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} setConfirmation={setConfirmation} blacklist={blacklist} userProfile={userProfile} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/admin" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="admin" setShowRickRoll={setShowRickRoll}><AdminPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setPasswordConfirm={setPasswordConfirm} /></ProtectedRoute>} />
-                            <Route path="/moderation" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="moderator" setShowRickRoll={setShowRickRoll}><ModerationPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setStrikeModal={setStrikeModal} setPasswordConfirm={setPasswordConfirm} blacklist={blacklist} /></ProtectedRoute>} />
+                            <Route path="/moderation" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="moderator" setShowRickRoll={setShowRickRoll}><ModerationPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setStrikeModal={setStrikeModal} setPasswordConfirm={setPasswordConfirm} setConfirmation={setConfirmation} blacklist={blacklist} /></ProtectedRoute>} />
                         </Routes>
                     </Suspense>
                 </ErrorBoundary>

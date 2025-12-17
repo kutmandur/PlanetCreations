@@ -190,5 +190,129 @@ service cloud.firestore {
       allow read, delete: if isAdmin();
       allow create: if isLoggedIn() && isOwner(userId);
     }
+
+    // --- Collaborations ---
+    function isCollaborationMember(collaborationId) {
+      let memberPath = /databases/$(database)/documents/collaborations/$(collaborationId)/members/$(request.auth.uid);
+      return isLoggedIn() && exists(memberPath);
+    }
+    function isCollaborationOwner(collaborationId) {
+      let memberPath = /databases/$(database)/documents/collaborations/$(collaborationId)/members/$(request.auth.uid);
+      return isLoggedIn() && exists(memberPath) && get(memberPath).data.role == 'owner';
+    }
+    // Collaboration owner OR site moderator/admin
+    function isCollaborationOwnerOrMod(collaborationId) {
+      return isCollaborationOwner(collaborationId) || isModerator();
+    }
+    function isCollaborationEditor(collaborationId) {
+      let memberPath = /databases/$(database)/documents/collaborations/$(collaborationId)/members/$(request.auth.uid);
+      return isLoggedIn() && exists(memberPath) && get(memberPath).data.role in ['owner', 'editor'];
+    }
+    // Collaboration editor OR site moderator/admin
+    function isCollaborationEditorOrMod(collaborationId) {
+      return isCollaborationEditor(collaborationId) || isModerator();
+    }
+
+    match /collaborations/{collaborationId} {
+      // Allow reading if user is a member OR if querying by ownerId/memberIds/inviteCode OR if moderator
+      allow read: if isLoggedIn() && (
+        isCollaborationMember(collaborationId) ||
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.memberIds ||
+        isModerator()
+      );
+      // Allow list queries for finding collaborations by ownerId, memberIds, or inviteCode
+      allow list: if isLoggedIn();
+      allow create: if isLoggedIn();
+      allow update: if isCollaborationOwnerOrMod(collaborationId) ||
+        // Allow members to update memberIds when joining
+        (isLoggedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']));
+      // Allow mods to delete collaborations even if orphaned (no owner member exists)
+      allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+
+      match /members/{userId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isLoggedIn() && (
+          // Owner adding first member (themselves) during creation
+          (isOwner(userId) && request.resource.data.role == 'owner') ||
+          // Joining via invite code
+          isOwner(userId)
+        );
+        allow update: if isCollaborationOwnerOrMod(collaborationId);
+        // Allow mods to delete members even if no owner exists (orphaned collaborations)
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isOwner(userId) || isModerator();
+      }
+
+      match /files/{fileId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isCollaborationEditorOrMod(collaborationId);
+        allow update: if isCollaborationEditorOrMod(collaborationId);
+        // Allow mods to delete files even for orphaned collaborations
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+
+        match /versions/{versionId} {
+          allow read: if isCollaborationMember(collaborationId) || isModerator();
+          allow create: if isCollaborationEditorOrMod(collaborationId);
+          allow update: if isCollaborationEditorOrMod(collaborationId);
+          // Allow mods to delete versions even for orphaned collaborations
+          allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
+            (isCollaborationEditor(collaborationId) && resource.data.uploadedBy == request.auth.uid) ||
+            isModerator();
+        }
+      }
+
+      match /comments/{commentId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isCollaborationMember(collaborationId) || isModerator();
+        allow update: if isLoggedIn() && (resource.data.userId == request.auth.uid || isModerator());
+        // Allow mods to delete comments even for orphaned collaborations
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
+          (isLoggedIn() && resource.data.userId == request.auth.uid) ||
+          isModerator();
+      }
+
+      match /invitations/{inviteId} {
+        allow read: if isCollaborationMember(collaborationId) ||
+          (isLoggedIn() && resource.data.targetUserId == request.auth.uid) ||
+          isModerator();
+        allow create: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        allow update: if isLoggedIn() && resource.data.targetUserId == request.auth.uid;
+        // Allow mods to delete invitations even for orphaned collaborations
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+      }
+
+      // Todo items
+      match /todos/{todoId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isCollaborationMember(collaborationId) || isModerator();
+        allow update: if isCollaborationMember(collaborationId) || isModerator();
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
+          (isLoggedIn() && resource.data.createdBy == request.auth.uid) ||
+          isModerator();
+      }
+
+      // Work sessions (build history)
+      match /workSessions/{sessionId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isCollaborationMember(collaborationId) || isModerator();
+        allow update: if isLoggedIn() && resource.data.userId == request.auth.uid;
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+      }
+
+      // Upload entries (changelog history)
+      match /uploads/{uploadId} {
+        allow read: if isCollaborationMember(collaborationId) || isModerator();
+        allow create: if isCollaborationEditorOrMod(collaborationId);
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+      }
+    }
+
+    // User's collaboration invites (notifications)
+    match /users/{userId}/collaborationInvites/{inviteId} {
+      allow read: if isOwner(userId);
+      allow create: if isLoggedIn(); // Any logged in user can send invites
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId) || isLoggedIn(); // Owner or sender can delete
+    }
   }
 }

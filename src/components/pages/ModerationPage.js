@@ -6,9 +6,10 @@ import ReportCard from '../cards/ReportCard';
 import Spinner from '../ui/Spinner';
 import BlacklistManager from '../management/BlacklistManager';
 import TagManager from '../management/TagManager';
+import CollaborationManager from '../management/CollaborationManager';
 
-const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPasswordConfirm, blacklist }) => {
-    const TABS = useRef(['Reported Creations', 'Reported Users', 'Blacklist', 'Tag Library']).current;
+const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPasswordConfirm, setConfirmation, blacklist }) => {
+    const TABS = useRef(['Reported Creations', 'Reported Users', 'Collaborations', 'Blacklist', 'Tag Library']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -181,6 +182,10 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
                     ))}
                 </div>
             );
+        }
+
+        if (activeTab === 'Collaborations') {
+            return <CollaborationManager setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;
         }
 
         if (activeTab === 'Blacklist') {
