@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import { db, auth } from '../../firebase/config';
-import { doc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer } from 'firebase/firestore';
+import { doc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
@@ -15,7 +15,7 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500' }) => (
 );
 
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = useRef(['User Management', 'Data Management', 'Email Users', 'Site Statistics']).current;
+    const TABS = useRef(['User Management', 'Data Management', 'Indexes', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
@@ -29,7 +29,18 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [dlcs, setDlcs] = useState([]);
     const [loadingDlcs, setLoadingDlcs] = useState(false);
     const [seedingDlcs, setSeedingDlcs] = useState(false);
-    const [rebuildingIndex, setRebuildingIndex] = useState(false);
+
+    // Indexes-Tab
+    const [rebuildingIndex, setRebuildingIndex] = useState(null); // 'general' | communityId | null
+    const [indexSubTab, setIndexSubTab] = useState('General');
+    const [gameIndexes, setGameIndexes] = useState([]);
+    const [communityIndexes, setCommunityIndexes] = useState([]);
+    const [loadingIndexes, setLoadingIndexes] = useState(false);
+
+    // Bug-Reports-Tab
+    const [bugReports, setBugReports] = useState([]);
+    const [bugSubTab, setBugSubTab] = useState('Open');
+    const [loadingBugs, setLoadingBugs] = useState(true);
 
     const gameTabRefs = useRef([]);
     const gameGliderRef = useRef(null);
@@ -263,24 +274,105 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         }
     };
 
-    const handleRebuildSearchIndex = async () => {
-        setRebuildingIndex(true);
+    // Übersicht der Suchindexe laden (Spiel- und Community-Indexe + Metadaten)
+    const loadIndexOverview = React.useCallback(async () => {
+        setLoadingIndexes(true);
+        try {
+            const [gameSnap, communitySnap, communityIndexSnap] = await Promise.all([
+                getDocs(collection(db, 'searchIndex')),
+                getDocs(collection(db, 'communitys')),
+                getDocs(collection(db, 'communitySearchIndex')),
+            ]);
+            setGameIndexes(gameSnap.docs.map(d => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    count: data.count ?? Object.keys(data.entries || {}).length,
+                    updatedAt: data.updatedAt || null,
+                };
+            }));
+            const idxMap = new Map(communityIndexSnap.docs.map(d => {
+                const data = d.data();
+                return [d.id, {
+                    count: data.count ?? Object.keys(data.entries || {}).length,
+                    updatedAt: data.updatedAt || null,
+                }];
+            }));
+            setCommunityIndexes(communitySnap.docs.map(d => {
+                const c = d.data();
+                const idx = idxMap.get(d.id);
+                return {
+                    id: d.id,
+                    name: c.name || d.id,
+                    bannerImageUrl: c.bannerImageUrl || null,
+                    themeColor: c.themeColor || '#A855F7',
+                    memberCount: c.memberCount || 0,
+                    count: idx ? idx.count : null,
+                    updatedAt: idx ? idx.updatedAt : null,
+                };
+            }));
+        } catch (error) {
+            setModalMessage(`Error loading index overview: ${error.message}`);
+        } finally {
+            setLoadingIndexes(false);
+        }
+    }, [setModalMessage]);
+
+    useEffect(() => {
+        if (activeTab === 'Indexes') loadIndexOverview();
+    }, [activeTab, loadIndexOverview]);
+
+    useEffect(() => {
+        if (activeTab !== 'Bug Reports') return;
+        setLoadingBugs(true);
+        const bugsQuery = query(collection(db, 'bugReports'), orderBy('createdAt', 'desc'));
+        const unsubscribe = onSnapshot(bugsQuery, (snapshot) => {
+            setBugReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+            setLoadingBugs(false);
+        }, (error) => {
+            setModalMessage(`Error loading bug reports: ${error.message}`);
+            setLoadingBugs(false);
+        });
+        return () => unsubscribe();
+    }, [activeTab, setModalMessage]);
+
+    const handleToggleBugStatus = async (report) => {
+        const newStatus = report.status === 'open' ? 'closed' : 'open';
+        try {
+            await updateDoc(doc(db, 'bugReports', report.id), {
+                status: newStatus,
+                closedAt: newStatus === 'closed' ? serverTimestamp() : null,
+            });
+        } catch (error) {
+            setModalMessage(`Error updating bug report: ${error.message}`);
+        }
+    };
+
+    // scope: 'general' (Spiel-Indexe) | 'community' (einzelne Community) | 'all'
+    const handleRebuildSearchIndex = async (scope = 'all', communityId = null) => {
+        setRebuildingIndex(communityId || scope);
         try {
             const user = auth.currentUser;
             if (!user) throw new Error("Not logged in.");
             const idToken = await user.getIdToken(true);
             const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
-            const response = await fetch(`${apiBaseUrl}/rebuildSearchIndex`, {
+            const params = new URLSearchParams({ scope });
+            if (communityId) params.set('communityId', communityId);
+            const response = await fetch(`${apiBaseUrl}/rebuildSearchIndex?${params}`, {
                 headers: { 'Authorization': `Bearer ${idToken}` }
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-            const summary = Object.entries(result.counts || {}).map(([game, n]) => `${game}: ${n}`).join(', ');
-            setModalMessage(`Search index rebuilt successfully. ${summary}${result.skipped ? ` (${result.skipped} skipped)` : ''}`);
+            const parts = [
+                ...Object.entries(result.counts || {}).map(([game, n]) => `${game}: ${n}`),
+                ...Object.entries(result.communityCounts || {}).map(([id, n]) => `${n} entries`),
+            ];
+            setModalMessage(`Index rebuilt successfully. ${parts.join(', ')}${result.skipped ? ` (${result.skipped} skipped)` : ''}`);
+            await loadIndexOverview();
         } catch (error) {
-            setModalMessage(`Error rebuilding search index: ${error.message}`);
+            setModalMessage(`Error rebuilding index: ${error.message}`);
         } finally {
-            setRebuildingIndex(false);
+            setRebuildingIndex(null);
         }
     };
 
@@ -414,12 +506,148 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                             <button onClick={handleSeedDlcs} disabled={seedingDlcs} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
                                 {seedingDlcs ? <Spinner size="small" /> : 'Seed All DLCs to Database'}
                             </button>
-                            <button onClick={handleRebuildSearchIndex} disabled={rebuildingIndex} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
-                                {rebuildingIndex ? <Spinner size="small" /> : 'Rebuild Search Index'}
-                            </button>
                         </div>
                     </div>
                 );
+            case 'Indexes': {
+                const formatUpdatedAt = (ts) => ts?.toDate ? ts.toDate().toLocaleString() : '—';
+                return (
+                    <div>
+                        <div className="flex justify-center mb-8">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                                {['General', 'Communitys'].map(tab => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setIndexSubTab(tab)}
+                                        className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${indexSubTab === tab ? 'bg-blue-500 text-white' : 'text-gray-600 hover:text-black'}`}
+                                    >
+                                        {tab}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {loadingIndexes ? <Spinner /> : indexSubTab === 'General' ? (
+                            <div className="max-w-3xl mx-auto">
+                                <div className="text-center mb-6">
+                                    <button
+                                        onClick={() => handleRebuildSearchIndex('general')}
+                                        disabled={rebuildingIndex !== null}
+                                        className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-8 rounded-lg disabled:opacity-50"
+                                    >
+                                        {rebuildingIndex === 'general' ? <Spinner size="small" /> : 'Rebuild General Index'}
+                                    </button>
+                                    <p className="text-sm text-gray-500 mt-2">Rebuilds the per-game search indexes used by the homepage search.</p>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    {gameIndexes.length === 0 && (
+                                        <p className="col-span-full text-center text-gray-500 py-8 bg-gray-50 rounded-lg border">No index documents found yet. Run a rebuild.</p>
+                                    )}
+                                    {gameIndexes.map(idx => (
+                                        <div key={idx.id} className="bg-white p-4 rounded-lg shadow border text-center">
+                                            <h4 className="font-bold text-gray-800 capitalize">{idx.id.replace(/-/g, ' ')}</h4>
+                                            <p className="text-3xl font-bold text-blue-500 my-2">{idx.count}</p>
+                                            <p className="text-xs text-gray-500">entries</p>
+                                            <p className="text-xs text-gray-400 mt-2">Updated: {formatUpdatedAt(idx.updatedAt)}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="max-w-5xl mx-auto">
+                                {communityIndexes.length === 0 && (
+                                    <p className="text-center text-gray-500 py-8 bg-gray-50 rounded-lg border">No communities found.</p>
+                                )}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {communityIndexes.map(c => (
+                                        <div key={c.id} className="bg-white rounded-lg shadow border overflow-hidden flex flex-col">
+                                            <div className="h-20 w-full" style={{ backgroundColor: c.themeColor }}>
+                                                {c.bannerImageUrl && (
+                                                    <img src={c.bannerImageUrl} alt="" className="w-full h-full object-cover" />
+                                                )}
+                                            </div>
+                                            <div className="p-4 flex flex-col flex-grow">
+                                                <h4 className="font-bold text-gray-800 truncate" title={c.name}>{c.name}</h4>
+                                                <p className="text-sm text-gray-500">{c.memberCount} members</p>
+                                                <p className="text-sm text-gray-600 mt-2">
+                                                    Index: {c.count === null ? <span className="text-orange-500 font-semibold">not built yet</span> : <span className="font-semibold">{c.count} entries</span>}
+                                                </p>
+                                                <p className="text-xs text-gray-400">Updated: {formatUpdatedAt(c.updatedAt)}</p>
+                                                <button
+                                                    onClick={() => handleRebuildSearchIndex('community', c.id)}
+                                                    disabled={rebuildingIndex !== null}
+                                                    className="mt-3 w-full text-white font-semibold py-2 px-3 rounded-lg disabled:opacity-50 hover:brightness-90"
+                                                    style={{ backgroundColor: c.themeColor }}
+                                                >
+                                                    {rebuildingIndex === c.id ? <Spinner size="small" /> : 'Rebuild Community Index'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+            case 'Bug Reports': {
+                const openBugs = bugReports.filter(b => b.status === 'open');
+                const closedBugs = bugReports.filter(b => b.status !== 'open');
+                const shownBugs = bugSubTab === 'Open' ? openBugs : closedBugs;
+                const formatTs = (ts) => ts?.toDate ? ts.toDate().toLocaleString() : '—';
+                return (
+                    <div className="max-w-4xl mx-auto">
+                        <div className="flex justify-center mb-8">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                                {['Open', 'Closed'].map(tab => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setBugSubTab(tab)}
+                                        className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${bugSubTab === tab ? (tab === 'Open' ? 'bg-red-500 text-white' : 'bg-green-600 text-white') : 'text-gray-600 hover:text-black'}`}
+                                    >
+                                        {tab}
+                                        <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${bugSubTab === tab ? 'bg-white text-gray-800' : 'bg-gray-300 text-gray-700'}`}>
+                                            {tab === 'Open' ? openBugs.length : closedBugs.length}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {loadingBugs ? <Spinner /> : shownBugs.length === 0 ? (
+                            <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border">
+                                {bugSubTab === 'Open' ? 'No open bug reports. 🎉' : 'No closed bug reports yet.'}
+                            </p>
+                        ) : (
+                            <div className="space-y-4">
+                                {shownBugs.map(report => (
+                                    <div key={report.id} className="bg-white rounded-lg shadow border p-4">
+                                        <div className="flex justify-between items-start gap-4">
+                                            <div className="min-w-0 flex-grow">
+                                                <p className="text-gray-800 whitespace-pre-wrap break-words">{report.description}</p>
+                                                <div className="mt-3 pt-3 border-t flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                                                    <span><span className="font-semibold">From:</span> {report.username} ({report.userId})</span>
+                                                    <span><span className="font-semibold">Page:</span> {report.page}</span>
+                                                    <span><span className="font-semibold">Screen:</span> {report.screen}</span>
+                                                    <span><span className="font-semibold">Reported:</span> {formatTs(report.createdAt)}</span>
+                                                    {report.closedAt && <span><span className="font-semibold">Closed:</span> {formatTs(report.closedAt)}</span>}
+                                                </div>
+                                                <p className="mt-1 text-xs text-gray-400 truncate" title={report.userAgent}>{report.userAgent}</p>
+                                            </div>
+                                            <button
+                                                onClick={() => handleToggleBugStatus(report)}
+                                                className={`flex-shrink-0 text-sm font-semibold py-2 px-4 rounded-lg text-white ${report.status === 'open' ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-500 hover:bg-orange-600'}`}
+                                            >
+                                                {report.status === 'open' ? 'Mark as Closed' : 'Reopen'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            }
             case 'Email Users':
                 return (
                     <div className="bg-white p-6 rounded-lg shadow-md max-w-2xl mx-auto text-center">

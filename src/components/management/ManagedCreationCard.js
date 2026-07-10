@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../ui/Icon';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, getYoutubeThumbnailUrl } from '../../utils/helpers';
 
 const ManagedCreationCard = ({ creation, onPinToggle, onUnlink, onClick, onMarkForShowcase }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
 
-    const getYoutubeThumbnail = (url) => {
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    };
+    const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
     const initialThumbnail = creation.imageUrls?.length > 0
         ? creation.imageUrls[0]

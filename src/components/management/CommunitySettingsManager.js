@@ -2,14 +2,20 @@ import React, { useState } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
-import { getGameColor } from '../../utils/helpers';
+import Icon from '../ui/Icon';
+import { getGameColor, SOCIAL_PLATFORMS } from '../../utils/helpers';
 
 const CommunitySettingsManager = ({ community, setModalMessage }) => {
     const [themeColor, setThemeColor] = useState(community.themeColor || '#F97316');
     const [allowedGames, setAllowedGames] = useState(community.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo']);
     // ✅ 1. Add state for the main game selection
     const [mainGame, setMainGame] = useState(community.mainGame || '');
+    const [socialLinks, setSocialLinks] = useState(community.socialLinks || {});
     const [isSaving, setIsSaving] = useState(false);
+
+    const handleSocialLinkChange = (platformId, value) => {
+        setSocialLinks(prev => ({ ...prev, [platformId]: value }));
+    };
 
     const ALL_GAMES = [
         { id: 'planet-coaster', name: 'Planet Coaster' },
@@ -36,13 +42,26 @@ const CommunitySettingsManager = ({ community, setModalMessage }) => {
     };
 
     const handleSave = async () => {
+        // Nur ausgefüllte, plausible Links speichern
+        const cleanedLinks = {};
+        for (const platform of SOCIAL_PLATFORMS) {
+            const value = (socialLinks[platform.id] || '').trim();
+            if (!value) continue;
+            if (!/^https:\/\//i.test(value)) {
+                setModalMessage(`The ${platform.label} link must start with https://`);
+                return;
+            }
+            cleanedLinks[platform.id] = value;
+        }
+
         setIsSaving(true);
         try {
             const communityRef = doc(db, 'communitys', community.id);
             await updateDoc(communityRef, {
                 themeColor: themeColor,
                 allowedGames: allowedGames,
-                mainGame: mainGame // ✅ 2. Save the main game selection
+                mainGame: mainGame, // ✅ 2. Save the main game selection
+                socialLinks: cleanedLinks
             });
             setModalMessage("Settings updated successfully!");
         } catch (error) {
@@ -114,6 +133,30 @@ const CommunitySettingsManager = ({ community, setModalMessage }) => {
                     </select>
                 </div>
 
+
+                <div>
+                    <label className="block text-gray-700 font-bold mb-2">Social Links</label>
+                    <p className="text-sm text-gray-500 mb-3">
+                        These appear as clickable icons on your community banner. A linked YouTube channel also
+                        enables the YouTube tab on your community's Videos page.
+                    </p>
+                    <div className="space-y-3">
+                        {SOCIAL_PLATFORMS.map(platform => (
+                            <div key={platform.id} className="flex items-center gap-3">
+                                <div className="w-9 h-9 flex-shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-gray-600" title={platform.label}>
+                                    <Icon path={platform.icon} solid={platform.solid} className="w-5 h-5" />
+                                </div>
+                                <input
+                                    type="url"
+                                    value={socialLinks[platform.id] || ''}
+                                    onChange={(e) => handleSocialLinkChange(platform.id, e.target.value)}
+                                    placeholder={platform.placeholder}
+                                    className="flex-grow p-2 border rounded-lg"
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
                 <div className="flex justify-end pt-6 border-t">
                     <button

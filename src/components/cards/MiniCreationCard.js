@@ -1,12 +1,9 @@
 import React from 'react';
 import PreloadLink from '../ui/PreloadLink';
+import { getYoutubeThumbnailUrl as getYoutubeThumbnail } from '../../utils/helpers';
 
 const MiniCreationCard = ({ creation }) => {
-    const getYoutubeThumbnail = (url) => {
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    };
-    
+
     const initialThumbnail = creation.imageUrls?.length > 0 
         ? creation.imageUrls[0] 
         : creation.videoUrls?.length > 0 

@@ -4,7 +4,7 @@ import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, delet
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
-import { getGameColor, ICONS } from '../../utils/helpers';
+import { getGameColor, ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
@@ -43,11 +43,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         return new Date(timestamp.seconds * 1000).toLocaleDateString();
     };
 
-    const getYoutubeThumbnail = (url) => {
-        if (!url) return null;
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    };
+    const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
     useEffect(() => {
         let isMounted = true;
@@ -310,10 +306,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const eventSubmissions = eventDetails ? creation.eventSubmissions?.[eventDetails.id] : null;
 
     const isYoutube = (url) => url && (url.includes('youtube.com') || url.includes('youtu.be'));
-    const getYoutubeEmbedUrl = (url) => {
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://www.youtube.com/embed/${videoId}`;
-    };
+    const getYoutubeEmbedUrl = (url) => getYoutubeEmbed(url);
 
     const showcaseVideos = [];
     if (creation.assignedVideoUrl) {

@@ -1,24 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, doc, getDocs, getDoc, orderBy, limit, startAfter } from 'firebase/firestore';
 import { joinCommunity, leaveCommunity, deleteCommunityAsAdmin } from '../../firebase/community';
-import {
-    cacheCreations,
-    getCreationsFromCache,
-    fetchCreationsByIds,
-    cacheCommunityCreationList,
-    getCachedCommunityCreationList,
-    cacheCommunityCreationMeta,
-    getCachedCommunityCreationMeta
-} from '../../utils/creationCache';
+import { fetchCommunityIndex } from '../../firebase/communityIndexService';
+import AddCreationsToCommunityModal from '../modals/AddCreationsToCommunityModal';
+import CommunityVideosTab from '../community/CommunityVideosTab';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import MiniCreationCard from '../cards/MiniCreationCard';
 import MemberCard from '../cards/MemberCard';
 import EventCard from '../cards/EventCard';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, SOCIAL_PLATFORMS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 
@@ -26,20 +20,18 @@ const TABS = ['Creations', 'Members', 'Events'];
 
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
     const { communityName } = useParams();
-    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
 
     const [community, setCommunity] = useState(null);
-    const [creations, setCreations] = useState([]);
     const [members, setMembers] = useState([]);
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [isMember, setIsMember] = useState(false);
     const [isProcessingJoin, setIsProcessingJoin] = useState(false);
-    const [pinnedIds, setPinnedIds] = useState([]);
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const navigate = useNavigate();
 
     const [isFilterVisible, setIsFilterVisible] = useState(false);
@@ -47,7 +39,18 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const [creationPlatformFilter, setCreationPlatformFilter] = useState('all');
     const [memberRankFilter, setMemberRankFilter] = useState('all');
     const [creationRankFilter, setCreationRankFilter] = useState('all');
+    const [creationTagFilter, setCreationTagFilter] = useState('');
+    const [creationDlcFilter, setCreationDlcFilter] = useState('all');
     const filterMenuRef = useRef(null);
+
+    // Creations der Community kommen aus dem Kompakt-Index (1 Read),
+    // gepflegt von den Cloud-Function-Triggern.
+    const { data: creations = [] } = useQuery({
+        queryKey: ['communityIndex', community?.id],
+        queryFn: () => fetchCommunityIndex(community.id),
+        enabled: !!community?.id,
+        staleTime: 5 * 60 * 1000,
+    });
 
     const [loadingMoreEvents, setLoadingMoreEvents] = useState(false);
     const [lastVisibleEvent, setLastVisibleEvent] = useState(null);
@@ -93,86 +96,19 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         if (!community) return;
         let isMounted = true;
 
-        const fetchData = async () => {
-            const communityId = community.id;
-
-            // Prüfe ob Community-Creations gecacht sind
-            const cachedList = getCachedCommunityCreationList(queryClient, communityId);
-            const cachedMeta = getCachedCommunityCreationMeta(queryClient, communityId);
-
-            if (cachedList && cachedMeta) {
-                // Creations aus dem zentralen Cache holen
-                const { cached, missingIds } = getCreationsFromCache(queryClient, cachedList.creationIds);
-
-                if (missingIds.length === 0) {
-                    // Alles im Cache - sofort anzeigen
-                    if (isMounted) {
-                        setCreations(cached);
-                        setPinnedIds(Object.keys(cachedMeta).filter(id => cachedMeta[id]?.pinned));
-                    }
-                } else {
-                    // Fehlende nachladen
-                    const loaded = await fetchCreationsByIds(missingIds);
-                    cacheCreations(queryClient, loaded);
-                    const allCreations = [...cached, ...loaded];
-                    if (isMounted) {
-                        setCreations(allCreations);
-                        setPinnedIds(Object.keys(cachedMeta).filter(id => cachedMeta[id]?.pinned));
-                    }
-                }
-
-                // Members trotzdem laden (werden nicht gecacht)
-                const membersQuery = collection(db, 'communitys', communityId, 'members');
-                const membersSnapshot = await getDocs(membersQuery);
-                const memberPromises = membersSnapshot.docs.map(async (memberDoc) => {
-                    const profileSnap = await getDoc(doc(db, 'profiles', memberDoc.id));
-                    return { id: memberDoc.id, ...memberDoc.data(), ...(profileSnap.exists() ? profileSnap.data() : {}) };
-                });
-                const resolvedMembers = await Promise.all(memberPromises);
-                if (isMounted) setMembers(resolvedMembers);
-                return;
-            }
-
-            // Kein Cache - alles laden
-            const membersQuery = collection(db, 'communitys', communityId, 'members');
-            const creationsQuery = query(collection(db, 'creations'), where('communityIds', 'array-contains', communityId));
-            const pinnedQuery = query(collection(db, 'communitys', communityId, 'creations'), where('pinned', '==', true));
-
-            const [membersSnapshot, creationsSnapshot, pinnedSnapshot] = await Promise.all([
-                getDocs(membersQuery),
-                getDocs(creationsQuery),
-                getDocs(pinnedQuery),
-            ]);
-
+        const fetchMembers = async () => {
+            const membersQuery = collection(db, 'communitys', community.id, 'members');
+            const membersSnapshot = await getDocs(membersQuery);
             const memberPromises = membersSnapshot.docs.map(async (memberDoc) => {
                 const profileSnap = await getDoc(doc(db, 'profiles', memberDoc.id));
                 return { id: memberDoc.id, ...memberDoc.data(), ...(profileSnap.exists() ? profileSnap.data() : {}) };
             });
             const resolvedMembers = await Promise.all(memberPromises);
-
-            const creationsData = creationsSnapshot.docs.map(cDoc => ({ id: cDoc.id, ...cDoc.data() }));
-            const finalPinnedIds = pinnedSnapshot.docs.map(pDoc => pDoc.id);
-
-            // Im Cache speichern
-            cacheCreations(queryClient, creationsData);
-            cacheCommunityCreationList(queryClient, communityId, creationsData.map(c => c.id));
-
-            // Metadaten cachen (pinned status)
-            const metaData = {};
-            pinnedSnapshot.docs.forEach(pDoc => {
-                metaData[pDoc.id] = { pinned: true, ...pDoc.data() };
-            });
-            cacheCommunityCreationMeta(queryClient, communityId, metaData);
-
-            if (isMounted) {
-                setMembers(resolvedMembers);
-                setCreations(creationsData);
-                setPinnedIds(finalPinnedIds);
-            }
+            if (isMounted) setMembers(resolvedMembers);
         };
-        fetchData();
+        fetchMembers();
         return () => { isMounted = false; };
-    }, [community, queryClient]);
+    }, [community]);
     
     useEffect(() => {
         if (!community) return;
@@ -237,8 +173,29 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     }, [activeTab, fetchMoreEvents]);
 
 
-    const pinnedCreations = useMemo(() => creations.filter(c => pinnedIds.includes(c.id)), [creations, pinnedIds]);
-    const unpinnedCreations = useMemo(() => creations.filter(c => !pinnedIds.includes(c.id)), [creations, pinnedIds]);
+    const pinnedCreations = useMemo(() => creations.filter(c => c.pinned), [creations]);
+    const unpinnedCreations = useMemo(() => creations.filter(c => !c.pinned), [creations]);
+
+    // Videos-Tab nur anzeigen, wenn es für die Community relevante Videos gibt
+    // (verlinkter YouTube-Kanal, Showcase-Videos oder Event-Videos)
+    const hasVideos = useMemo(() =>
+        !!community?.socialLinks?.youtube ||
+        creations.some(c => c.showcaseVideoUrl) ||
+        events.some(e => e.videoUrls?.length > 0),
+        [community?.socialLinks?.youtube, creations, events]);
+
+    const visibleTabs = useMemo(() => hasVideos ? [...TABS, 'Videos'] : TABS, [hasVideos]);
+
+    useEffect(() => {
+        if (!visibleTabs.includes(activeTab)) setActiveTab(TABS[0]);
+    }, [visibleTabs, activeTab]);
+
+    // DLC-Optionen für den Filter aus den vorhandenen Creations aggregieren
+    const availableDlcs = useMemo(() => {
+        const dlcs = new Set();
+        creations.forEach(c => (c.requiredDlcs || []).forEach(dlc => dlcs.add(dlc)));
+        return [...dlcs].sort();
+    }, [creations]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -250,13 +207,13 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
     useEffect(() => {
         if (loading) return;
-        const activeTabIndex = TABS.findIndex(tab => tab === activeTab);
+        const activeTabIndex = visibleTabs.findIndex(tab => tab === activeTab);
         const activeTabNode = tabRefs.current[activeTabIndex];
         if (activeTabNode && gliderRef.current) {
             gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
             gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
         }
-    }, [activeTab, loading]);
+    }, [activeTab, loading, visibleTabs]);
 
     const isSiteAdmin = userProfile?.role === 'admin';
     const isSiteModerator = userProfile?.role === 'moderator';
@@ -297,23 +254,27 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             content = unpinnedCreations.filter(creation => {
                 const statusMatch = creationStatusFilter === 'all' || creation.status === creationStatusFilter;
                 const platformMatch = creationPlatformFilter === 'all' || (creation.platform || 'pc') === creationPlatformFilter;
-                const creatorRoles = members.find(m => m.id === creation.userId)?.roles || [];
-                const rankMatch = creationRankFilter === 'all' || creatorRoles.some(r => r.toLowerCase() === creationRankFilter.toLowerCase());
-                return statusMatch && platformMatch && rankMatch;
+                // Creator-Rollen kommen direkt aus dem Community-Index
+                const rankMatch = creationRankFilter === 'all' || (creation.creatorRoles || []).some(r => r.toLowerCase() === creationRankFilter.toLowerCase());
+                const tagTerm = creationTagFilter.trim().toLowerCase();
+                const tagMatch = !tagTerm || (creation.tags || []).some(t => t.toLowerCase().includes(tagTerm));
+                const dlcMatch = creationDlcFilter === 'all' || (creation.requiredDlcs || []).includes(creationDlcFilter);
+                return statusMatch && platformMatch && rankMatch && tagMatch && dlcMatch;
             });
         } else {
             return [];
         }
-        
+
         if (searchTerm.trim()) {
             const lowerCaseSearch = searchTerm.toLowerCase();
-            content = content.filter(item => 
+            content = content.filter(item =>
                 (item.title && item.title.toLowerCase().includes(lowerCaseSearch)) ||
-                (item.username && item.username.toLowerCase().includes(lowerCaseSearch))
+                (item.username && item.username.toLowerCase().includes(lowerCaseSearch)) ||
+                (item.tags && item.tags.some(t => t.toLowerCase().includes(lowerCaseSearch)))
             );
         }
         return content;
-    }, [activeTab, unpinnedCreations, members, searchTerm, creationStatusFilter, creationPlatformFilter, memberRankFilter, creationRankFilter]);
+    }, [activeTab, unpinnedCreations, members, searchTerm, creationStatusFilter, creationPlatformFilter, memberRankFilter, creationRankFilter, creationTagFilter, creationDlcFilter]);
 
     if (loading || !community) return <Spinner />;
     
@@ -338,8 +299,26 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     return (
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
             <div className="mb-8">
-                <img src={community.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Community+Banner'} alt={`${community.name} Banner`} className="w-full h-48 md:h-64 object-cover rounded-lg mb-4"/>
-                
+                <div className="relative mb-4">
+                    <img src={community.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Community+Banner'} alt={`${community.name} Banner`} className="w-full h-48 md:h-64 object-cover rounded-lg"/>
+                    {SOCIAL_PLATFORMS.some(p => community.socialLinks?.[p.id]) && (
+                        <div className="absolute bottom-3 right-3 flex gap-2">
+                            {SOCIAL_PLATFORMS.filter(p => community.socialLinks?.[p.id]).map(platform => (
+                                <a
+                                    key={platform.id}
+                                    href={community.socialLinks[platform.id]}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title={platform.label}
+                                    className="w-9 h-9 rounded-full bg-black/60 hover:bg-[--theme-color] text-white flex items-center justify-center transition-colors shadow"
+                                >
+                                    <Icon path={platform.icon} solid={platform.solid} className="w-5 h-5" />
+                                </a>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
                 <div className="flex flex-col md:flex-row justify-center items-center md:items-start gap-y-4 px-2">
                     <div className="flex flex-col sm:flex-row gap-2 order-2 md:order-1 w-48 flex-shrink-0">
                         <button 
@@ -405,25 +384,36 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 </div>
             )}
 
-            <div className="relative flex justify-center my-6">
+            <div className="relative flex justify-center items-center my-6">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
                     <div
                         ref={gliderRef}
                         className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out"
                     />
-                    {TABS.map((tab, index) => (
-                        <button 
-                            key={tab} 
-                            ref={el => tabRefs.current[index] = el} 
-                            onClick={() => setActiveTab(tab)} 
+                    {visibleTabs.map((tab, index) => (
+                        <button
+                            key={tab}
+                            ref={el => tabRefs.current[index] = el}
+                            onClick={() => setActiveTab(tab)}
                             className={`relative z-10 py-2 px-8 rounded-full transition-colors duration-300 font-medium ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                         </button>
                     ))}
                 </div>
+                {user && isMember && (
+                    <button
+                        onClick={() => setIsAddModalOpen(true)}
+                        className="ml-3 w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all flex-shrink-0"
+                        title="Add or remove your creations in this community"
+                        aria-label="Manage your creations in this community"
+                    >
+                        <Icon path={ICONS.plus} className="w-6 h-6" />
+                    </button>
+                )}
             </div>
 
+            {activeTab !== 'Videos' && (
             <div className="flex justify-center items-center mb-6 gap-4">
                 <input
                     type="text"
@@ -466,6 +456,27 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                             ))}
                                         </select>
                                     </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Tag</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Coaster"
+                                            value={creationTagFilter}
+                                            onChange={(e) => setCreationTagFilter(e.target.value)}
+                                            className="w-full p-2 border rounded-lg bg-white"
+                                        />
+                                    </div>
+                                    {availableDlcs.length > 0 && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Required DLC</label>
+                                            <select value={creationDlcFilter} onChange={(e) => setCreationDlcFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                                <option value="all">All DLCs</option>
+                                                {availableDlcs.map(dlc => (
+                                                    <option key={dlc} value={dlc}>{dlc}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                              {activeTab === 'Members' && (
@@ -483,6 +494,11 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     )}
                 </div>
             </div>
+            )}
+
+            {activeTab === 'Videos' && (
+                <CommunityVideosTab community={community} creations={creations} events={visibleEvents} />
+            )}
 
             {activeTab === 'Events' && (
                 <div>
@@ -538,6 +554,15 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             
             {showManageButton && (
                 <FloatingActionButtonManage communityId={community.id} />
+            )}
+
+            {isAddModalOpen && user && (
+                <AddCreationsToCommunityModal
+                    user={user}
+                    community={community}
+                    onClose={() => setIsAddModalOpen(false)}
+                    setModalMessage={setModalMessage}
+                />
             )}
         </div>
     );

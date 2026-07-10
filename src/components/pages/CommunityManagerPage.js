@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { doc, onSnapshot, collection, getDocs, getDoc, query, where } from 'firebase/firestore';
+import { useQuery } from '@tanstack/react-query';
+import { doc, onSnapshot, collection, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
-import { cacheCreations, cacheCommunityCreationList, cacheCommunityCreationMeta } from '../../utils/creationCache';
+import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
@@ -17,7 +17,6 @@ import ShowcaseManager from '../management/ShowcaseManager';
 
 const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirmation, blacklist, userProfile, setPopoverView }) => {
     const { id: communityId } = useParams();
-    const queryClient = useQueryClient();
     const [community, setCommunity] = useState(null);
     const [loading, setLoading] = useState(true);
     const [isEditing, setIsEditing] = useState(false);
@@ -73,61 +72,32 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             }
         });
 
-        const creationsQuery = query(collection(db, 'creations'), where('communityIds', 'array-contains', communityId));
-        const unsubscribeCreations = onSnapshot(creationsQuery, async (snapshot) => {
-            const creationData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-            const linksRef = collection(db, 'communitys', communityId, 'creations');
-            const membersRef = collection(db, 'communitys', communityId, 'members');
-
-            const [linksSnapshot, membersSnapshot] = await Promise.all([getDocs(linksRef), getDocs(membersRef)]);
-
-            const linksMap = new Map(linksSnapshot.docs.map(doc => [doc.id, doc.data()]));
-            const memberRolesMap = new Map(membersSnapshot.docs.map(doc => [doc.id, doc.data().roles || []]));
-
-            const creationsWithDetails = creationData.map(creation => {
-                const creatorRoles = memberRolesMap.get(creation.userId) || [];
-                const communityRanks = community.ranks || [];
-                const linkData = linksMap.get(creation.id) || {};
-
-                const creatorRanks = creatorRoles.map(roleName => {
-                    return communityRanks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-                }).filter(Boolean);
-
-                return {
-                    ...creation,
-                    pinned: linkData.pinned || false,
-                    showcaseVideoUrl: linkData.showcaseVideoUrl || null,
-                    markedForShowcase: linkData.markedForShowcase || false,
-                    showcaseNote: linkData.showcaseNote || '',
-                    showcaseGroupId: linkData.showcaseGroupId || null,
-                    creatorRanks: creatorRanks
-                };
-            });
-
-            // Basis-Creations im zentralen Cache speichern (ohne Community-spezifische Felder)
-            cacheCreations(queryClient, creationData);
-            // Community-Liste cachen
-            cacheCommunityCreationList(queryClient, communityId, creationData.map(c => c.id));
-            // Community-Metadaten cachen
-            const metaData = {};
-            linksSnapshot.docs.forEach(doc => {
-                metaData[doc.id] = doc.data();
-            });
-            cacheCommunityCreationMeta(queryClient, communityId, metaData);
-
-            if (isMounted) {
-                setCreations(creationsWithDetails);
-                setLoading(false);
-            }
-        });
-
         return () => {
             isMounted = false;
             unsubscribeMembers();
-            unsubscribeCreations();
         };
-    }, [community, communityId, queryClient]);
+    }, [community, communityId]);
+
+    // Creations kommen aus dem Community-Index (1 Read). Mutationen der Manager
+    // aktualisieren den lokalen State direkt; der Index zieht per Trigger nach.
+    const { data: indexCreations } = useQuery({
+        queryKey: ['communityIndex', communityId],
+        queryFn: () => fetchCommunityIndex(communityId),
+        enabled: !!community,
+        staleTime: 60 * 1000,
+    });
+
+    useEffect(() => {
+        if (!indexCreations || !community) return;
+        const communityRanks = community.ranks || [];
+        setCreations(indexCreations.map(creation => ({
+            ...creation,
+            creatorRanks: (creation.creatorRoles || [])
+                .map(roleName => communityRanks.find(r => r.name.toLowerCase() === roleName.toLowerCase()))
+                .filter(Boolean),
+        })));
+        setLoading(false);
+    }, [indexCreations, community]);
 
     useEffect(() => {
         if (!loading) {
@@ -194,11 +164,12 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             creations={creations}
                             setCreations={setCreations}
                             community={community}
-                            setCommunity={setCommunity} 
+                            setCommunity={setCommunity}
                             communityId={communityId}
                             setModalMessage={setModalMessage}
                             setPopoverView={setPopoverView}
                             setConfirmation={setConfirmation}
+                            blacklist={blacklist}
                         />;
             case 'Card Editor':
                 return <CommunityCardEditor community={community} setModalMessage={setModalMessage} />;
@@ -213,6 +184,15 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     return (
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
             <div className="relative text-center mb-8">
+                <div className="absolute top-0 left-0">
+                    <button
+                        onClick={() => navigate(`/community/${community.slug}`)}
+                        className="flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all"
+                    >
+                        <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
+                        Back to Community
+                    </button>
+                </div>
                 <div className="max-w-2xl mx-auto">
                     <h1 className="text-4xl font-bold text-gray-800">Manage Community</h1>
                     <h2 className="text-2xl text-gray-600">{community.name}</h2>

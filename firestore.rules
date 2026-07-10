@@ -92,7 +92,19 @@ service cloud.firestore {
       match /creations/{creationId} {
         allow read: if true;
         allow create: if isLoggedIn();
-        allow update, delete: if isLoggedIn() && (isCommunityStaff(communityId) || isModerator());
+        // Owner der Creation darf sein Link-Doc entfernen (Creation aus der
+        // Community nehmen) und sich einmalig für das Showcase bewerben —
+        // dabei dürfen nur die Bewerbungsfelder geändert werden.
+        allow update: if isLoggedIn() && (
+            isCommunityStaff(communityId) || isModerator() ||
+            (
+                resource.data.userId == request.auth.uid &&
+                request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appliedForShowcase', 'appliedAt']) &&
+                request.resource.data.appliedForShowcase == true &&
+                !('appliedForShowcase' in resource.data && resource.data.appliedForShowcase == true)
+            )
+        );
+        allow delete: if isLoggedIn() && (isCommunityStaff(communityId) || isModerator() || resource.data.userId == request.auth.uid);
       }
     }
 
@@ -131,6 +143,23 @@ service cloud.firestore {
     match /searchIndex/{gameId} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // Community-Suchindex (ein Doc pro Community), analog nur von Functions gepflegt.
+    match /communitySearchIndex/{communityId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Bug-Reports: eingeloggte Nutzer melden, nur Admins lesen/verwalten.
+    match /bugReports/{reportId} {
+      allow create: if isLoggedIn() &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.status == 'open' &&
+          request.resource.data.description is string &&
+          request.resource.data.description.size() >= 10 &&
+          request.resource.data.description.size() <= 3000;
+      allow read, update, delete: if isAdmin();
     }
 
     match /profiles/{userId} {

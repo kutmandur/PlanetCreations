@@ -1039,6 +1039,305 @@ exports.syncCreationToSearchIndex = functions.firestore
         }, { merge: true });
     });
 
+// --- Community Search Index ---
+// Analog zum Spiel-Index: ein Dokument pro Community unter
+// communitySearchIndex/{communityId} mit einer entries-Map (creationId ->
+// kompakter Eintrag inkl. Link-Metadaten, Custom-Field-Daten und Creator-Rang).
+// Versorgt die Community-Seite (Suche/Filter), das Add-Creations-Popup und
+// die Showcase-Applications-Liste mit 1 Read.
+
+const buildCommunityIndexEntry = (creationData, linkData, memberRoles) => ({
+    ...buildIndexEntry(creationData),
+    g: creationData.game || '',
+    sc: creationData.shareCode || null,
+    csd: creationData.communitySpecificData?.[linkData.__communityId] || {},
+    pin: linkData.pinned || false,
+    m4s: linkData.markedForShowcase || false,
+    nt: linkData.showcaseNote || '',
+    app: linkData.appliedForShowcase || false,
+    appAt: linkData.appliedAt?.toMillis?.() || null,
+    svu: linkData.showcaseVideoUrl || null,
+    grp: linkData.showcaseGroupId || null,
+    rk: memberRoles || [],
+    la: linkData.linkedAt?.toMillis?.() || null,
+});
+
+/**
+ * Baut den Index einer einzelnen Community komplett neu auf.
+ * creationsById kann als Vorlade-Cache übergeben werden (Gesamt-Rebuild).
+ */
+const rebuildCommunityIndex = async (communityId, creationsById = null) => {
+    const [linksSnap, membersSnap] = await Promise.all([
+        db.collection(`communitys/${communityId}/creations`).get(),
+        db.collection(`communitys/${communityId}/members`).get(),
+    ]);
+    const rolesByUser = new Map(membersSnap.docs.map(m => [m.id, m.data().roles || []]));
+
+    const entries = {};
+    for (const linkDoc of linksSnap.docs) {
+        let creationData = creationsById ? creationsById.get(linkDoc.id) : null;
+        if (!creationData) {
+            const snap = await db.doc(`creations/${linkDoc.id}`).get();
+            if (!snap.exists) continue; // verwaister Link
+            creationData = snap.data();
+        }
+        const linkData = { ...linkDoc.data(), __communityId: communityId };
+        entries[linkDoc.id] = buildCommunityIndexEntry(
+            creationData, linkData, rolesByUser.get(creationData.userId));
+    }
+
+    await db.doc(`communitySearchIndex/${communityId}`).set({
+        entries,
+        count: Object.keys(entries).length,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return Object.keys(entries).length;
+};
+
+/**
+ * Hält communitySearchIndex/{communityId} synchron mit den Link-Docs
+ * communitys/{communityId}/creations/{creationId} (Quelle für Zuordnung,
+ * pinned/showcase/application-Status).
+ */
+exports.syncCommunityLinkToIndex = functions.firestore
+    .document('communitys/{communityId}/creations/{creationId}')
+    .onWrite(async (change, context) => {
+        const { communityId, creationId } = context.params;
+        const indexRef = db.doc(`communitySearchIndex/${communityId}`);
+        const entryField = new admin.firestore.FieldPath('entries', creationId);
+
+        // Link gelöscht → Eintrag entfernen
+        if (!change.after.exists) {
+            return indexRef.update(entryField, admin.firestore.FieldValue.delete(),
+                'count', admin.firestore.FieldValue.increment(-1))
+                .catch(() => null);
+        }
+
+        const linkData = { ...change.after.data(), __communityId: communityId };
+
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists) {
+            console.warn(`Link ${communityId}/${creationId} points to missing creation, not indexed.`);
+            return null;
+        }
+        const creationData = creationSnap.data();
+
+        const memberSnap = await db.doc(`communitys/${communityId}/members/${creationData.userId}`).get();
+        const memberRoles = memberSnap.exists ? (memberSnap.data().roles || []) : [];
+
+        return indexRef.set({
+            entries: { [creationId]: buildCommunityIndexEntry(creationData, linkData, memberRoles) },
+            ...(change.before.exists ? {} : { count: admin.firestore.FieldValue.increment(1) }),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+    });
+
+/**
+ * Zieht Creation-Änderungen (Titel, Tags, Likes, Custom Fields, ...) in alle
+ * Community-Indexe nach, in denen die Creation verlinkt ist. Löschungen
+ * räumen die Einträge ebenfalls ab (Link-Docs können verwaisen, z.B. bei
+ * Account-Löschung).
+ */
+exports.syncCreationToCommunityIndexes = functions.firestore
+    .document('creations/{creationId}')
+    .onWrite(async (change, context) => {
+        const creationId = context.params.creationId;
+        const before = change.before.exists ? change.before.data() : null;
+        const after = change.after.exists ? change.after.data() : null;
+        const entryField = new admin.firestore.FieldPath('entries', creationId);
+
+        const idsBefore = before?.communityIds || [];
+        const idsAfter = after?.communityIds || [];
+
+        // Aus Indexen entfernen, wo die Creation nicht mehr verlinkt ist
+        const removed = idsBefore.filter(id => !idsAfter.includes(id));
+        await Promise.all(removed.map(cid =>
+            db.doc(`communitySearchIndex/${cid}`)
+                .update(entryField, admin.firestore.FieldValue.delete(),
+                    'count', admin.firestore.FieldValue.increment(-1))
+                .catch(() => null)
+        ));
+
+        if (!after || idsAfter.length === 0) return null;
+
+        // No-Op-Guard analog zum Spiel-Index (Backup-Rückschreiber etc.)
+        if (before) {
+            const relevantChanged =
+                JSON.stringify(buildIndexEntry(before)) !== JSON.stringify(buildIndexEntry(after)) ||
+                JSON.stringify(before.communitySpecificData || {}) !== JSON.stringify(after.communitySpecificData || {}) ||
+                (before.shareCode || null) !== (after.shareCode || null) ||
+                JSON.stringify(idsBefore) !== JSON.stringify(idsAfter);
+            if (!relevantChanged) return null;
+        }
+
+        // set+merge merged die nested entry-Map feldweise — Link-Felder
+        // (pin/m4s/app/...) bleiben unberührt, da hier nicht enthalten.
+        const creationFields = (cid) => ({
+            ...buildIndexEntry(after),
+            g: after.game || '',
+            sc: after.shareCode || null,
+            csd: after.communitySpecificData?.[cid] || {},
+        });
+
+        await Promise.all(idsAfter.map(cid =>
+            db.doc(`communitySearchIndex/${cid}`).set({
+                entries: { [creationId]: creationFields(cid) },
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true })
+        ));
+        return null;
+    });
+
+/**
+ * Rang-Änderungen eines Mitglieds in die Index-Einträge seiner Creations
+ * dieser Community nachziehen.
+ */
+exports.syncMemberRolesToCommunityIndex = functions.firestore
+    .document('communitys/{communityId}/members/{userId}')
+    .onUpdate(async (change, context) => {
+        const { communityId, userId } = context.params;
+        const rolesBefore = change.before.data().roles || [];
+        const rolesAfter = change.after.data().roles || [];
+        if (JSON.stringify(rolesBefore) === JSON.stringify(rolesAfter)) return null;
+
+        const indexRef = db.doc(`communitySearchIndex/${communityId}`);
+        const indexSnap = await indexRef.get();
+        if (!indexSnap.exists) return null;
+
+        const entries = indexSnap.data().entries || {};
+        const updates = [];
+        for (const [creationId, entry] of Object.entries(entries)) {
+            if (entry.u === userId) {
+                updates.push(new admin.firestore.FieldPath('entries', creationId, 'rk'), rolesAfter);
+            }
+        }
+        if (updates.length === 0) return null;
+        return indexRef.update(updates[0], updates[1], ...updates.slice(2));
+    });
+
+/**
+ * Benachrichtigt alle Admins im In-App-Benachrichtigungssystem,
+ * wenn ein neuer Bug-Report eingeht.
+ */
+exports.onBugReportCreated = functions.firestore
+    .document('bugReports/{reportId}')
+    .onCreate(async (snap, context) => {
+        const report = snap.data();
+        const adminsSnap = await db.collection('users').where('role', '==', 'admin').get();
+        if (adminsSnap.empty) return null;
+
+        const preview = (report.description || '').slice(0, 120);
+        const batch = db.batch();
+        adminsSnap.docs.forEach(adminDoc => {
+            const notifRef = db.collection(`users/${adminDoc.id}/notifications`).doc();
+            batch.set(notifRef, {
+                title: `New bug report from ${report.username || 'a user'}`,
+                message: preview + ((report.description || '').length > 120 ? '…' : ''),
+                link: '/admin',
+                isRead: false,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+        return batch.commit();
+    });
+
+/**
+ * Bug-Reports als JSON abrufen (nur Admins) — für Troubleshooting-Tools.
+ * ?status=open|closed filtert optional.
+ */
+app.get("/bugReports", authenticate, async (req, res) => {
+    const userDoc = await db.collection('users').doc(req.user.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({ error: "Only admins can read bug reports." });
+    }
+    try {
+        const snapshot = await db.collection('bugReports').orderBy('createdAt', 'desc').get();
+        let reports = snapshot.docs.map(d => {
+            const data = d.data();
+            return {
+                id: d.id,
+                ...data,
+                createdAt: data.createdAt?.toDate?.().toISOString() || null,
+                closedAt: data.closedAt?.toDate?.().toISOString() || null,
+            };
+        });
+        // In-Memory-Filter statt where+orderBy (spart den Composite-Index)
+        if (req.query.status === 'open' || req.query.status === 'closed') {
+            reports = reports.filter(r => r.status === req.query.status);
+        }
+        res.json({ count: reports.length, reports });
+    } catch (error) {
+        console.error("bugReports read error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- YouTube Channel Feed Proxy ---
+// Der RSS-Feed eines Kanals (youtube.com/feeds/videos.xml) ist öffentlich,
+// aber im Browser CORS-blockiert — daher dieser kleine Proxy. Kein API-Key nötig.
+// Instanz-lokaler Cache reduziert Anfragen an YouTube.
+const ytFeedCache = new Map(); // url -> { data, ts }
+const YT_FEED_TTL_MS = 15 * 60 * 1000;
+
+const extractChannelId = async (inputUrl) => {
+    const parsed = new URL(inputUrl);
+    const host = parsed.hostname.replace(/^www\./, '');
+    // SSRF-Guard: nur YouTube-Hosts abrufen
+    if (host !== 'youtube.com' && host !== 'm.youtube.com' && host !== 'youtu.be') {
+        throw new Error('Only YouTube URLs are allowed.');
+    }
+    const channelMatch = parsed.pathname.match(/\/channel\/(UC[\w-]{22})/);
+    if (channelMatch) return channelMatch[1];
+
+    // @handle- oder /c/-URLs: Kanalseite laden und channelId extrahieren
+    const pageResponse = await fetch(parsed.href, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (PlanetCreations feed fetcher)' },
+    });
+    if (!pageResponse.ok) throw new Error(`Could not load channel page (HTTP ${pageResponse.status}).`);
+    const html = await pageResponse.text();
+    const idMatch = html.match(/"channelId":"(UC[\w-]{22})"/) ||
+        html.match(/channel_id=(UC[\w-]{22})/);
+    if (!idMatch) throw new Error('Could not determine the channel ID from this URL.');
+    return idMatch[1];
+};
+
+app.get("/youtubeChannelFeed", async (req, res) => {
+    const inputUrl = req.query.url;
+    if (!inputUrl) return res.status(400).json({ error: 'url query parameter is required.' });
+
+    const cached = ytFeedCache.get(inputUrl);
+    if (cached && Date.now() - cached.ts < YT_FEED_TTL_MS) {
+        return res.json(cached.data);
+    }
+
+    try {
+        const channelId = await extractChannelId(inputUrl);
+        const feedResponse = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`);
+        if (!feedResponse.ok) throw new Error(`Feed request failed (HTTP ${feedResponse.status}).`);
+        const xml = await feedResponse.text();
+
+        const channelTitle = (xml.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+        const videos = [];
+        const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+        let entry;
+        while ((entry = entryRegex.exec(xml)) !== null) {
+            const block = entry[1];
+            const id = (block.match(/<yt:videoId>([\w-]{11})<\/yt:videoId>/) || [])[1];
+            const title = (block.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+            const published = (block.match(/<published>([^<]*)<\/published>/) || [])[1] || null;
+            if (id) videos.push({ id, title, published });
+        }
+
+        const data = { channelId, channelTitle, videos };
+        ytFeedCache.set(inputUrl, { data, ts: Date.now() });
+        res.set('Cache-Control', 'public, max-age=900');
+        res.json(data);
+    } catch (error) {
+        console.error('youtubeChannelFeed error:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
+
 /**
  * Kompletter Neuaufbau des Suchindex aus der creations-Collection.
  * Einmalig nach dem Deploy aufrufen (Backfill) oder zur Reparatur.
@@ -1053,7 +1352,20 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
         return res.status(403).json({ error: "Only admins can rebuild the search index." });
     }
 
+    // scope: 'all' (default) | 'general' (nur Spiel-Indexe) | 'community' (+communityId)
+    const scope = req.query.scope || 'all';
+
     try {
+        if (scope === 'community') {
+            const communityId = req.query.communityId;
+            if (!communityId) {
+                return res.status(400).json({ error: "communityId query parameter is required for scope=community." });
+            }
+            const count = await rebuildCommunityIndex(communityId);
+            console.log(`Community index rebuilt for ${communityId}: ${count} entries`);
+            return res.json({ success: true, communityCounts: { [communityId]: count } });
+        }
+
         const snapshot = await db.collection('creations').get();
 
         const perGame = {};
@@ -1082,8 +1394,22 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
         const counts = Object.fromEntries(
             Object.entries(perGame).map(([game, entries]) => [game, Object.keys(entries).length])
         );
-        console.log("Search index rebuilt:", counts, `(${skipped} skipped)`);
-        res.json({ success: true, counts, skipped });
+
+        if (scope === 'general') {
+            console.log("General search index rebuilt:", counts, `(${skipped} skipped)`);
+            return res.json({ success: true, counts, skipped });
+        }
+
+        // scope=all: Community-Indexe ebenfalls komplett neu aufbauen
+        const creationsById = new Map(snapshot.docs.map(doc => [doc.id, doc.data()]));
+        const communitiesSnap = await db.collection('communitys').get();
+        const communityCounts = {};
+        for (const communityDoc of communitiesSnap.docs) {
+            communityCounts[communityDoc.id] = await rebuildCommunityIndex(communityDoc.id, creationsById);
+        }
+
+        console.log("Search index rebuilt:", counts, communityCounts, `(${skipped} skipped)`);
+        res.json({ success: true, counts, communityCounts, skipped });
     } catch (error) {
         console.error("Search index rebuild failed:", error);
         res.status(500).json({ error: "Rebuild failed: " + error.message });
