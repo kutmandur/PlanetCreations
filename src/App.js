@@ -24,6 +24,7 @@ import RickRollModal from './components/modals/RickRollModal';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import CookieConsent from './components/modals/CookieConsent';
+import BugReportModal from './components/modals/BugReportModal';
 import ClientDashboard from './components/pages/ClientDashboard';
 
 const HomePage = React.lazy(() => import('./components/pages/HomePage'));
@@ -81,6 +82,7 @@ const AppContent = () => {
     const [activeTab, setActiveTab] = useState('planet-coaster-2');
     const [blacklist, setBlacklist] = useState([]);
     const [showRickRoll, setShowRickRoll] = useState(false);
+    const [isBugReportOpen, setIsBugReportOpen] = useState(false);
     
     const [homeState, setHomeState] = useState({
         searchTerm: '', filterTag: '', sortBy: 'createdAt', activeCategory: 'All',
@@ -301,8 +303,22 @@ const AppContent = () => {
                         <PreloadLink to="/terms-of-service" className="hover:text-gray-800 hover:underline">Terms of Service</PreloadLink>
                         <PreloadLink to="/impressum" className="hover:text-gray-800 hover:underline">Impressum / Legal Notice</PreloadLink>
                         <PreloadLink to="/client-info" className="hover:text-gray-800 hover:underline">About the Client</PreloadLink>
+                        {user && (
+                            <button onClick={() => setIsBugReportOpen(true)} className="hover:text-gray-800 hover:underline">
+                                Report a Bug
+                            </button>
+                        )}
                     </div>
                 </footer>
+            )}
+            {isBugReportOpen && user && (
+                <BugReportModal
+                    user={user}
+                    userProfile={userProfile}
+                    onClose={() => setIsBugReportOpen(false)}
+                    setModalMessage={setModalMessage}
+                    blacklist={blacklist}
+                />
             )}
             <CookieConsent />
         </div>

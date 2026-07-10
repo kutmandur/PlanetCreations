@@ -4,16 +4,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchCreationById } from '../../firebase/creationsService';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, getYoutubeThumbnailUrl } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import { preloadComponent } from '../../utils/preload';
 
 // Hilfsfunktion außerhalb der Komponente (kein Re-Create bei jedem Render)
-const getYoutubeThumbnail = (url) => {
-    if (!url) return null;
-    const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-    return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-};
+const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
 const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     const queryClient = useQueryClient();

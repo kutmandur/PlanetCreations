@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/config';
-import { doc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, increment, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, increment, onSnapshot } from 'firebase/firestore';
 import ManagedCreationCard from './ManagedCreationCard';
-import Icon from '../ui/Icon';
-import { ICONS, getGameColor } from '../../utils/helpers';
+import { getGameColor } from '../../utils/helpers';
 import ShowcaseNoteModal from '../modals/ShowcaseNoteModal';
+import CommunityFilterBar from './CommunityFilterBar';
 
 const CreationManager = ({ creations, setCreations, communityId, setModalMessage, ranks, setPopoverView, blacklist }) => {
     const [managerState, setManagerState] = useState({
@@ -12,14 +12,13 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         filter: 'all',
         rankFilter: 'all',
         filterTag: '',
+        dlcFilter: 'all',
         sortBy: 'pinned_first',
         activeGame: 'planet-coaster-2',
         activeCategory: 'All',
     });
-    
-    const [isFilterVisible, setIsFilterVisible] = useState(false);
-    const filterMenuRef = useRef(null);
-    const [showcaseModal, setShowcaseModal] = useState(null); 
+
+    const [showcaseModal, setShowcaseModal] = useState(null);
 
     const [categories, setCategories] = useState(['All']);
     const TABS = useRef([
@@ -35,16 +34,6 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
 
     const handleStateChange = useCallback((field, value) => {
         setManagerState(prev => ({ ...prev, [field]: value }));
-    }, []);
-
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (filterMenuRef.current && !filterMenuRef.current.contains(event.target)) {
-                setIsFilterVisible(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
     useEffect(() => {
@@ -119,10 +108,14 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         const batch = writeBatch(db);
         const creationRef = doc(db, 'creations', creation.id);
         try {
-            const communityAssignment = creation.communityAssignments.find(ca => ca.communityId === communityId);
+            // communityAssignments frisch aus dem Dokument lesen — die Manager-Liste
+            // kommt aus dem Kompakt-Index, der dieses Feld nicht enthält
+            const creationSnap = await getDoc(creationRef);
+            const assignments = creationSnap.exists() ? (creationSnap.data().communityAssignments || []) : [];
+            const communityAssignment = assignments.find(ca => ca.communityId === communityId);
             batch.update(creationRef, {
                 communityIds: arrayRemove(communityId),
-                communityAssignments: arrayRemove(communityAssignment)
+                ...(communityAssignment ? { communityAssignments: arrayRemove(communityAssignment) } : {})
             });
             const linkRef = doc(db, 'communitys', communityId, 'creations', creation.id);
             batch.delete(linkRef);
@@ -143,12 +136,18 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         }
     };
 
+    const availableDlcs = useMemo(() => {
+        const dlcs = new Set();
+        creations.forEach(c => (c.requiredDlcs || []).forEach(dlc => dlcs.add(dlc)));
+        return [...dlcs].sort();
+    }, [creations]);
+
     const filteredAndSortedCreations = useMemo(() => {
         let filtered = [...creations];
 
         filtered = filtered.filter(creation => {
-            const { filter, rankFilter, searchTerm, filterTag, activeGame, activeCategory } = managerState;
-            
+            const { filter, rankFilter, searchTerm, filterTag, dlcFilter, activeGame, activeCategory } = managerState;
+
             if (creation.game !== activeGame) return false;
             if (activeCategory !== 'All' && creation.category !== activeCategory) return false;
 
@@ -165,9 +164,15 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
                 if (!creation.creatorRanks.some(rank => rank.name.toLowerCase() === rankFilter)) return false;
             }
 
+            if (dlcFilter !== 'all') {
+                if (!(creation.requiredDlcs || []).includes(dlcFilter)) return false;
+            }
+
             if (searchTerm.trim()) {
                 const term = searchTerm.toLowerCase();
-                if (!creation.title.toLowerCase().includes(term) && !creation.username.toLowerCase().includes(term)) return false;
+                if (!creation.title.toLowerCase().includes(term) &&
+                    !creation.username.toLowerCase().includes(term) &&
+                    !(creation.tags || []).some(tag => tag.toLowerCase().includes(term))) return false;
             }
 
             if (filterTag.trim()) {
@@ -229,64 +234,40 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
                 </div>
             </div>
 
-            <div className="flex gap-4 mb-6 p-4 bg-gray-50 rounded-lg border">
-                <div className="relative flex-grow">
-                    <input 
-                        type="text"
-                        placeholder="Search by title or user..."
-                        value={managerState.searchTerm}
-                        onChange={(e) => handleStateChange('searchTerm', e.target.value)}
-                        className="w-full p-3 pl-10 border rounded-lg"
-                    />
-                    <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                </div>
-                <div className="relative" ref={filterMenuRef}>
-                    <button onClick={() => setIsFilterVisible(!isFilterVisible)} className="bg-gray-200 p-3 h-full rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400">
-                        <Icon path={ICONS.filter} className="w-6 h-6 text-gray-600" />
-                    </button>
-                    {isFilterVisible && (
-                        <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl p-4 z-20 border">
-                            <h4 className="font-bold mb-3 border-b pb-2">Filter & Sort</h4>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Sort by</label>
-                                    <select value={managerState.sortBy} onChange={(e) => handleStateChange('sortBy', e.target.value)} className="mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm">
-                                        <option value="pinned_first">Pinned First</option>
-                                        <option value="newest">Newest</option>
-                                        <option value="oldest">Oldest</option>
-                                        <option value="title">Alphabetical</option>
-                                        <option value="likes">Most Popular</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Filter by Status</label>
-                                    <select value={managerState.filter} onChange={(e) => handleStateChange('filter', e.target.value)} className="mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm">
-                                        <option value="all">All Statuses</option>
-                                        <option value="pinned">Pinned</option>
-                                        <option value="unpinned">Unpinned</option>
-                                        <option value="showcased">Showcased</option>
-                                        <option value="not-showcased">Not Showcased</option>
-                                        <option value="finished">Finished</option>
-                                        <option value="wip">Work in Progress</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Filter by Rank</label>
-                                    <select value={managerState.rankFilter} onChange={(e) => handleStateChange('rankFilter', e.target.value)} className="mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm">
-                                        <option value="all">All Ranks</option>
-                                        {ranks.map(rank => (<option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Filter by Tag</label>
-                                    <input type="text" placeholder="e.g. Coaster" value={managerState.filterTag} onChange={(e) => handleStateChange('filterTag', e.target.value)} className="mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm" />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-            
+            <CommunityFilterBar
+                searchTerm={managerState.searchTerm}
+                onSearchChange={(value) => handleStateChange('searchTerm', value)}
+                filters={{
+                    status: managerState.filter,
+                    rank: managerState.rankFilter,
+                    tag: managerState.filterTag,
+                    dlc: managerState.dlcFilter,
+                    sort: managerState.sortBy,
+                }}
+                onFilterChange={(field, value) => {
+                    const fieldMap = { status: 'filter', rank: 'rankFilter', tag: 'filterTag', dlc: 'dlcFilter', sort: 'sortBy' };
+                    handleStateChange(fieldMap[field], value);
+                }}
+                ranks={ranks}
+                availableDlcs={availableDlcs}
+                sortOptions={[
+                    { value: 'pinned_first', label: 'Pinned First' },
+                    { value: 'newest', label: 'Newest' },
+                    { value: 'oldest', label: 'Oldest' },
+                    { value: 'title', label: 'Alphabetical' },
+                    { value: 'likes', label: 'Most Popular' },
+                ]}
+                statusOptions={[
+                    { value: 'all', label: 'All Statuses' },
+                    { value: 'pinned', label: 'Pinned' },
+                    { value: 'unpinned', label: 'Unpinned' },
+                    { value: 'showcased', label: 'Showcased' },
+                    { value: 'not-showcased', label: 'Not Showcased' },
+                    { value: 'finished', label: 'Finished' },
+                    { value: 'wip', label: 'Work in Progress' },
+                ]}
+            />
+
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 {filteredAndSortedCreations.map(creation => (
                     <ManagedCreationCard 

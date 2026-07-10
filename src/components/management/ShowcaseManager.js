@@ -2,38 +2,116 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
 import Icon from '../ui/Icon';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, getGameColor, getYoutubeThumbnailUrl } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
-import CreationShowcaseCard from '../cards/CreationShowcaseCard';
+import ApplicationsManager from './ApplicationsManager';
+import CommunityFilterBar, { creationMatchesFilters } from './CommunityFilterBar';
 
-const ShowcaseManager = ({ creations, setCreations, community, setCommunity, setModalMessage, setPopoverView, setConfirmation }) => {
+const SUB_TABS = ['Applications', 'Waitlist', 'Groups', 'Showcased'];
+
+const ALL_GAMES = [
+    { id: 'planet-coaster', name: 'Planet Coaster' },
+    { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
+    { id: 'planet-zoo', name: 'Planet Zoo' },
+];
+
+const ShowcaseManager = ({ creations: allCreations, setCreations, community, setCommunity, setModalMessage, setPopoverView, setConfirmation, blacklist }) => {
+    const [activeSubTab, setActiveSubTab] = useState('Applications');
+    const subTabRefs = useRef([]);
+    const subGliderRef = useRef(null);
+
+    // Game-Selector: nur die in der Community aktivierten Spiele,
+    // Selector wird nur bei mehr als einem Spiel angezeigt
+    const communityGames = useMemo(() => {
+        const allowed = community.allowedGames || ALL_GAMES.map(g => g.id);
+        return ALL_GAMES.filter(g => allowed.includes(g.id));
+    }, [community.allowedGames]);
+
+    const [activeGame, setActiveGame] = useState(() => {
+        const allowed = community.allowedGames || ALL_GAMES.map(g => g.id);
+        return (community.mainGame && allowed.includes(community.mainGame)) ? community.mainGame : allowed[0];
+    });
+
+    // Alle Untertabs arbeiten auf den Creations des aktiven Spiels
+    const creations = useMemo(() =>
+        communityGames.length > 1 ? allCreations.filter(c => c.game === activeGame) : allCreations,
+        [allCreations, communityGames.length, activeGame]);
+
     const [newGroupName, setNewGroupName] = useState('');
     const [isSavingGroup, setIsSavingGroup] = useState(false);
-    const [groupMenu, setGroupMenu] = useState(null);
-    const [expandedGroups, setExpandedGroups] = useState([]);
-    const [expandedMarked, setExpandedMarked] = useState([]);
+    const [groupMenu, setGroupMenu] = useState(null);        // Waitlist: Kreation -> Gruppe zuordnen
+    // Waitlist-Popover: { kind: 'group', groupId } (Gruppe befüllen)
+    // oder { kind: 'showcased', url } (nachträglich zu einem Gruppen-Showcase hinzufügen)
+    const [addToGroupMenu, setAddToGroupMenu] = useState(null);
     const groupMenuRef = useRef(null);
+    const addToGroupMenuRef = useRef(null);
 
-    const { markedForShowcase, alreadyShowcased } = useMemo(() => {
-        const groups = community.showcaseGroups || [];
-        const creationsWithGroup = creations.map(c => {
-            const group = groups.find(g => g.id === c.showcaseGroupId);
-            return { ...c, groupName: group ? group.name : null };
+    // Gemeinsamer Such-/Filterzustand für alle Untertabs
+    const [filterState, setFilterState] = useState({ searchTerm: '', status: 'all', rank: 'all', tag: '', dlc: 'all' });
+    const handleFilterChange = (field, value) => setFilterState(prev => ({ ...prev, [field]: value }));
+
+    const availableDlcs = useMemo(() => {
+        const dlcs = new Set();
+        creations.forEach(c => (c.requiredDlcs || []).forEach(dlc => dlcs.add(dlc)));
+        return [...dlcs].sort();
+    }, [creations]);
+
+    const passesFilters = (creation) => {
+        if (filterState.status !== 'all' && creation.status !== filterState.status) return false;
+        return creationMatchesFilters(creation, filterState);
+    };
+
+    const isAnyFilterActive =
+        filterState.searchTerm.trim() !== '' ||
+        filterState.status !== 'all' ||
+        filterState.rank !== 'all' ||
+        filterState.dlc !== 'all' ||
+        filterState.tag.trim() !== '';
+
+    const { waitlist, alreadyShowcased } = useMemo(() => {
+        const marked = creations.filter(c => c.markedForShowcase && !c.showcaseVideoUrl && !c.showcaseGroupId);
+        const showcased = creations.filter(c => !!c.showcaseVideoUrl);
+        return { waitlist: marked, alreadyShowcased: showcased };
+    }, [creations]);
+
+    const openApplicationsCount = useMemo(() =>
+        creations.filter(c => c.appliedForShowcase && !c.markedForShowcase && !c.showcaseVideoUrl && !c.showcaseGroupId).length,
+        [creations]);
+
+    // Showcased: Creations mit derselben Video-URL wurden zusammen (als Gruppe)
+    // geshowcased und werden in einer gemeinsamen Karte angezeigt.
+    const { showcasedSingles, showcasedGroups } = useMemo(() => {
+        const byUrl = new Map();
+        alreadyShowcased.forEach(c => {
+            if (!byUrl.has(c.showcaseVideoUrl)) byUrl.set(c.showcaseVideoUrl, []);
+            byUrl.get(c.showcaseVideoUrl).push(c);
         });
-        const marked = creationsWithGroup.filter(c => c.markedForShowcase && !c.showcaseVideoUrl && !c.showcaseGroupId);
-        const showcased = creationsWithGroup.filter(c => !!c.showcaseVideoUrl);
-        return { markedForShowcase: marked, alreadyShowcased: showcased };
-    }, [creations, community.showcaseGroups]);
-    
+        const singles = [];
+        const groups = [];
+        byUrl.forEach((list, url) => {
+            if (list.length === 1) singles.push(list[0]);
+            else groups.push({ url, creations: list });
+        });
+        return { showcasedSingles: singles, showcasedGroups: groups };
+    }, [alreadyShowcased]);
+
     useEffect(() => {
         const handleClickOutside = (event) => {
-            if (groupMenuRef.current && !groupMenuRef.current.contains(event.target)) {
-                setGroupMenu(null);
-            }
+            if (groupMenuRef.current && !groupMenuRef.current.contains(event.target)) setGroupMenu(null);
+            if (addToGroupMenuRef.current && !addToGroupMenuRef.current.contains(event.target)) setAddToGroupMenu(null);
         };
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        const activeIndex = SUB_TABS.findIndex(tab => tab === activeSubTab);
+        const activeNode = subTabRefs.current[activeIndex];
+        if (activeNode && subGliderRef.current) {
+            subGliderRef.current.style.left = `${activeNode.offsetLeft}px`;
+            subGliderRef.current.style.width = `${activeNode.offsetWidth}px`;
+        }
+    }, [activeSubTab]);
 
     const handleCreateGroup = async () => {
         const trimmedName = newGroupName.trim();
@@ -55,7 +133,7 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
             setIsSavingGroup(false);
         }
     };
-    
+
     const handleDeleteGroup = async (groupToDelete) => {
         setConfirmation({
             message: `Are you sure you want to delete the group "${groupToDelete.name}"? This will unassign it from all creations.`,
@@ -69,6 +147,7 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
                     const snapshot = await getDocs(q);
                     snapshot.forEach(doc => batch.update(doc.ref, { showcaseGroupId: null }));
                     await batch.commit();
+                    setCreations(prev => prev.map(c => c.showcaseGroupId === groupToDelete.id ? { ...c, showcaseGroupId: null } : c));
                     setModalMessage("Group deleted and unassigned from creations.");
                 } catch (error) {
                     setModalMessage(`Error deleting group: ${error.message}`);
@@ -90,13 +169,12 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
             setGroupMenu(null);
         }
     };
-    
+
     const handleRemoveFromGroup = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
             await updateDoc(linkRef, { showcaseGroupId: null });
             setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseGroupId: null } : c));
-            setModalMessage("Creation removed from group.");
         } catch (error) {
             setModalMessage(`Error removing from group: ${error.message}`);
         }
@@ -116,7 +194,7 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
                 const linkRef = doc(db, 'communitys', community.id, 'creations', c.id);
                 batch.update(linkRef, { showcaseVideoUrl: videoUrl });
             });
-            
+
             const communityRef = doc(db, 'communitys', community.id);
             batch.update(communityRef, { showcaseGroups: arrayRemove(group) });
 
@@ -127,13 +205,13 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
                 ...prevCommunity,
                 showcaseGroups: (prevCommunity.showcaseGroups || []).filter(g => g.id !== group.id)
             }));
-            
+
             setModalMessage(`Showcase video added to ${creationsToUpdate.length} creation(s) and the group has been cleared.`);
         } catch (error) {
             setModalMessage(`Error adding video to group: ${error.message}`);
         }
     };
-    
+
     const handleRemoveFromShowcase = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
@@ -143,12 +221,12 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
                 showcaseGroupId: null
             });
             setCreations(prev => prev.map(c => c.id === creationId ? { ...c, markedForShowcase: false, showcaseNote: '', showcaseGroupId: null } : c));
-            setModalMessage("Creation removed from showcase list.");
+            setModalMessage("Creation removed from the waitlist.");
         } catch (error) {
-            setModalMessage(`Error removing from showcase: ${error.message}`);
+            setModalMessage(`Error removing from waitlist: ${error.message}`);
         }
     };
-    
+
     const handleRemoveShowcaseVideo = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
@@ -160,131 +238,404 @@ const ShowcaseManager = ({ creations, setCreations, community, setCommunity, set
         }
     };
 
-    const toggleGroup = (groupId) => setExpandedGroups(prev => prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]);
-    const toggleMarked = (creationId) => setExpandedMarked(prev => prev.includes(creationId) ? prev.filter(id => id !== creationId) : [...prev, creationId]);
     const creationsInGroup = (groupId) => creations.filter(c => c.showcaseGroupId === groupId);
 
-    return (
-        <div className="flex flex-col gap-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                    <h3 className="text-2xl font-bold mb-4 text-center">Marked for Showcase</h3>
-                    <div className="space-y-3 bg-gray-50 p-4 rounded-lg border h-[32rem] overflow-y-auto">
-                        {markedForShowcase.length > 0 ? (
-                            markedForShowcase.map(creation => {
-                                const isExpanded = expandedMarked.includes(creation.id);
-                                return (
-                                    <div key={creation.id} className="p-3 bg-white rounded-lg shadow border">
-                                        <div className="flex items-center justify-between">
-                                            <button onClick={() => toggleMarked(creation.id)} className="flex items-center gap-2 font-semibold text-blue-600 hover:underline truncate text-left w-full pr-2" title={creation.title}>
-                                                <Icon path={ICONS.chevronDown} className={`w-5 h-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                                {creation.title}
-                                            </button>
-                                            <div className="flex items-center space-x-2 flex-shrink-0">
-                                                <button onClick={(e) => { e.stopPropagation(); setGroupMenu({ creationId: creation.id, x: e.clientX, y: e.clientY })}} className="p-2 text-gray-500 hover:text-blue-600" title="Assign to Group">
-                                                    <Icon path={ICONS.plus} className="w-5 h-5" />
-                                                </button>
-                                                <button onClick={() => handleRemoveFromShowcase(creation.id)} className="p-2 text-gray-500 hover:text-red-600" title="Remove from Showcase List">
-                                                    <Icon path={ICONS.trash} className="w-5 h-5" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {isExpanded && (
-                                            <div className="mt-3 pt-3 border-t">
-                                                <CreationShowcaseCard
-                                                    creation={creation}
-                                                    community={community}
-                                                    setPopoverView={setPopoverView}
-                                                    setModalMessage={setModalMessage}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })
-                        ) : (
-                            <p className="text-center text-gray-500 pt-10">Creations marked for showcase will appear here.</p>
-                        )}
-                    </div>
-                </div>
-                <div>
-                    <h3 className="text-2xl font-bold mb-4 text-center">Already Showcased</h3>
-                    <div className="space-y-3 bg-gray-50 p-4 rounded-lg border h-[32rem] overflow-y-auto">
-                        {alreadyShowcased.length > 0 ? (
-                             alreadyShowcased.map(creation => (
-                                <div key={creation.id} className="flex items-center justify-between p-3 bg-white rounded-lg shadow border">
-                                    <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="font-semibold text-blue-600 hover:underline truncate text-left w-full pr-2" title={creation.title}>
-                                        {creation.title}
-                                    </button>
-                                    <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-2 text-gray-500 hover:text-red-600" title="Remove Showcase Video">
-                                        <Icon path={ICONS.xCircle} className="w-5 h-5" />
-                                    </button>
-                                </div>
-                            ))
-                        ) : (
-                            <p className="text-center text-gray-500 pt-10">Creations with a showcase video will appear here.</p>
-                        )}
-                    </div>
-                </div>
-            </div>
+    const getThumbnail = (creation) => {
+        if (creation.imageUrls?.length > 0) return creation.imageUrls[0];
+        const videoThumb = getYoutubeThumbnailUrl(creation.videoUrls?.[0]);
+        return videoThumb || 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
+    };
 
-            <div>
-                <h3 className="text-2xl font-bold mb-4 text-center">Showcase Groups</h3>
-                <div className="bg-gray-50 p-4 rounded-lg border">
-                    <div className="flex gap-2 max-w-sm mx-auto mb-4">
-                        <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name..." className="flex-grow p-2 border rounded-lg" />
-                        <button onClick={handleCreateGroup} disabled={isSavingGroup || !newGroupName.trim()} className="bg-green-500 hover:bg-green-600 text-white font-bold p-2 rounded-lg disabled:opacity-50">
-                            {isSavingGroup ? <Spinner size="small" /> : 'Add Group'}
-                        </button>
-                    </div>
-                    <div className="space-y-4 pt-4 border-t">
-                        {(community.showcaseGroups || []).map(group => {
-                            const isExpanded = expandedGroups.includes(group.id);
-                            return (
-                                <div key={group.id} className="p-4 bg-white rounded-lg shadow border">
-                                    <div className="flex items-center justify-between">
-                                        <button onClick={() => toggleGroup(group.id)} className="flex items-center gap-2 font-bold text-xl text-gray-800">
-                                            <Icon path={ICONS.chevronDown} className={`w-6 h-6 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                            {group.name}
-                                        </button>
-                                        <div className="flex items-center space-x-2">
-                                            <button onClick={() => handleAddVideoToGroup(group)} className="p-2 text-gray-500 hover:text-green-600" title="Add Video to Group">
-                                                <Icon path={ICONS.video} className="w-5 h-5" />
-                                            </button>
-                                            <button onClick={() => handleDeleteGroup(group)} className="p-2 text-gray-500 hover:text-red-600" title="Delete Group">
-                                                <Icon path={ICONS.trash} className="w-5 h-5" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {isExpanded && (
-                                        <div className="mt-3 pt-3 border-t grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                            {creationsInGroup(group.id).map(creation => (
-                                                <CreationShowcaseCard 
-                                                    key={creation.id}
-                                                    creation={creation}
-                                                    community={community}
-                                                    setPopoverView={setPopoverView}
-                                                    setModalMessage={setModalMessage}
-                                                    onRemoveFromGroup={() => handleRemoveFromGroup(creation.id)}
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
+    const getTextColorForBackground = (hexColor) => {
+        if (!hexColor) return '#ffffff';
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+        const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+        return (yiq >= 128) ? '#000000' : '#ffffff';
+    };
+
+    // Video-URL eines bestehenden Gruppen-Showcases nachträglich ändern
+    const handleEditGroupShowcaseUrl = async (group) => {
+        const newUrl = prompt('Enter the new video URL for this group showcase:', group.url);
+        if (!newUrl || newUrl === group.url) return;
+        try {
+            const batch = writeBatch(db);
+            group.creations.forEach(c => {
+                batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: newUrl });
+            });
+            await batch.commit();
+            const ids = group.creations.map(c => c.id);
+            setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: newUrl } : c));
+            setModalMessage(`Video URL updated for ${group.creations.length} creation(s).`);
+        } catch (error) {
+            setModalMessage(`Error updating video URL: ${error.message}`);
+        }
+    };
+
+    // Kreation von der Waitlist nachträglich zu einem Gruppen-Showcase hinzufügen
+    const handleAddToShowcasedGroup = async (creationId, videoUrl) => {
+        const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
+        try {
+            await updateDoc(linkRef, { showcaseVideoUrl: videoUrl });
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: videoUrl } : c));
+            setModalMessage('Creation added to the group showcase.');
+        } catch (error) {
+            setModalMessage(`Error adding to group showcase: ${error.message}`);
+        }
+    };
+
+    // Showcase-Video einer ganzen Gruppe entfernen (mit Bestätigung)
+    const handleRemoveGroupShowcase = (group) => {
+        setConfirmation({
+            message: `Are you sure you want to remove this group showcase? The video will be removed from all ${group.creations.length} creations.`,
+            onConfirm: async () => {
+                try {
+                    const batch = writeBatch(db);
+                    group.creations.forEach(c => {
+                        batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: null });
+                    });
+                    await batch.commit();
+                    const ids = group.creations.map(c => c.id);
+                    setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: null } : c));
+                    setModalMessage(`Group showcase removed from ${group.creations.length} creation(s).`);
+                } catch (error) {
+                    setModalMessage(`Error removing group showcase: ${error.message}`);
+                }
+            }
+        });
+    };
+
+    const renderWaitlist = () => {
+        const filteredWaitlist = waitlist.filter(passesFilters);
+        if (waitlist.length > 0 && filteredWaitlist.length === 0) {
+            return <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border max-w-3xl mx-auto">No waitlist creations match your filters.</p>;
+        }
+        return filteredWaitlist.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {filteredWaitlist.map(creation => {
+                    const customData = creation.communitySpecificData?.[community.id] || {};
+                    return (
+                        <div key={creation.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col h-full group">
+                            <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="w-full text-left focus:outline-none">
+                                <div className="relative overflow-hidden h-40">
+                                    <img
+                                        src={getThumbnail(creation)}
+                                        alt={creation.title}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/400x225/333333/ffffff?text=Image+Missing'; }}
+                                    />
+                                    <span className={`absolute top-2 right-2 text-xs font-semibold px-2 py-0.5 rounded-full ${creation.status === 'finished' ? 'bg-green-500 text-white' : 'bg-orange-400 text-white'}`}>
+                                        {creation.status === 'finished' ? 'Finished' : 'WIP'}
+                                    </span>
                                 </div>
+                                <div className="p-3">
+                                    <h3 className="text-lg font-bold truncate" title={creation.title}>{creation.title}</h3>
+                                    <p className="text-sm text-gray-500">by {creation.username}</p>
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                        {(creation.creatorRanks || []).map(rank => (
+                                            <span key={rank.name} className="text-xs font-semibold px-2 py-0.5 rounded-full capitalize" style={{ backgroundColor: rank.color || '#6B7280', color: getTextColorForBackground(rank.color || '#6B7280') }}>
+                                                {rank.name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            </button>
+                            <div className="px-3 pb-2 flex-grow">
+                                {creation.showcaseNote && (
+                                    <p className="text-xs text-gray-500 italic bg-gray-50 rounded p-2" title={creation.showcaseNote}>
+                                        “{creation.showcaseNote}”
+                                    </p>
+                                )}
+                                {creation.shareCode && (
+                                    <button
+                                        onClick={() => { navigator.clipboard.writeText(creation.shareCode); setModalMessage('Share Code copied to clipboard!'); }}
+                                        className="w-full flex items-center justify-between text-left p-2 mt-2 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
+                                    >
+                                        <span className="text-xs font-mono text-gray-700 truncate">{creation.shareCode}</span>
+                                        <Icon path={ICONS.copy} className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                                    </button>
+                                )}
+                                {community.customCreationFields?.map(field => {
+                                    const value = customData[field.id];
+                                    if (!value) return null;
+                                    return (
+                                        <div key={field.id} className="mt-1 p-2 bg-gray-100 rounded">
+                                            <p className="text-xs font-bold text-gray-500">{field.label}</p>
+                                            <p className="text-sm text-gray-800 truncate">{String(value)}</p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="p-3 border-t mt-auto flex gap-2">
+                                <button
+                                    onClick={(e) => setGroupMenu({ creationId: creation.id, x: e.clientX, y: e.clientY })}
+                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white bg-[--theme-color] hover:brightness-90"
+                                    title="Assign to Group"
+                                >
+                                    Add to Group
+                                </button>
+                                <button
+                                    onClick={() => handleRemoveFromShowcase(creation.id)}
+                                    className="p-2 rounded-lg bg-gray-100 text-gray-500 hover:bg-red-100 hover:text-red-600"
+                                    title="Remove from Waitlist"
+                                >
+                                    <Icon path={ICONS.trash} className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        ) : (
+            <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border max-w-3xl mx-auto">Creations on the showcase waitlist will appear here.</p>
+        );
+    };
+
+    const renderGroups = () => {
+        const searchLower = filterState.searchTerm.trim().toLowerCase();
+        // Gruppe sichtbar wenn: kein Filter aktiv, Gruppenname matcht, oder
+        // mindestens eine enthaltene Kreation die Filter besteht
+        const visibleGroups = (community.showcaseGroups || []).map(group => {
+            const all = creationsInGroup(group.id);
+            const nameMatch = searchLower && group.name.toLowerCase().includes(searchLower);
+            const matching = all.filter(passesFilters);
+            return {
+                group,
+                creations: (!isAnyFilterActive || nameMatch) ? all : matching,
+                visible: !isAnyFilterActive || nameMatch || matching.length > 0,
+            };
+        }).filter(g => g.visible);
+
+        return (
+        <div className="max-w-3xl mx-auto">
+            <div className="flex gap-2 max-w-sm mx-auto mb-6">
+                <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); }} placeholder="New group name..." className="flex-grow p-2 border rounded-lg" />
+                <button onClick={handleCreateGroup} disabled={isSavingGroup || !newGroupName.trim()} className="bg-green-500 hover:bg-green-600 text-white font-bold p-2 px-4 rounded-lg disabled:opacity-50">
+                    {isSavingGroup ? <Spinner size="small" /> : 'Add Group'}
+                </button>
+            </div>
+            <div className="space-y-4">
+                {(community.showcaseGroups || []).length === 0 && (
+                    <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border">No showcase groups yet. Create one above.</p>
+                )}
+                {(community.showcaseGroups || []).length > 0 && visibleGroups.length === 0 && (
+                    <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border">No groups match your filters.</p>
+                )}
+                {visibleGroups.map(({ group, creations: groupCreations }) => {
+                    return (
+                        <div key={group.id} className="p-4 bg-white rounded-lg shadow border">
+                            <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-xl text-gray-800 truncate pr-2">{group.name}</h4>
+                                <div className="flex items-center space-x-1 flex-shrink-0">
+                                    <button onClick={(e) => setAddToGroupMenu({ kind: 'group', groupId: group.id, x: e.clientX, y: e.clientY })} className="p-2 text-gray-500 hover:text-blue-600" title="Add creation from waitlist">
+                                        <Icon path={ICONS.plus} className="w-5 h-5" />
+                                    </button>
+                                    <button onClick={() => handleAddVideoToGroup(group)} className="p-2 text-gray-500 hover:text-green-600" title="Add Video to Group (showcases all creations)">
+                                        <Icon path={ICONS.video} className="w-5 h-5" />
+                                    </button>
+                                    <button onClick={() => handleDeleteGroup(group)} className="p-2 text-gray-500 hover:text-red-600" title="Delete Group">
+                                        <Icon path={ICONS.trash} className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t space-y-2">
+                                {groupCreations.length === 0 ? (
+                                    <p className="text-sm text-gray-400 text-center py-2">Empty group — add creations via the + button.</p>
+                                ) : groupCreations.map(creation => (
+                                    <div key={creation.id} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                                        <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="text-sm font-semibold text-blue-600 hover:underline truncate text-left pr-2" title={creation.title}>
+                                            {creation.title}
+                                        </button>
+                                        <button onClick={() => handleRemoveFromGroup(creation.id)} className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0" title="Remove from group (back to waitlist)">
+                                            <span className="text-lg font-bold leading-none">×</span>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+        );
+    };
+
+    const renderShowcased = () => {
+        const filteredSingles = showcasedSingles.filter(passesFilters);
+        // Gruppen-Showcase sichtbar, wenn mindestens eine Kreation die Filter besteht;
+        // ohne aktive Filter alle Kreationen zeigen
+        const filteredGroups = showcasedGroups.map(group => ({
+            ...group,
+            visibleCreations: isAnyFilterActive ? group.creations.filter(passesFilters) : group.creations,
+        })).filter(group => group.visibleCreations.length > 0);
+
+        return (
+        <div className="max-w-3xl mx-auto space-y-3">
+            {alreadyShowcased.length === 0 && (
+                <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border">Creations with a showcase video will appear here.</p>
+            )}
+            {alreadyShowcased.length > 0 && filteredGroups.length === 0 && filteredSingles.length === 0 && (
+                <p className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border">No showcased creations match your filters.</p>
+            )}
+            {filteredGroups.map(group => (
+                <div key={group.url} className="p-4 bg-white rounded-lg shadow border">
+                    <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-bold text-gray-800">Group Showcase ({group.creations.length} creations)</h4>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                            <a href={group.url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mr-2">
+                                Watch video ↗
+                            </a>
+                            <button onClick={(e) => setAddToGroupMenu({ kind: 'showcased', url: group.url, x: e.clientX, y: e.clientY })} className="p-2 text-gray-500 hover:text-blue-600" title="Add creation from waitlist to this showcase">
+                                <Icon path={ICONS.plus} className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => handleEditGroupShowcaseUrl(group)} className="p-2 text-gray-500 hover:text-green-600" title="Edit video URL">
+                                <Icon path={ICONS.edit} className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => handleRemoveGroupShowcase(group)} className="p-2 text-gray-500 hover:text-red-600" title="Remove showcase from the whole group">
+                                <Icon path={ICONS.trash} className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
+                    <div className="space-y-2 pt-2 border-t">
+                        {group.visibleCreations.map(creation => (
+                            <div key={creation.id} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                                <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="text-sm font-semibold text-blue-600 hover:underline truncate text-left pr-2" title={creation.title}>
+                                    {creation.title}
+                                </button>
+                                <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0" title="Remove Showcase Video">
+                                    <Icon path={ICONS.xCircle} className="w-5 h-5" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
+            {filteredSingles.map(creation => (
+                <div key={creation.id} className="flex items-center justify-between p-3 bg-white rounded-lg shadow border">
+                    <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="font-semibold text-blue-600 hover:underline truncate text-left w-full pr-2" title={creation.title}>
+                        {creation.title}
+                    </button>
+                    <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-2 text-gray-500 hover:text-red-600 flex-shrink-0" title="Remove Showcase Video">
+                        <Icon path={ICONS.xCircle} className="w-5 h-5" />
+                    </button>
+                </div>
+            ))}
+        </div>
+        );
+    };
+
+    return (
+        <div>
+            {communityGames.length > 1 && (
+                <div className="flex justify-center mb-4">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                        {communityGames.map(game => {
+                            const gameColor = getGameColor(game.id);
+                            return (
+                                <button
+                                    key={game.id}
+                                    onClick={() => setActiveGame(game.id)}
+                                    className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm font-medium ${activeGame === game.id ? `${gameColor.bg} text-white` : 'text-gray-600 hover:text-black'}`}
+                                >
+                                    {game.name}
+                                </button>
                             );
                         })}
                     </div>
                 </div>
+            )}
+
+            <div className="flex justify-center mb-8">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                    <div ref={subGliderRef} className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out" />
+                    {SUB_TABS.map((tab, index) => (
+                        <button
+                            key={tab}
+                            ref={el => subTabRefs.current[index] = el}
+                            onClick={() => setActiveSubTab(tab)}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeSubTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                        >
+                            {tab}
+                            {tab === 'Applications' && openApplicationsCount > 0 && (
+                                <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${activeSubTab === tab ? 'bg-white text-gray-800' : 'bg-[--theme-color] text-white'}`}>
+                                    {openApplicationsCount}
+                                </span>
+                            )}
+                        </button>
+                    ))}
+                </div>
             </div>
 
+            <CommunityFilterBar
+                searchTerm={filterState.searchTerm}
+                onSearchChange={(value) => handleFilterChange('searchTerm', value)}
+                filters={filterState}
+                onFilterChange={handleFilterChange}
+                ranks={community.ranks || []}
+                availableDlcs={availableDlcs}
+                statusOptions={[
+                    { value: 'all', label: 'All Statuses' },
+                    { value: 'finished', label: 'Finished' },
+                    { value: 'wip', label: 'Work in Progress' },
+                ]}
+                placeholder={activeSubTab === 'Groups' ? 'Search groups or creations...' : 'Search by title, creator or tag...'}
+            />
+
+            {activeSubTab === 'Applications' && (
+                <ApplicationsManager
+                    creations={creations}
+                    setCreations={setCreations}
+                    community={community}
+                    setModalMessage={setModalMessage}
+                    setPopoverView={setPopoverView}
+                    blacklist={blacklist}
+                    filterState={filterState}
+                />
+            )}
+            {activeSubTab === 'Waitlist' && renderWaitlist()}
+            {activeSubTab === 'Groups' && renderGroups()}
+            {activeSubTab === 'Showcased' && renderShowcased()}
+
+            {/* Waitlist: Kreation einer Gruppe zuordnen */}
             {groupMenu && (
-                <div ref={groupMenuRef} className="absolute z-30 w-48 bg-white rounded-md shadow-lg border" style={{ top: groupMenu.y, left: groupMenu.x }}>
-                    <button onClick={() => handleAssignGroup(groupMenu.creationId, null)} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Unassign</button>
+                <div ref={groupMenuRef} className="fixed z-30 w-48 bg-white rounded-md shadow-lg border" style={{ top: groupMenu.y, left: Math.min(groupMenu.x, window.innerWidth - 200) }}>
+                    {(community.showcaseGroups || []).length === 0 && (
+                        <p className="px-4 py-2 text-sm text-gray-400">No groups yet.</p>
+                    )}
                     {(community.showcaseGroups || []).map(group => (
                         <button key={group.id} onClick={() => handleAssignGroup(groupMenu.creationId, group.id)} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                             {group.name}
                         </button>
                     ))}
+                </div>
+            )}
+
+            {/* Groups: Popover mit Waitlist zum Hinzufügen in die Gruppe */}
+            {addToGroupMenu && (
+                <div ref={addToGroupMenuRef} className="fixed z-30 w-72 max-h-80 overflow-y-auto bg-white rounded-md shadow-lg border" style={{ top: addToGroupMenu.y, left: Math.min(addToGroupMenu.x, window.innerWidth - 300) }}>
+                    <p className="px-4 py-2 text-xs font-bold text-gray-500 border-b sticky top-0 bg-white">Add from waitlist</p>
+                    {waitlist.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-gray-400">The waitlist is empty.</p>
+                    ) : (
+                        waitlist.map(creation => (
+                            <button
+                                key={creation.id}
+                                onClick={() => {
+                                    if (addToGroupMenu.kind === 'showcased') {
+                                        handleAddToShowcasedGroup(creation.id, addToGroupMenu.url);
+                                    } else {
+                                        handleAssignGroup(creation.id, addToGroupMenu.groupId);
+                                    }
+                                    setAddToGroupMenu(null);
+                                }}
+                                className="w-full text-left flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            >
+                                <span className="truncate pr-2">{creation.title}</span>
+                                <Icon path={ICONS.plus} className="w-4 h-4 text-green-600 flex-shrink-0" />
+                            </button>
+                        ))
+                    )}
                 </div>
             )}
         </div>

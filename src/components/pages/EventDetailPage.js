@@ -5,7 +5,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
-import { ICONS } from '../../utils/helpers';
+import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed } from '../../utils/helpers';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 
@@ -284,14 +284,8 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     };
 
     const isYoutube = (url) => url && (url.includes('youtube.com') || url.includes('youtu.be'));
-    const getYoutubeEmbedUrl = (url) => {
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://www.youtube.com/embed/${videoId}`;
-    };
-    const getYoutubeThumbnail = (url) => {
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    };
+    const getYoutubeEmbedUrl = (url) => getYoutubeEmbed(url);
+    const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
     const canEdit = user?.uid === event.creatorId || canManageEvent;
     const themeColor = community?.themeColor || '#F97316';

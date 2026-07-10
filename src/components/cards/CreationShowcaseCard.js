@@ -2,7 +2,7 @@ import React from 'react';
 import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 
-const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMessage, onRemoveFromGroup }) => {
+const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMessage, onRemoveFromGroup, children }) => {
 
     const handleCopy = (text, fieldName) => {
         if (!text) return;
@@ -75,7 +75,7 @@ const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMes
                 if (!value) return null;
                 return (
                     <div key={field.id} className="mt-2">
-                         <button 
+                         <button
                             onClick={() => handleCopy(value, field.label)}
                             className="w-full flex items-center justify-between text-left p-2 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
                         >
@@ -88,6 +88,9 @@ const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMes
                     </div>
                 );
             })}
+
+            {/* Zusatzinhalt (z.B. Tags + Aktions-Buttons) innerhalb der Karte */}
+            {children}
         </div>
     );
 };
