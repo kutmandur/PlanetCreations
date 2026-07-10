@@ -1,11 +1,12 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Fuse from 'fuse.js';
 import { db } from '../../firebase/config';
 import { doc, collection, query, where, onSnapshot, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../utils/creationCache';
-import { searchCreations as algoliaSearch, isAlgoliaConfigured } from '../../firebase/algoliaService';
+import { fetchSearchIndex } from '../../firebase/searchIndexService';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import UserSearchResultCard from '../cards/UserSearchResultCard';
@@ -39,11 +40,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     // Tag suggestions from loaded creations
     const [availableTags, setAvailableTags] = useState([]);
 
-    // Algolia search state
-    const [algoliaResults, setAlgoliaResults] = useState([]);
-    const [algoliaPage, setAlgoliaPage] = useState(0);
-    const [algoliaHasMore, setAlgoliaHasMore] = useState(false);
-    const [isAlgoliaSearching, setIsAlgoliaSearching] = useState(false);
+    // Client-seitige Pagination im Suchmodus (Index-Suche)
+    const [visibleCount, setVisibleCount] = useState(24);
 
     const [searchParams, setSearchParams] = useSearchParams();
     
@@ -57,15 +55,38 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     const dlcMenuRef = useRef(null);
     const color = getGameColor(activeTab);
 
-    // Determine if we should use Algolia for search
-    // Use Algolia when: text search is active OR more than 1 tag filter is active
-    // Firestore can handle 1 tag with array-contains, but not multiple tags
-    const shouldUseAlgolia = useMemo(() => {
+    // Suche über den Kompakt-Index wenn: Textsuche aktiv ODER Tag-Filter aktiv.
+    // Auch einzelne Tags laufen über den Index: der Firestore-array-contains-Pfad
+    // bräuchte eigene Composite-Indexe und wäre case-sensitiv.
+    const shouldUseIndexSearch = useMemo(() => {
         const hasSearchTerm = homeState.searchTerm.trim() !== '';
         const tagCount = homeState.filterTags?.length || 0;
-        const hasMultiTagFilters = tagCount > 1;
-        return isAlgoliaConfigured() && (hasSearchTerm || hasMultiTagFilters);
+        return hasSearchTerm || tagCount > 0;
     }, [homeState.searchTerm, homeState.filterTags]);
+
+    // Suchindex des aktiven Spiels: 1 Firestore-Read, 5 Minuten gecacht,
+    // wird erst geladen wenn tatsächlich gesucht wird.
+    const { data: indexCreations, isLoading: indexLoading } = useQuery({
+        queryKey: ['searchIndex', activeTab],
+        queryFn: () => fetchSearchIndex(activeTab),
+        staleTime: 5 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
+        enabled: shouldUseIndexSearch,
+    });
+
+    const fuse = useMemo(() => {
+        if (!indexCreations || indexCreations.length === 0) return null;
+        return new Fuse(indexCreations, {
+            keys: [
+                { name: 'title', weight: 0.6 },
+                { name: 'tags', weight: 0.3 },
+                { name: 'description', weight: 0.1 },
+            ],
+            threshold: 0.35,
+            ignoreLocation: true,
+            minMatchCharLength: 2,
+        });
+    }, [indexCreations]);
 
     // Hilfsfunktion: Creations aus Cache anhand IDs holen
     const getCreationsFromCacheByIds = useCallback((ids) => {
@@ -76,59 +97,26 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
     // Try to get creations from a broader cached query (e.g., "All" category)
     // Returns filtered creations if found, null otherwise
+    // (Tag-Filter laufen über die Index-Suche und landen nie in diesem Pfad)
     const getFromBroaderCache = useCallback(() => {
+        if (homeState.activeCategory === 'All') return null;
+
         const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
             ? homeState.platformFilter
             : 'all';
-        const singleTag = homeState.filterTags?.length === 1 ? homeState.filterTags[0] : '';
 
-        // List of broader cache keys to try (from most specific to broadest)
-        const cacheKeysToTry = [];
+        const broadCache = getCachedHomePageList(queryClient, `${activeTab}_All_${platform}_`);
+        if (!broadCache || !broadCache.creationIds.length) return null;
 
-        // If we have a category filter, try the "All" category with same platform
-        if (homeState.activeCategory !== 'All') {
-            cacheKeysToTry.push(`${activeTab}_All_${platform}_${singleTag}`);
-            // Also try without tag filter
-            if (singleTag) {
-                cacheKeysToTry.push(`${activeTab}_All_${platform}_`);
-            }
-        }
+        const allCreations = getCreationsFromCacheByIds(broadCache.creationIds);
+        if (allCreations.length === 0) return null;
 
-        // If we have a tag filter, try without tag
-        if (singleTag && homeState.activeCategory === 'All') {
-            cacheKeysToTry.push(`${activeTab}_All_${platform}_`);
-        }
+        // Category filter
+        const filteredCreations = allCreations.filter(c => c.category === homeState.activeCategory);
 
-        for (const tryKey of cacheKeysToTry) {
-            const broadCache = getCachedHomePageList(queryClient, tryKey);
-            if (!broadCache || !broadCache.creationIds.length) continue;
-
-            const allCreations = getCreationsFromCacheByIds(broadCache.creationIds);
-            if (allCreations.length === 0) continue;
-
-            // Apply filters to match current query
-            let filteredCreations = allCreations;
-
-            // Category filter
-            if (homeState.activeCategory !== 'All') {
-                filteredCreations = filteredCreations.filter(c => c.category === homeState.activeCategory);
-            }
-
-            // Tag filter
-            if (singleTag) {
-                filteredCreations = filteredCreations.filter(c =>
-                    c.tags && c.tags.some(t => t.toLowerCase() === singleTag.toLowerCase())
-                );
-            }
-
-            // Only use if we have enough results (at least 6)
-            if (filteredCreations.length >= 6) {
-                return filteredCreations;
-            }
-        }
-
-        return null;
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter, homeState.filterTags, queryClient, getCreationsFromCacheByIds]);
+        // Only use if we have enough results (at least 6)
+        return filteredCreations.length >= 6 ? filteredCreations : null;
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter, queryClient, getCreationsFromCacheByIds]);
 
     const handleTabClick = (tabId) => {
         startTransition(() => {
@@ -221,12 +209,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             constraints.push(where('platform', '==', homeState.platformFilter));
         }
 
-        // Single tag filter - Firestore can handle one array-contains
-        if (homeState.filterTags?.length === 1) {
-            constraints.push(where('tags', 'array-contains', homeState.filterTags[0]));
-        }
-
         // Order and pagination
+        // (Tag-Filter laufen komplett über die Index-Suche, nie über diesen Query)
         constraints.push(orderBy('createdAt', 'desc'));
 
         if (isLoadMore && lastTs) {
@@ -236,20 +220,24 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         constraints.push(limit(24));
 
         return query(...constraints);
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter, homeState.filterTags]);
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter]);
 
     // Cache key that includes filters
     const cacheKey = useMemo(() => {
         const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
             ? homeState.platformFilter
             : 'all';
-        const tag = homeState.filterTags?.length === 1 ? homeState.filterTags[0] : '';
-        return `${activeTab}_${homeState.activeCategory}_${platform}_${tag}`;
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter, homeState.filterTags]);
+        return `${activeTab}_${homeState.activeCategory}_${platform}_`;
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter]);
 
     useEffect(() => {
-        // Skip Firestore fetch when using Algolia
-        if (shouldUseAlgolia) return;
+        // Skip Firestore fetch when using the search index
+        if (shouldUseIndexSearch) {
+            // Sonst bliebe der initiale Lade-Spinner hängen, wenn die Seite
+            // direkt mit aktivem Suchbegriff geöffnet wird
+            setLoading(false);
+            return;
+        }
 
         const fetchInitialCreations = async () => {
             // 1. Prüfe ob gecachte Liste für diese exakte Filterkombi vorhanden ist
@@ -298,10 +286,10 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             cacheHomePageList(queryClient, cacheKey, creationIds, lastTs, hasMoreItems);
         };
         fetchInitialCreations();
-    }, [cacheKey, queryClient, getCreationsFromCacheByIds, buildFirestoreQuery, shouldUseAlgolia, getFromBroaderCache]);
+    }, [cacheKey, queryClient, getCreationsFromCacheByIds, buildFirestoreQuery, shouldUseIndexSearch, getFromBroaderCache]);
 
     const fetchMoreCreations = useCallback(async () => {
-        if (loading || loadingMore || !hasMore || !lastTimestamp || shouldUseAlgolia) return;
+        if (loading || loadingMore || !hasMore || !lastTimestamp || shouldUseIndexSearch) return;
         setLoadingMore(true);
 
         const nextQuery = buildFirestoreQuery(true, lastTimestamp);
@@ -332,7 +320,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         setLoadingMore(false);
-    }, [loading, loadingMore, hasMore, cacheKey, lastTimestamp, creations, queryClient, buildFirestoreQuery, shouldUseAlgolia]);
+    }, [loading, loadingMore, hasMore, cacheKey, lastTimestamp, creations, queryClient, buildFirestoreQuery, shouldUseIndexSearch]);
 
     useEffect(() => {
         const docRef = doc(db, 'categories', activeTab);
@@ -358,9 +346,11 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     }, [activeTab]);
 
     // Extract unique tags from loaded creations for suggestions
+    // (aus dem Suchindex, wenn geladen — der deckt alle Creations des Spiels ab)
     useEffect(() => {
+        const source = (indexCreations && indexCreations.length > 0) ? indexCreations : creations;
         const tagCounts = {};
-        creations.forEach(creation => {
+        source.forEach(creation => {
             if (creation.tags && Array.isArray(creation.tags)) {
                 creation.tags.forEach(tag => {
                     tagCounts[tag] = (tagCounts[tag] || 0) + 1;
@@ -372,7 +362,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             .sort((a, b) => b[1] - a[1])
             .map(([tag]) => tag);
         setAvailableTags(sortedTags);
-    }, [creations]);
+    }, [creations, indexCreations]);
 
     useEffect(() => {
         if (!categories.includes(homeState.activeCategory)) {
@@ -443,100 +433,98 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         return () => clearTimeout(debounceTimer);
     }, [homeState.searchTerm]);
 
-    // Algolia search effect - triggers when shouldUseAlgolia is true
+    // Pagination zurücksetzen, wenn sich Suche oder Filter ändern
     useEffect(() => {
-        if (!shouldUseAlgolia) {
-            // Clear Algolia results when not using Algolia
-            setAlgoliaResults([]);
-            setAlgoliaPage(0);
-            setAlgoliaHasMore(false);
-            return;
+        setVisibleCount(24);
+    }, [shouldUseIndexSearch, activeTab, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, dlcFilterMode, selectedDlcs]);
+
+    // Suche über den Kompakt-Index — komplett client-seitig, kein Server-Roundtrip.
+    // Erst strukturelle Filter, dann Fuse.js-Textsuche über die vorgefilterte Menge.
+    const indexSearchResults = useMemo(() => {
+        if (!shouldUseIndexSearch || !indexCreations) return [];
+
+        let filtered = indexCreations;
+
+        if (homeState.activeCategory !== 'All') {
+            filtered = filtered.filter(c => c.category === homeState.activeCategory);
         }
 
-        const performAlgoliaSearch = async () => {
-            setIsAlgoliaSearching(true);
-            try {
-                // Build platform filter for PC1/PZ
-                const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
-                    ? homeState.platformFilter
-                    : undefined;
-
-                // Build mod status filter
-                const modStatus = !homeState.showModsOnly ? 'NoMods' : undefined;
-
-                const result = await algoliaSearch({
-                    query: homeState.searchTerm.trim(),
-                    game: activeTab,
-                    tags: homeState.filterTags || [],
-                    category: homeState.activeCategory !== 'All' ? homeState.activeCategory : undefined,
-                    platform,
-                    modStatus,
-                    limit: 24,
-                    page: 0
-                });
-
-                setAlgoliaResults(result.hits);
-                setAlgoliaPage(result.page);
-                setAlgoliaHasMore(result.hasMore);
-
-                // Cache the results
-                cacheCreations(queryClient, result.hits);
-            } catch (error) {
-                console.error('Algolia search error:', error);
-                setAlgoliaResults([]);
-            } finally {
-                setIsAlgoliaSearching(false);
-            }
-        };
-
-        const debounceTimer = setTimeout(performAlgoliaSearch, 300);
-        return () => clearTimeout(debounceTimer);
-    }, [shouldUseAlgolia, activeTab, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, queryClient]);
-
-    // Load more Algolia results
-    const fetchMoreAlgoliaResults = useCallback(async () => {
-        if (!shouldUseAlgolia || isAlgoliaSearching || !algoliaHasMore) return;
-
-        setIsAlgoliaSearching(true);
-        try {
-            const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
-                ? homeState.platformFilter
-                : undefined;
-
-            const modStatus = !homeState.showModsOnly ? 'NoMods' : undefined;
-
-            const result = await algoliaSearch({
-                query: homeState.searchTerm.trim(),
-                game: activeTab,
-                tags: homeState.filterTags || [],
-                category: homeState.activeCategory !== 'All' ? homeState.activeCategory : undefined,
-                platform,
-                modStatus,
-                limit: 24,
-                page: algoliaPage + 1
-            });
-
-            setAlgoliaResults(prev => [...prev, ...result.hits]);
-            setAlgoliaPage(result.page);
-            setAlgoliaHasMore(result.hasMore);
-
-            // Cache the new results
-            cacheCreations(queryClient, result.hits);
-        } catch (error) {
-            console.error('Algolia load more error:', error);
-        } finally {
-            setIsAlgoliaSearching(false);
+        if (activeTab === 'planet-coaster' || activeTab === 'planet-zoo') {
+            filtered = filtered.filter(c => (c.platform || 'pc') === homeState.platformFilter);
         }
-    }, [shouldUseAlgolia, isAlgoliaSearching, algoliaHasMore, algoliaPage, activeTab, homeState, queryClient]);
 
-    // Scroll handler for infinite loading - must be after fetchMoreAlgoliaResults definition
+        if (!homeState.showModsOnly) {
+            filtered = filtered.filter(c => c.modStatus !== 'UsingMods');
+        }
+
+        if (homeState.filterTags?.length > 0) {
+            filtered = filtered.filter(c =>
+                c.tags && homeState.filterTags.every(filterTag =>
+                    c.tags.some(creationTag => creationTag.toLowerCase() === filterTag.toLowerCase())
+                )
+            );
+        }
+
+        if (dlcFilterMode === 'owned') {
+            const ownedDlcs = userProfile?.ownedDlcs?.[activeTab] || [];
+            filtered = filtered.filter(creation =>
+                !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => ownedDlcs.includes(dlc))
+            );
+        } else if (dlcFilterMode === 'custom' && selectedDlcs.length > 0) {
+            filtered = filtered.filter(creation =>
+                !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => selectedDlcs.includes(dlc))
+            );
+        }
+
+        const term = homeState.searchTerm.trim();
+        let results;
+        if (term && fuse) {
+            // Fuse liefert relevanz-sortierte Treffer über den ganzen Index;
+            // hier auf die vorgefilterte Menge einschränken, Ranking beibehalten
+            const allowed = new Map(filtered.map(c => [c.id, c]));
+            results = fuse.search(term)
+                .filter(r => allowed.has(r.item.id))
+                .map(r => allowed.get(r.item.id));
+        } else {
+            results = [...filtered];
+        }
+
+        switch (homeState.sortBy) {
+            case 'likes':
+                results.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+                break;
+            case 'likes_asc':
+                results.sort((a, b) => (a.likes || 0) - (b.likes || 0));
+                break;
+            case 'createdAt_asc':
+                results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+                break;
+            case 'createdAt':
+            default:
+                // Mit Suchbegriff die Fuse-Relevanz beibehalten, sonst neueste zuerst
+                if (!term) {
+                    results.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+                }
+                break;
+        }
+
+        return results;
+    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile]);
+
+    const indexHasMore = shouldUseIndexSearch && visibleCount < indexSearchResults.length;
+
+    const showMoreIndexResults = useCallback(() => {
+        setVisibleCount(prev => (prev < indexSearchResults.length ? prev + 24 : prev));
+    }, [indexSearchResults.length]);
+
+    // Scroll handler for infinite loading
     useEffect(() => {
         const handleScroll = () => {
             const isBottom = window.innerHeight + document.documentElement.scrollTop + 1 >= document.documentElement.offsetHeight;
             if (isBottom) {
-                // Use Algolia pagination when in Algolia mode, otherwise Firestore
-                if (shouldUseAlgolia) {
-                    fetchMoreAlgoliaResults();
+                // Client-seitige Pagination im Suchmodus, sonst Firestore
+                if (shouldUseIndexSearch) {
+                    showMoreIndexResults();
                 } else {
                     fetchMoreCreations();
                 }
@@ -545,43 +533,13 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
         window.addEventListener('scroll', handleScroll);
         return () => window.removeEventListener('scroll', handleScroll);
-    }, [fetchMoreCreations, fetchMoreAlgoliaResults, shouldUseAlgolia]);
+    }, [fetchMoreCreations, showMoreIndexResults, shouldUseIndexSearch]);
 
     const filteredCreations = useMemo(() => {
-        // When using Algolia, the server already filtered by search, tags, category, platform, modStatus
-        // We only need to apply DLC filter and sorting client-side
-        if (shouldUseAlgolia) {
-            let filtered = [...algoliaResults];
-
-            // DLC filter still needs to be client-side (not in Algolia)
-            if (dlcFilterMode === 'owned') {
-                const ownedDlcs = userProfile?.ownedDlcs?.[activeTab] || [];
-                filtered = filtered.filter(creation =>
-                    !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => ownedDlcs.includes(dlc))
-                );
-            } else if (dlcFilterMode === 'custom' && selectedDlcs.length > 0) {
-                filtered = filtered.filter(creation =>
-                    !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => selectedDlcs.includes(dlc))
-                );
-            }
-
-            // Sorting
-            switch (homeState.sortBy) {
-                case 'likes':
-                    filtered.sort((a, b) => (b.likes || 0) - (a.likes || 0));
-                    break;
-                case 'likes_asc':
-                    filtered.sort((a, b) => (a.likes || 0) - (b.likes || 0));
-                    break;
-                case 'createdAt_asc':
-                    filtered.sort((a, b) => (a.createdAt?.toMillis?.() || a.createdAt || 0) - (b.createdAt?.toMillis?.() || b.createdAt || 0));
-                    break;
-                case 'createdAt':
-                default:
-                    break;
-            }
-
-            return filtered;
+        // Suchmodus: Ergebnisse kommen fertig gefiltert/sortiert aus dem Index,
+        // hier nur noch die client-seitige Pagination anwenden
+        if (shouldUseIndexSearch) {
+            return indexSearchResults.slice(0, visibleCount);
         }
 
         // Standard Firestore mode - some filters still client-side
@@ -601,27 +559,9 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         // Mod filter - still client-side
+        // (Textsuche und Mehrfach-Tags landen nie hier — die laufen über den Suchindex)
         if (!homeState.showModsOnly) {
             filtered = filtered.filter(c => c.modStatus !== 'UsingMods');
-        }
-
-        // Client-side search filter (when Algolia is not configured)
-        if (homeState.searchTerm.trim()) {
-            const searchTermLower = homeState.searchTerm.toLowerCase();
-            filtered = filtered.filter(c =>
-                c.title.toLowerCase().includes(searchTermLower) ||
-                (c.tags && c.tags.some(tag => tag.toLowerCase().includes(searchTermLower)))
-            );
-        }
-
-        // Client-side tag filter for multiple tags (single tag is server-side)
-        // Only apply if more than 1 tag (shouldn't happen since Algolia handles 2+ tags)
-        if (homeState.filterTags && homeState.filterTags.length > 1) {
-            filtered = filtered.filter(c =>
-                c.tags && homeState.filterTags.every(filterTag =>
-                    c.tags.some(creationTag => creationTag.toLowerCase() === filterTag.toLowerCase())
-                )
-            );
         }
 
         switch (homeState.sortBy) {
@@ -640,7 +580,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         return filtered;
-    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseAlgolia, algoliaResults]);
+    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseIndexSearch, indexSearchResults, visibleCount]);
 
 
 
@@ -826,7 +766,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
                 {loading ? <Spinner gameId={activeTab} /> : (
                     <>
-                        {(isSearching || isAlgoliaSearching) && (<div className="mb-8 text-center"><Spinner /></div>)}
+                        {(isSearching || (shouldUseIndexSearch && indexLoading)) && (<div className="mb-8 text-center"><Spinner /></div>)}
                         {!isSearching && userSearchResults.length > 0 && (
                             <div className="mb-8">
                                 <h2 className="text-2xl font-bold mb-4 text-gray-800">Users Found</h2>
@@ -836,10 +776,10 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                         <div className="mb-8">
                             {(homeState.searchTerm.trim() || (homeState.filterTags?.length > 0)) && <h2 className="text-2xl font-bold mb-4 text-gray-800">Creations Found</h2>}
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">{filteredCreations.map(creation => (<CreationCard key={creation.id} creation={creation} onTagClick={handleAddTag}/>))}</div>
-                            {(loadingMore || (shouldUseAlgolia && isAlgoliaSearching && algoliaResults.length > 0)) && <div className="text-center p-8 col-span-full"><Spinner/></div>}
-                            {shouldUseAlgolia && !algoliaHasMore && algoliaResults.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!shouldUseAlgolia && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!loading && !isAlgoliaSearching && filteredCreations.length === 0 && (<p className="text-center text-gray-500 mt-10 text-xl">No creations found. Try a different search!</p>)}
+                            {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
+                            {shouldUseIndexSearch && !indexHasMore && indexSearchResults.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {!loading && !(shouldUseIndexSearch && indexLoading) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 mt-10 text-xl">No creations found. Try a different search!</p>)}
                         </div>
                     </>
                 )}

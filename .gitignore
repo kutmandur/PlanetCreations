@@ -26,3 +26,13 @@ yarn-error.log*
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Firebase (lokale Deploy-Caches, Debug-Logs)
+.firebase/
+firebase-debug.log
+
+# Functions-Konfiguration (nur .env.example wird getrackt)
+/functions/.env
+
+# Windows-Artefakt
+nul

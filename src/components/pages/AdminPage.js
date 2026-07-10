@@ -29,6 +29,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [dlcs, setDlcs] = useState([]);
     const [loadingDlcs, setLoadingDlcs] = useState(false);
     const [seedingDlcs, setSeedingDlcs] = useState(false);
+    const [rebuildingIndex, setRebuildingIndex] = useState(false);
 
     const gameTabRefs = useRef([]);
     const gameGliderRef = useRef(null);
@@ -262,6 +263,27 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         }
     };
 
+    const handleRebuildSearchIndex = async () => {
+        setRebuildingIndex(true);
+        try {
+            const user = auth.currentUser;
+            if (!user) throw new Error("Not logged in.");
+            const idToken = await user.getIdToken(true);
+            const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
+            const response = await fetch(`${apiBaseUrl}/rebuildSearchIndex`, {
+                headers: { 'Authorization': `Bearer ${idToken}` }
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+            const summary = Object.entries(result.counts || {}).map(([game, n]) => `${game}: ${n}`).join(', ');
+            setModalMessage(`Search index rebuilt successfully. ${summary}${result.skipped ? ` (${result.skipped} skipped)` : ''}`);
+        } catch (error) {
+            setModalMessage(`Error rebuilding search index: ${error.message}`);
+        } finally {
+            setRebuildingIndex(false);
+        }
+    };
+
     const handleGenerateEmailList = () => {
         setPasswordConfirm({
             message: "To generate the user email list, please confirm with your password.",
@@ -391,6 +413,9 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         <div className="mt-6 flex justify-center gap-4">
                             <button onClick={handleSeedDlcs} disabled={seedingDlcs} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
                                 {seedingDlcs ? <Spinner size="small" /> : 'Seed All DLCs to Database'}
+                            </button>
+                            <button onClick={handleRebuildSearchIndex} disabled={rebuildingIndex} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
+                                {rebuildingIndex ? <Spinner size="small" /> : 'Rebuild Search Index'}
                             </button>
                         </div>
                     </div>

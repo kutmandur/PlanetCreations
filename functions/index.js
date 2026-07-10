@@ -1,47 +1,48 @@
 const functions = require("firebase-functions");
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
-const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder } = require("discord.js");
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
-const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const S3 = require("aws-sdk/clients/s3");
 const AdmZip = require("adm-zip");
-const { algoliasearch } = require("algoliasearch");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-// --- Algolia Client Setup ---
-const algoliaAppId = functions.config().algolia?.app_id;
-const algoliaAdminKey = functions.config().algolia?.admin_key;
-let algoliaClient = null;
-
-if (algoliaAppId && algoliaAdminKey) {
-    algoliaClient = algoliasearch(algoliaAppId, algoliaAdminKey);
-    console.log("Algolia client initialized successfully.");
-} else {
-    console.warn("Algolia credentials not configured. Sync functions will be skipped.");
-}
-
 // --- Konfiguration für DigitalOcean Spaces ---
-const s3 = new S3({
-  endpoint: functions.config().do.endpoint,
-  region: 'nyc3', // Sicherstellen, dass die korrekte Region hier steht
-  accessKeyId: functions.config().do.key_id,
-  secretAccessKey: functions.config().do.secret,
-  signatureVersion: "v4",
-});
-
+// Lazy-Initialisierung: fehlende Konfiguration darf den Modul-Load nicht crashen,
+// sonst sterben ALLE Functions in dieser Datei beim Cold Start.
+let s3Instance = null;
+function getS3() {
+    if (!s3Instance) {
+        if (!process.env.DO_ENDPOINT || !process.env.DO_KEY_ID || !process.env.DO_SECRET) {
+            throw new Error("DigitalOcean Spaces is not configured.");
+        }
+        s3Instance = new S3({
+            endpoint: process.env.DO_ENDPOINT,
+            region: 'nyc3',
+            accessKeyId: process.env.DO_KEY_ID,
+            secretAccessKey: process.env.DO_SECRET,
+            signatureVersion: "v4",
+        });
+    }
+    return s3Instance;
+}
+const getDoBucket = () => process.env.DO_BUCKET_NAME;
+const getDoPublicUrl = () => process.env.DO_PUBLIC_URL;
 
 // Secrets & Config
-const DISCORD_BOT_TOKEN = functions.config().discord.token;
-const DISCORD_CLIENT_ID = functions.config().discord.client_id;
-const DISCORD_CLIENT_SECRET = functions.config().discord.client_secret;
-const DISCORD_REDIRECT_URI = functions.config().discord.redirect_uri;
-const SIGNING_KEY = functions.config().backup.signing_key;
+// Secrets liegen im Secret Manager (firebase functions:secrets:set <NAME>) und
+// werden per runWith({ secrets: [...] }) an die jeweiligen Functions gebunden.
+// .value() darf erst innerhalb eines Handlers aufgerufen werden.
+const discordClientSecret = defineSecret("DISCORD_CLIENT_SECRET");
+const backupSigningKey = defineSecret("BACKUP_SIGNING_KEY");
+// Nicht-geheime Werte kommen aus functions/.env
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI;
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -70,8 +71,9 @@ app.post("/signBackup", authenticate, async (req, res) => {
         return res.status(400).json({ error: "A valid SHA-256 hash must be provided." });
     }
     
-    if (!SIGNING_KEY) {
-        console.error("Backup signing key is not configured in Firebase Functions config.");
+    const signingKey = backupSigningKey.value();
+    if (!signingKey) {
+        console.error("Backup signing key is not configured.");
         return res.status(500).json({ error: "Server configuration error: Signing key is missing." });
     }
 
@@ -79,7 +81,7 @@ app.post("/signBackup", authenticate, async (req, res) => {
         const signer = crypto.createSign("sha256");
         signer.update(hash);
         signer.end();
-        const signature = signer.sign(SIGNING_KEY, "hex");
+        const signature = signer.sign(signingKey, "hex");
 
         const profileRef = db.doc(`profiles/${userId}`);
         const profileSnap = await profileRef.get();
@@ -131,7 +133,7 @@ app.get("/discordCallback", async (req, res) => {
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 client_id: DISCORD_CLIENT_ID,
-                client_secret: DISCORD_CLIENT_SECRET,
+                client_secret: discordClientSecret.value(),
                 grant_type: "authorization_code",
                 code,
                 redirect_uri: DISCORD_REDIRECT_URI,
@@ -178,7 +180,10 @@ app.get("/discordCallback", async (req, res) => {
 
 
 // Export the single Express app as a Cloud Function
-exports.api = functions.https.onRequest(app);
+// (enthält /signBackup und /discordCallback → braucht beide Secrets)
+exports.api = functions
+    .runWith({ secrets: [discordClientSecret, backupSigningKey] })
+    .https.onRequest(app);
 
 
 // --- Konstanten für Backup-Validierung ---
@@ -342,7 +347,7 @@ exports.getUploadUrl = functions.https.onCall(async (data, context) => {
   const filePath = `temp-uploads/${context.auth.uid}/${Date.now()}-${fileName}`;
 
   const params = {
-    Bucket: functions.config().do.bucket_name,
+    Bucket: getDoBucket(),
     Key: filePath,
     ContentType: contentType,
     Expires: 60 * 10,
@@ -352,8 +357,8 @@ exports.getUploadUrl = functions.https.onCall(async (data, context) => {
     ]
   };
   try {
-    const uploadUrl = await s3.getSignedUrlPromise("putObject", params);
-    const finalFileUrl = `${functions.config().do.public_url}/${filePath}`;
+    const uploadUrl = await getS3().getSignedUrlPromise("putObject", params);
+    const finalFileUrl = `${getDoPublicUrl()}/${filePath}`;
     return { uploadUrl, finalFileUrl, maxSizeBytes: MAX_BACKUP_SIZE_BYTES };
   } catch (error) {
     console.error("Error creating signed URL for DigitalOcean Spaces", error);
@@ -372,8 +377,8 @@ exports.deleteTempFile = functions.https.onCall(async (data, context) => {
     try {
         const urlParts = new URL(tempUrl);
         const filePath = decodeURIComponent(urlParts.pathname.substring(1));
-        await s3.deleteObject({
-            Bucket: functions.config().do.bucket_name,
+        await getS3().deleteObject({
+            Bucket: getDoBucket(),
             Key: filePath,
         }).promise();
         return { success: true };
@@ -443,7 +448,9 @@ exports.deleteTempFile = functions.https.onCall(async (data, context) => {
     }
 });
 
-exports.refreshDiscordGuilds = functions.https.onCall(async (data, context) => {
+exports.refreshDiscordGuilds = functions
+    .runWith({ secrets: [discordClientSecret] })
+    .https.onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to perform this action.');
     }
@@ -453,7 +460,7 @@ exports.refreshDiscordGuilds = functions.https.onCall(async (data, context) => {
         const userRef = db.collection('users').doc(userId);
         const userDoc = await userRef.get();
 
-        if (!userDoc.exists() || !userDoc.data().discordRefreshToken) {
+        if (!userDoc.exists || !userDoc.data().discordRefreshToken) {
             throw new functions.https.HttpsError('not-found', 'No Discord refresh token found for this user. Please re-link your account.');
         }
 
@@ -464,7 +471,7 @@ exports.refreshDiscordGuilds = functions.https.onCall(async (data, context) => {
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 client_id: DISCORD_CLIENT_ID,
-                client_secret: DISCORD_CLIENT_SECRET,
+                client_secret: discordClientSecret.value(),
                 grant_type: "refresh_token",
                 refresh_token: refreshToken,
             }),
@@ -515,7 +522,7 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userId}`);
         const profileSnap = await profileRef.get();
-        const username = profileSnap.exists() ? profileSnap.data().username.toLowerCase() : null;
+        const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
         
         const membershipsRef = db.collection(`profiles/${userId}/communityMemberships`);
         const membershipsSnap = await membershipsRef.get();
@@ -564,7 +571,7 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userIdToDelete}`);
         const profileSnap = await profileRef.get();
-        const username = profileSnap.exists() ? profileSnap.data().username.toLowerCase() : null;
+        const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
         
         const membershipsRef = db.collection(`profiles/${userIdToDelete}/communityMemberships`);
         const membershipsSnap = await membershipsRef.get();
@@ -632,7 +639,7 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
     try {
         const eventRef = db.collection('events').doc(eventId);
         const eventDoc = await eventRef.get();
-        if (!eventDoc.exists()) { throw new functions.https.HttpsError('not-found', 'Event does not exist.'); }
+        if (!eventDoc.exists) { throw new functions.https.HttpsError('not-found', 'Event does not exist.'); }
         const eventData = eventDoc.data();
         const communityId = eventData.communityId;
         const isSiteStaff = userRole === 'admin' || userRole === 'moderator';
@@ -640,7 +647,7 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
         if (!isSiteStaff) {
             const memberRef = db.collection('communitys').doc(communityId).collection('members').doc(userId);
             const memberDoc = await memberRef.get();
-            if (memberDoc.exists()) {
+            if (memberDoc.exists) {
                 const memberRoles = memberDoc.data().roles || [];
                 isCommunityStaff = memberRoles.includes('owner') || memberRoles.includes('moderator');
             }
@@ -671,7 +678,7 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
 // --- Trigger Functions (Alles Gen 1) ---
 
 exports.onCreationWrite = functions
-    .runWith({ memory: '512MB', timeoutSeconds: 120 }) // Mehr Speicher für ZIP-Verarbeitung
+    .runWith({ memory: '512MB', timeoutSeconds: 120, secrets: [backupSigningKey] }) // Mehr Speicher für ZIP-Verarbeitung
     .firestore
     .document('creations/{creationId}')
     .onWrite(async (change, context) => {
@@ -682,7 +689,7 @@ exports.onCreationWrite = functions
         const urlBefore = dataBefore ? dataBefore.backupUrl : null;
 
         if (urlAfter && urlAfter.includes('/temp-uploads/') && urlAfter !== urlBefore) {
-            const bucketName = functions.config().do.bucket_name;
+            const bucketName = getDoBucket();
             let sourcePath = null;
 
             try {
@@ -696,7 +703,7 @@ exports.onCreationWrite = functions
                 const fileExt = path.extname(fileName).toLowerCase();
                 if (fileExt !== '.planetcreations') {
                     console.error(`Invalid file extension for creation ${context.params.creationId}: ${fileExt}`);
-                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
                     await change.after.ref.update({
                         backupUrl: null,
                         backupIsSigned: false,
@@ -706,13 +713,13 @@ exports.onCreationWrite = functions
                 }
 
                 // 2. Prüfe Dateigröße
-                const headResult = await s3.headObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                const headResult = await getS3().headObject({ Bucket: bucketName, Key: sourcePath }).promise();
                 const fileSizeBytes = headResult.ContentLength;
 
                 if (fileSizeBytes > MAX_BACKUP_SIZE_BYTES) {
                     const sizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
                     console.error(`File too large for creation ${context.params.creationId}: ${sizeMB} MB`);
-                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
                     await change.after.ref.update({
                         backupUrl: null,
                         backupIsSigned: false,
@@ -723,14 +730,14 @@ exports.onCreationWrite = functions
 
                 // 3. Lade die Datei herunter und validiere sie vollständig (inkl. Signatur)
                 console.log(`Downloading backup for validation: ${sourcePath}`);
-                const fileData = await s3.getObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                const fileData = await getS3().getObject({ Bucket: bucketName, Key: sourcePath }).promise();
                 const fileBuffer = fileData.Body;
 
                 // Hole den öffentlichen Schlüssel aus dem privaten Signing Key
-                const publicKey = getPublicKeyFromPrivate(SIGNING_KEY);
+                const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
                 if (!publicKey) {
                     console.error('Could not derive public key from signing key');
-                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
                     await change.after.ref.update({
                         backupUrl: null,
                         backupIsSigned: false,
@@ -745,7 +752,7 @@ exports.onCreationWrite = functions
 
                 if (!validation.valid) {
                     console.error(`Backup validation failed for creation ${context.params.creationId}: ${validation.error}`);
-                    await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
                     await change.after.ref.update({
                         backupUrl: null,
                         backupIsSigned: false,
@@ -759,7 +766,7 @@ exports.onCreationWrite = functions
 
                 const destinationPath = `creation-backups/${dataAfter.userId}/${fileName}`;
 
-                await s3.copyObject({
+                await getS3().copyObject({
                     Bucket: bucketName,
                     CopySource: `/${bucketName}/${sourcePath}`,
                     Key: destinationPath,
@@ -767,13 +774,13 @@ exports.onCreationWrite = functions
                 }).promise();
                 console.log(`Successfully copied ${sourcePath} to ${destinationPath} and made public.`);
 
-                await s3.deleteObject({
+                await getS3().deleteObject({
                     Bucket: bucketName,
                     Key: sourcePath,
                 }).promise();
                 console.log(`Successfully deleted temporary file: ${sourcePath}`);
 
-                const newPublicUrl = `${functions.config().do.public_url}/${destinationPath}`;
+                const newPublicUrl = `${getDoPublicUrl()}/${destinationPath}`;
                 await change.after.ref.update({
                     backupUrl: newPublicUrl,
                     backupFileSize: fileSizeBytes,
@@ -789,7 +796,7 @@ exports.onCreationWrite = functions
                 // Versuche die temporäre Datei zu löschen
                 if (sourcePath) {
                     try {
-                        await s3.deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
+                        await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
                     } catch (deleteError) {
                         console.error(`Failed to cleanup temp file after error: ${sourcePath}`, deleteError);
                     }
@@ -806,8 +813,8 @@ exports.onCreationWrite = functions
              try {
                 const oldUrlParts = new URL(urlBefore);
                 const oldFilePath = decodeURIComponent(oldUrlParts.pathname.substring(1));
-                await s3.deleteObject({
-                    Bucket: functions.config().do.bucket_name,
+                await getS3().deleteObject({
+                    Bucket: getDoBucket(),
                     Key: oldFilePath,
                 }).promise();
                 console.log(`Successfully deleted old file: ${oldFilePath} for creation ${context.params.creationId}.`);
@@ -835,11 +842,11 @@ exports.onCreationDelete = functions.firestore
             const urlParts = new URL(backupUrl);
             const filePath = decodeURIComponent(urlParts.pathname.substring(1));
             const params = {
-                Bucket: functions.config().do.bucket_name,
+                Bucket: getDoBucket(),
                 Key: filePath,
             };
             console.log(`Attempting to delete file: ${filePath} from bucket: ${params.Bucket}`);
-            await s3.deleteObject(params).promise();
+            await getS3().deleteObject(params).promise();
             console.log(`Successfully deleted file: ${filePath}`);
             return null;
         } catch (error) {
@@ -953,131 +960,133 @@ exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUp
     }
 });
 
-// --- Algolia Sync Functions ---
+// --- Search Index Sync Functions ---
+// Kompakter Suchindex in Firestore: ein Dokument pro Spiel unter searchIndex/{game},
+// mit einer entries-Map (creationId -> kompakter Eintrag). Der Client lädt das Doc
+// mit 1 Read und sucht lokal (Fuse.js) — Ersatz für den gelöschten Algolia-Account.
+// Kapazität: ~700-1000 Bytes/Eintrag -> ~1000+ Einträge pro Doc unter dem 1-MiB-Limit.
+// Sollte ein Spiel dem Limit nahekommen (count als Frühwarnung beobachten), auf
+// Shards umstellen: searchIndex/{game}-0, -1, ... per hash(creationId) % shardCount.
 
-const ALGOLIA_INDEX_NAME = 'creations';
+const INDEX_GAMES = ['planet-coaster', 'planet-coaster-2', 'planet-zoo'];
+
+// Kurze Feldnamen halten das Index-Dokument klein. Muss zu
+// src/firebase/searchIndexService.js (entryToCreation) passen.
+const buildIndexEntry = (data) => ({
+    t: data.title || '',
+    d: (data.description || '').slice(0, 200),
+    tg: data.tags || [],
+    c: data.category || '',
+    p: data.platform || 'pc',
+    m: data.modStatus || 'NoMods',
+    dlc: data.requiredDlcs || [],
+    img: data.imageUrls?.[0] || null,
+    vid: data.videoUrls?.[0] || null,
+    l: data.likes || 0,
+    dl: data.dislikes || 0,
+    ca: data.createdAt?.toMillis?.() || Date.now(),
+    u: data.userId || '',
+    un: data.username || '',
+    up: data.userProfilePictureUrl || null,
+    s: data.status || 'wip',
+});
 
 /**
- * Sync creation data to Algolia when a creation is created or updated.
- * Only syncs if Algolia credentials are configured.
+ * Hält searchIndex/{game} synchron mit der creations-Collection.
+ * Bewusst eigener Trigger (nicht in onCreationWrite integriert): leichtgewichtig,
+ * ohne S3-Kopplung und ohne das 512MB/120s-Profil der ZIP-Validierung.
  */
-exports.syncCreationToAlgolia = functions.firestore
+exports.syncCreationToSearchIndex = functions.firestore
     .document('creations/{creationId}')
     .onWrite(async (change, context) => {
-        // Skip if Algolia is not configured
-        if (!algoliaClient) {
-            console.log("Algolia not configured, skipping sync.");
-            return null;
-        }
-
         const creationId = context.params.creationId;
+        const before = change.before.exists ? change.before.data() : null;
+        const after = change.after.exists ? change.after.data() : null;
+        const entryField = new admin.firestore.FieldPath('entries', creationId);
 
-        // Handle deletion
-        if (!change.after.exists) {
-            try {
-                await algoliaClient.deleteObjects({
-                    indexName: ALGOLIA_INDEX_NAME,
-                    objectIDs: [creationId]
-                });
-                console.log(`Deleted creation ${creationId} from Algolia.`);
-            } catch (error) {
-                console.error(`Failed to delete creation ${creationId} from Algolia:`, error);
-            }
+        const gameBefore = before?.game;
+        const gameAfter = after?.game;
+
+        // Aus dem alten Index entfernen bei Löschung oder Spiel-Wechsel
+        if (gameBefore && INDEX_GAMES.includes(gameBefore) && gameBefore !== gameAfter) {
+            await db.doc(`searchIndex/${gameBefore}`)
+                .update(entryField, admin.firestore.FieldValue.delete(),
+                    'count', admin.firestore.FieldValue.increment(-1))
+                .catch(() => null); // Index-Doc existiert evtl. noch nicht
+        }
+
+        if (!after) return null;
+        if (!INDEX_GAMES.includes(gameAfter)) {
+            console.warn(`Creation ${creationId} has unknown game "${gameAfter}", not indexed.`);
             return null;
         }
 
-        // Handle create/update
-        const data = change.after.data();
-
-        // Prepare Algolia record with searchable fields
-        const algoliaRecord = {
-            objectID: creationId,
-            title: data.title || '',
-            description: data.description || '',
-            tags: data.tags || [],
-            category: data.category || '',
-            game: data.game || '',
-            platform: data.platform || 'pc',
-            requiredDlcs: data.requiredDlcs || [],
-            modStatus: data.modStatus || 'NoMods',
-            likes: data.likes || 0,
-            dislikes: data.dislikes || 0,
-            createdAt: data.createdAt?.toMillis() || Date.now(),
-            imageUrl: data.imageUrls?.[0] || null,
-            username: data.username || '',
-            userId: data.userId || '',
-            userProfilePictureUrl: data.userProfilePictureUrl || null,
-            status: data.status || 'wip'
-        };
-
-        try {
-            await algoliaClient.saveObjects({
-                indexName: ALGOLIA_INDEX_NAME,
-                objects: [algoliaRecord]
-            });
-            console.log(`Synced creation ${creationId} to Algolia.`);
-        } catch (error) {
-            console.error(`Failed to sync creation ${creationId} to Algolia:`, error);
+        // No-Op-Guard: onCreationWrite schreibt Backup-Felder aufs Doc zurück —
+        // ohne diesen Vergleich würde jeder dieser Writes einen Index-Write auslösen.
+        if (before && gameBefore === gameAfter) {
+            if (JSON.stringify(buildIndexEntry(before)) === JSON.stringify(buildIndexEntry(after))) {
+                return null;
+            }
         }
 
-        return null;
+        const isNewEntry = !before || gameBefore !== gameAfter;
+
+        // set + merge: atomarer Upsert ohne Vorab-Read, legt das Doc bei Bedarf an
+        return db.doc(`searchIndex/${gameAfter}`).set({
+            entries: { [creationId]: buildIndexEntry(after) },
+            ...(isNewEntry ? { count: admin.firestore.FieldValue.increment(1) } : {}),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
     });
 
 /**
- * Initial sync of all creations to Algolia.
- * Call this once via HTTP to populate the index.
- * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/initialAlgoliaSync
+ * Kompletter Neuaufbau des Suchindex aus der creations-Collection.
+ * Einmalig nach dem Deploy aufrufen (Backfill) oder zur Reparatur.
+ * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/rebuildSearchIndex
  */
-app.get("/initialAlgoliaSync", authenticate, async (req, res) => {
+app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
     // Only allow admins to run this
     const userId = req.user.uid;
     const userDoc = await db.collection('users').doc(userId).get();
 
     if (!userDoc.exists || userDoc.data().role !== 'admin') {
-        return res.status(403).json({ error: "Only admins can perform initial sync." });
-    }
-
-    if (!algoliaClient) {
-        return res.status(500).json({ error: "Algolia is not configured." });
+        return res.status(403).json({ error: "Only admins can rebuild the search index." });
     }
 
     try {
         const snapshot = await db.collection('creations').get();
 
-        const records = snapshot.docs.map(doc => {
+        const perGame = {};
+        INDEX_GAMES.forEach(game => { perGame[game] = {}; });
+        let skipped = 0;
+        snapshot.docs.forEach(doc => {
             const data = doc.data();
-            return {
-                objectID: doc.id,
-                title: data.title || '',
-                description: data.description || '',
-                tags: data.tags || [],
-                category: data.category || '',
-                game: data.game || '',
-                platform: data.platform || 'pc',
-                requiredDlcs: data.requiredDlcs || [],
-                modStatus: data.modStatus || 'NoMods',
-                likes: data.likes || 0,
-                dislikes: data.dislikes || 0,
-                createdAt: data.createdAt?.toMillis() || Date.now(),
-                imageUrl: data.imageUrls?.[0] || null,
-                username: data.username || '',
-                userId: data.userId || '',
-                userProfilePictureUrl: data.userProfilePictureUrl || null,
-                status: data.status || 'wip'
-            };
+            if (perGame[data.game]) {
+                perGame[data.game][doc.id] = buildIndexEntry(data);
+            } else {
+                skipped++;
+            }
         });
 
-        // Batch save to Algolia
-        await algoliaClient.saveObjects({
-            indexName: ALGOLIA_INDEX_NAME,
-            objects: records
-        });
+        // Bewusst ohne merge: kompletter Rebuild entfernt verwaiste Einträge
+        const batch = db.batch();
+        for (const [game, entries] of Object.entries(perGame)) {
+            batch.set(db.doc(`searchIndex/${game}`), {
+                entries,
+                count: Object.keys(entries).length,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+        await batch.commit();
 
-        console.log(`Initial sync completed: ${records.length} creations synced to Algolia.`);
-        res.json({ success: true, message: `Synced ${records.length} creations to Algolia.` });
+        const counts = Object.fromEntries(
+            Object.entries(perGame).map(([game, entries]) => [game, Object.keys(entries).length])
+        );
+        console.log("Search index rebuilt:", counts, `(${skipped} skipped)`);
+        res.json({ success: true, counts, skipped });
     } catch (error) {
-        console.error("Initial Algolia sync failed:", error);
-        res.status(500).json({ error: "Initial sync failed: " + error.message });
+        console.error("Search index rebuild failed:", error);
+        res.status(500).json({ error: "Rebuild failed: " + error.message });
     }
 });
 
