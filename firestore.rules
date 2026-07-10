@@ -125,7 +125,14 @@ service cloud.firestore {
         allow write: if isLoggedIn();
       }
     }
-    
+
+    // Kompakter Suchindex (ein Doc pro Spiel), wird nur von Cloud Functions
+    // (Admin SDK, umgeht Rules) geschrieben — Clients lesen ihn für die Suche.
+    match /searchIndex/{gameId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /profiles/{userId} {
       allow read: if true;
       allow create: if isOwner(userId) && isValidProfileData(request.resource.data);
