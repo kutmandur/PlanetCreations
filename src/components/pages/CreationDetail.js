@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, updateDoc } from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
@@ -8,6 +8,7 @@ import { getGameColor, ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed } from '..
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
+import CreationSharingQrCode from '../ui/CreationSharingQrCode';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -21,6 +22,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [loadingCreation, setLoadingCreation] = useState(!cachedCreation);
     const [isVoting, setIsVoting] = useState(false);
     const [isFollowing, setIsFollowing] = useState(false);
+    const [isFollowingCreation, setIsFollowingCreation] = useState(false);
+    const [isTogglingCreationFollow, setIsTogglingCreationFollow] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
 
@@ -191,6 +194,12 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             if (isMounted) setHasAlreadyReported(docSnap.exists());
         };
         checkReportStatus();
+
+        // Am I following this creation? (creationFollowers/{id}/followers/{uid})
+        getDoc(doc(db, 'creationFollowers', id, 'followers', user.uid))
+            .then(snap => { if (isMounted) setIsFollowingCreation(snap.exists()); })
+            .catch(() => {});
+
         return () => { isMounted = false; unsubVote(); };
     }, [id, user, userProfile, creation]);
 
@@ -238,6 +247,28 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 }
             }
         });
+    };
+
+    // Follow the CREATION itself (creationFollowers/{id}/followers/{uid}) to get
+    // notified of changelog updates. Separate from following the creator (above).
+    const handleFollowCreation = async () => {
+        if (!user) { setModalMessage("You must be logged in to follow a creation."); return; }
+        if (isTogglingCreationFollow) return;
+        setIsTogglingCreationFollow(true);
+        const followRef = doc(db, 'creationFollowers', id, 'followers', user.uid);
+        try {
+            if (isFollowingCreation) {
+                await deleteDoc(followRef);
+                setIsFollowingCreation(false);
+            } else {
+                await setDoc(followRef, { userId: user.uid, followedAt: serverTimestamp() });
+                setIsFollowingCreation(true);
+            }
+        } catch (error) {
+            setModalMessage(`Error updating follow: ${error.message}`);
+        } finally {
+            setIsTogglingCreationFollow(false);
+        }
     };
 
     const handleFollow = async () => {
@@ -355,6 +386,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 </button>
                 <div className="flex items-center space-x-2">
                     <button onClick={handleShare} title="Share Creation" className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors"><Icon path={ICONS.share} className="w-6 h-6" /></button>
+                    {user && (<button onClick={handleFollowCreation} disabled={isTogglingCreationFollow} title={isFollowingCreation ? "Following this creation — you'll be notified of updates" : "Follow this creation to get notified of updates"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:opacity-50 ${isFollowingCreation ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.bell} className="w-6 h-6" solid={isFollowingCreation} /></button>)}
                     {user && user.uid !== creation.userId && (<button onClick={handleFollow} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.userAdd} className="w-6 h-6" solid={isFollowing} /></button>)}
                     {canEdit && (<Link to={`/creation/${id}/edit`} className="flex items-center justify-center w-10 h-10 bg-yellow-500 hover:bg-yellow-600 text-white rounded-full transition-colors"><Icon path={ICONS.edit} className="w-5 h-5" solid/></Link>)}
                     {canDelete && (<button onClick={handleDelete} className="flex items-center justify-center w-10 h-10 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"><Icon path={ICONS.trash} className="w-5 h-5" solid/></button>)}
@@ -502,6 +534,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         </div>
                         
                         {creation.customMediaLink && (<div className="mt-4"><p className="text-sm font-bold text-gray-600 mb-1">Custom Media</p><button onClick={() => setExternalLink(creation.customMediaLink)} className={`${color.text} hover:underline break-all text-left`}>Download Link</button></div>)}
+                        <CreationSharingQrCode creationId={id} creationName={creation.title} />
                         <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 text-gray-800 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 transition-colors cursor-pointer">{tag}</button>))}</div></div>
                     </div>
                     {loadingCommunities ? (

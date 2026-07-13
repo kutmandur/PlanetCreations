@@ -12,7 +12,6 @@ import {
     deleteDoc
 } from 'firebase/firestore';
 import { db } from '../../firebase/config';
-import { sendUpdateNotifications } from '../../firebase/database';
 import { getGameColor } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 

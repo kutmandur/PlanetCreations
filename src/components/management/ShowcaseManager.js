@@ -2,12 +2,15 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
 import Icon from '../ui/Icon';
-import { ICONS, getGameColor, getYoutubeThumbnailUrl } from '../../utils/helpers';
+import { ICONS, getGameColor, getYoutubeThumbnailUrl, SOCIAL_PLATFORMS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
+import SharingQrCode from '../ui/SharingQrCode';
+import CreationCard from '../cards/CreationCard';
 import ApplicationsManager from './ApplicationsManager';
 import CommunityFilterBar, { creationMatchesFilters } from './CommunityFilterBar';
 
 const SUB_TABS = ['Applications', 'Waitlist', 'Groups', 'Showcased'];
+const PUBLIC_ORIGIN = 'https://planetcreations.net';
 
 const ALL_GAMES = [
     { id: 'planet-coaster', name: 'Planet Coaster' },
@@ -64,6 +67,8 @@ const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, 
 
 const ShowcaseManager = ({ creations: allCreations, setCreations, community, setCommunity, setModalMessage, setPopoverView, setConfirmation, blacklist }) => {
     const [activeSubTab, setActiveSubTab] = useState('Applications');
+    const [qrModal, setQrModal] = useState(null); // { showcaseId, name }
+    const [previewModal, setPreviewModal] = useState(null); // { showcaseId, name }
     const subTabRefs = useRef([]);
     const subGliderRef = useRef(null);
 
@@ -140,8 +145,9 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         const groups = [];
         byUrl.forEach((list, url) => {
             const name = list.find(c => c.showcaseName)?.showcaseName || null;
+            const showcaseId = list.find(c => c.showcaseGroupId)?.showcaseGroupId || null;
             if (list.length === 1) singles.push(list[0]);
-            else groups.push({ url, name, creations: list });
+            else groups.push({ url, name, showcaseId, creations: list });
         });
         return { showcasedSingles: singles, showcasedGroups: groups };
     }, [alreadyShowcased]);
@@ -173,7 +179,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             return;
         }
         setIsSavingGroup(true);
-        const newGroup = { id: `group_${Date.now()}`, name: trimmedName };
+        const newGroup = { id: `group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, name: trimmedName };
         const communityRef = doc(db, 'communitys', community.id);
         try {
             await updateDoc(communityRef, { showcaseGroups: arrayUnion(newGroup) });
@@ -501,6 +507,9 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     <button onClick={() => handleAddVideoToGroup(group)} className="p-2 text-gray-500 hover:text-green-600" title="Add Video to Group (showcases all creations)">
                                         <Icon path={ICONS.video} className="w-5 h-5" />
                                     </button>
+                                    <button onClick={() => setQrModal({ showcaseId: group.id, name: group.name })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                        <Icon path={ICONS.share} className="w-5 h-5" />
+                                    </button>
                                     <button onClick={() => handleDeleteGroup(group)} className="p-2 text-gray-500 hover:text-red-600" title="Delete Group">
                                         <Icon path={ICONS.trash} className="w-5 h-5" />
                                     </button>
@@ -561,6 +570,11 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                             <button onClick={() => handleEditGroupShowcaseUrl(group)} className="p-2 text-gray-500 hover:text-green-600" title="Edit video URL">
                                 <Icon path={ICONS.edit} className="w-5 h-5" />
                             </button>
+                            {group.showcaseId && (
+                                <button onClick={() => setQrModal({ showcaseId: group.showcaseId, name: group.name })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                    <Icon path={ICONS.share} className="w-5 h-5" />
+                                </button>
+                            )}
                             <button onClick={() => handleRemoveGroupShowcase(group)} className="p-2 text-gray-500 hover:text-red-600" title="Remove showcase from the whole group">
                                 <Icon path={ICONS.trash} className="w-5 h-5" />
                             </button>
@@ -720,6 +734,101 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                         : updateGroupShowcase(videoModal.group, name, url)}
                     onClose={() => { if (!isSavingVideo) setVideoModal(null); }}
                 />
+            )}
+
+            {/* Showcase sharing QR code + explanation for the video creator */}
+            {qrModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={() => setQrModal(null)}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-xl font-bold text-gray-800 mb-1">Showcase QR code</h2>
+                        <p className="text-sm text-gray-500 mb-4">
+                            Add this QR code to your showcase video. When viewers scan it, it opens all
+                            the creations in this showcase at once on PlanetCreations.
+                        </p>
+                        <SharingQrCode
+                            url={`${PUBLIC_ORIGIN}/#/showcase/${qrModal.showcaseId}`}
+                            name={qrModal.name || 'Showcase'}
+                            fileLabel={qrModal.name || 'showcase'}
+                            heading={null}
+                            previewClassName="max-w-[240px]"
+                            containerClassName=""
+                        />
+                        <button
+                            onClick={() => setPreviewModal({ showcaseId: qrModal.showcaseId, name: qrModal.name })}
+                            className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold"
+                        >
+                            Preview landing page
+                        </button>
+                        <div className="flex justify-end mt-4">
+                            <button onClick={() => setQrModal(null)} className="py-2 px-4 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 font-semibold">Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Landing-page preview: video placeholder + currently assigned creations */}
+            {previewModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-start z-50 p-4 overflow-y-auto" onClick={() => setPreviewModal(null)}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl my-8 p-6" onClick={(e) => e.stopPropagation()} style={{ '--theme-color': community.themeColor || '#F97316' }}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-xl font-bold text-gray-800">Landing page preview</h2>
+                            <button onClick={() => setPreviewModal(null)} className="p-2 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100" aria-label="Close">
+                                <span className="text-2xl font-bold leading-none">×</span>
+                            </button>
+                        </div>
+
+                        {/* Community banner (as on the public landing page) */}
+                        <div className="relative mb-4">
+                            <img
+                                src={community.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Community+Banner'}
+                                alt={`${community.name} Banner`}
+                                className="w-full h-32 sm:h-40 object-cover rounded-lg"
+                            />
+                            {SOCIAL_PLATFORMS.some(p => community.socialLinks?.[p.id]) && (
+                                <div className="absolute bottom-2 right-2 flex gap-2">
+                                    {SOCIAL_PLATFORMS.filter(p => community.socialLinks?.[p.id]).map(platform => (
+                                        <span key={platform.id} title={platform.label} className="w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center shadow">
+                                            <Icon path={platform.icon} solid={platform.solid} className="w-4 h-4" />
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Home + View Community buttons directly under the banner (preview only) */}
+                        <div className="flex justify-between items-center gap-2 mb-5">
+                            <span className="flex items-center bg-[--theme-color] text-white px-3 py-2 rounded-md font-semibold text-sm">
+                                <Icon path={ICONS.arrowLeft} className="w-4 h-4 mr-1" /> Homepage
+                            </span>
+                            <div className="text-center flex-grow min-w-0">
+                                <h3 className="text-lg sm:text-2xl font-bold text-gray-800 truncate">{community.name}</h3>
+                            </div>
+                            <span className="bg-gray-200 text-gray-800 px-3 py-2 rounded-md font-semibold text-sm whitespace-nowrap">View Community</span>
+                        </div>
+
+                        {previewModal.name && (
+                            <h4 className="text-xl sm:text-2xl font-bold text-center text-gray-800 mb-5">{previewModal.name}</h4>
+                        )}
+                        {/* Video player placeholder */}
+                        <div className="max-w-2xl mx-auto mb-8 aspect-video rounded-lg bg-gray-800 flex flex-col items-center justify-center text-gray-300">
+                            <div className="w-16 h-16 rounded-full bg-black/50 flex items-center justify-center mb-2">
+                                <div className="w-0 h-0 border-y-8 border-y-transparent border-l-[14px] border-l-white ml-1" />
+                            </div>
+                            <p className="text-sm">Showcase video player</p>
+                        </div>
+                        <h4 className="text-lg font-bold mb-3 text-gray-800">Featured Creations</h4>
+                        {(() => {
+                            const previewCreations = creations.filter(c => c.showcaseGroupId === previewModal.showcaseId);
+                            return previewCreations.length === 0 ? (
+                                <p className="text-center text-gray-400 py-6">No creations assigned to this showcase yet.</p>
+                            ) : (
+                                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+                                    {previewCreations.map(c => <CreationCard key={c.id} creation={c} isLink={false} />)}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                </div>
             )}
         </div>
     );

@@ -1,11 +1,13 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom'; // ✅ Import Link and useLocation
 import { ICONS } from '../../utils/helpers';
+import { useFooterAwareBottom } from '../../utils/useFooterAwareBottom';
 import Icon from './Icon';
 
 // ❌ The 'setView' and 'currentView' props are no longer needed
 const ToggleViewButton = () => {
     const location = useLocation(); // ✅ Get current location
+    const bottom = useFooterAwareBottom();
 
     // ✅ Check the URL path to determine state
     const isCommunitysPage = location.pathname.startsWith('/community');
@@ -18,13 +20,14 @@ const ToggleViewButton = () => {
         // ✅ The button is now a Link component
         <Link
             to={newPath}
+            style={{ bottom }}
             className={`
-                group fixed bottom-8 left-8 h-16 w-16 
-                bg-yellow-500 hover:bg-yellow-600 
-                text-white 
-                rounded-full 
-                flex items-center justify-center 
-                shadow-lg 
+                group fixed left-8 h-16 w-16
+                bg-yellow-500 hover:bg-yellow-600
+                text-white
+                rounded-full
+                flex items-center justify-center
+                shadow-lg
                 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500
                 transition-all duration-300 ease-in-out
                 hover:w-52

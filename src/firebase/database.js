@@ -1,63 +1,26 @@
-import {
-    collection,
-    addDoc,
-    query,
-    limit,
-    getDocs,
-    serverTimestamp,
-    updateDoc,
-    increment,
-    where,
-    writeBatch
-} from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 import { db } from './config';
 
-// Sends notifications to followers of a creation when it's updated.
-export const sendUpdateNotifications = async (creationId, creationTitle) => {
-    const followersQuery = query(collection(db, 'creationFollowers', creationId, 'followers'));
-    const followersSnapshot = await getDocs(followersQuery);
+// The notification bell is backed by a single capped inbox doc per user
+// (users/{uid}/meta/inbox = { items:[…], unreadCount, prefs, pushTokens }).
+// Item shape: { id, type, title, message, link, timestamp, isRead }.
 
-    followersSnapshot.forEach(async (followerDoc) => {
-        const followerId = followerDoc.id;
-        const notificationsRef = collection(db, 'users', followerId, 'notifications');
-        
-        const q = query(notificationsRef, where('creationId', '==', creationId), where('isRead', '==', false), limit(1));
-        const existingNotifSnapshot = await getDocs(q);
+const inboxRef = (uid) => doc(db, 'users', uid, 'meta', 'inbox');
 
-        if (!existingNotifSnapshot.empty) {
-            const existingNotifDoc = existingNotifSnapshot.docs[0];
-            await updateDoc(existingNotifDoc.ref, {
-                updateCount: increment(1),
-                timestamp: serverTimestamp()
-            });
-        } else {
-            await addDoc(notificationsRef, {
-                creationId,
-                creationTitle,
-                isRead: false,
-                timestamp: serverTimestamp(),
-                updateCount: 1,
-            });
-        }
-    });
+// Clears the user's notification inbox (1 write).
+export const clearAllNotifications = async (uid) => {
+    if (!uid) return;
+    await setDoc(inboxRef(uid), { items: [], unreadCount: 0 }, { merge: true });
 };
 
-/**
- * Deletes all notifications for a given user in a single batch.
- * @param {string} userId - The ID of the user whose notifications will be cleared.
- */
-export const clearAllNotifications = async (userId) => {
-    const notificationsRef = collection(db, 'users', userId, 'notifications');
-    const notificationsSnapshot = await getDocs(notificationsRef);
-
-    if (notificationsSnapshot.empty) {
-        return; // Nothing to clear
-    }
-
-    const batch = writeBatch(db);
-    notificationsSnapshot.forEach(doc => {
-        batch.delete(doc.ref);
-    });
-
-    await batch.commit();
+// Marks every notification as read (1 write). Takes the current items — the
+// caller already has them via the inbox listener — so no extra read is needed.
+export const markAllRead = async (uid, items) => {
+    if (!uid || !Array.isArray(items) || items.length === 0) return;
+    if (items.every((i) => i.isRead)) return;
+    await setDoc(
+        inboxRef(uid),
+        { items: items.map((i) => ({ ...i, isRead: true })), unreadCount: 0 },
+        { merge: true }
+    );
 };

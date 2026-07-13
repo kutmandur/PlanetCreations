@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom'; 
 import {
     addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId, Timestamp
@@ -272,8 +272,25 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         }
     }, [user]);
 
+    // Nur Communitys anzeigen, die das aktuell gewählte Spiel unterstützen.
+    // Ältere Communitys ohne allowedGames-Feld unterstützen alle Spiele.
+    const visibleCommunities = useMemo(() =>
+        userCommunities.filter(c => !c.allowedGames || c.allowedGames.includes(game)),
+        [userCommunities, game]);
+
+    // Beim Spielwechsel bereits gewählte, nun nicht mehr unterstützte
+    // Communitys aus der Auswahl entfernen (noch nicht geladene behalten).
     useEffect(() => {
-        const configs = userCommunities.filter(community => 
+        if (userCommunities.length === 0) return;
+        setSelectedCommunities(prev => prev.filter(id => {
+            const community = userCommunities.find(c => c.id === id);
+            if (!community) return true;
+            return !community.allowedGames || community.allowedGames.includes(game);
+        }));
+    }, [game, userCommunities]);
+
+    useEffect(() => {
+        const configs = userCommunities.filter(community =>
             selectedCommunities.includes(community.id) && community.customCreationFields?.length > 0
         );
         setCommunityConfigs(configs);
@@ -844,7 +861,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     </div>
                 </div>
 
-                {userCommunities.length > 0 && (<div><label className="block text-gray-700 font-bold mb-2">Assign to Communities</label><div className="p-3 border rounded-lg flex flex-wrap gap-2">{userCommunities.map(c => <button key={c.id} type="button" onClick={() => handleCommunitySelect(c.id)} className={`flex items-center text-sm font-medium px-3 py-1.5 rounded-full transition-colors ${selectedCommunities.includes(c.id) ? 'bg-blue-600 text-white ring-2 ring-offset-1 ring-blue-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}><span>{c.name}</span></button>)}</div></div>)}
+                {visibleCommunities.length > 0 && (<div><label className="block text-gray-700 font-bold mb-2">Assign to Communities</label><div className="p-3 border rounded-lg flex flex-wrap gap-2">{visibleCommunities.map(c => <button key={c.id} type="button" onClick={() => handleCommunitySelect(c.id)} className={`flex items-center text-sm font-medium px-3 py-1.5 rounded-full transition-colors ${selectedCommunities.includes(c.id) ? 'bg-blue-600 text-white ring-2 ring-offset-1 ring-blue-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}><span>{c.name}</span></button>)}</div></div>)}
                 {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomData={setCustomFieldData} />)}
                 <div className="flex space-x-4 pt-4">
                     <button type="submit" disabled={loading || isUploading} className={`w-full ${color.bg} ${color.hoverBg} text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors`}>{loading ? <Spinner size="small" /> : (creationToEditId ? 'Save Changes' : 'Submit Creation')}</button>

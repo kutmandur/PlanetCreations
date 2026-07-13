@@ -12,6 +12,9 @@ const AdmZip = require("adm-zip");
 admin.initializeApp();
 const db = admin.firestore();
 
+// Shared notification fan-out (inbox doc + web push)
+const { notifyUser } = require("./notify");
+
 // --- Konfiguration für DigitalOcean Spaces ---
 // Lazy-Initialisierung: fehlende Konfiguration darf den Modul-Load nicht crashen,
 // sonst sterben ALLE Functions in dieser Datei beim Cold Start.
@@ -1096,6 +1099,66 @@ const rebuildCommunityIndex = async (communityId, creationsById = null) => {
     return Object.keys(entries).length;
 };
 
+// --- Showcase index ---
+// Self-contained doc per showcase (showcaseIndex/{showcaseId}) so a public
+// showcase page loads in one read. A showcase is identified by the durable
+// showcaseGroupId stamped on community link docs. Shape:
+// { communityId, name, videoUrl, entries: { creationId: <community entry> }, count, updatedAt }.
+const rebuildShowcaseIndex = async (communityId, showcaseId) => {
+    if (!communityId || !showcaseId) return;
+    const showcaseRef = db.doc(`showcaseIndex/${showcaseId}`);
+    const linksSnap = await db.collection(`communitys/${communityId}/creations`)
+        .where('showcaseGroupId', '==', showcaseId).get();
+    if (linksSnap.empty) {
+        await showcaseRef.delete().catch(() => null);
+        return;
+    }
+    const membersSnap = await db.collection(`communitys/${communityId}/members`).get();
+    const rolesByUser = new Map(membersSnap.docs.map(m => [m.id, m.data().roles || []]));
+
+    const entries = {};
+    let name = null, videoUrl = null;
+    for (const linkDoc of linksSnap.docs) {
+        const link = linkDoc.data();
+        if (!name && link.showcaseName) name = link.showcaseName;
+        if (!videoUrl && link.showcaseVideoUrl) videoUrl = link.showcaseVideoUrl;
+        const creationSnap = await db.doc(`creations/${linkDoc.id}`).get();
+        if (!creationSnap.exists) continue; // verwaister Link
+        const creationData = creationSnap.data();
+        const linkData = { ...link, __communityId: communityId };
+        entries[linkDoc.id] = buildCommunityIndexEntry(creationData, linkData, rolesByUser.get(creationData.userId));
+    }
+    if (Object.keys(entries).length === 0) {
+        await showcaseRef.delete().catch(() => null);
+        return;
+    }
+    // Pre-finalize the name lives on the community's showcaseGroups array entry.
+    if (!name) {
+        const commSnap = await db.doc(`communitys/${communityId}`).get();
+        const grp = (commSnap.exists ? (commSnap.data().showcaseGroups || []) : []).find(g => g.id === showcaseId);
+        name = (grp && grp.name) || null;
+    }
+    await showcaseRef.set({
+        communityId,
+        name: name || null,
+        videoUrl: videoUrl || null,
+        entries,
+        count: Object.keys(entries).length,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+};
+
+// Rebuild every showcase index of a community (used by the admin rebuild path).
+const rebuildCommunityShowcaseIndexes = async (communityId) => {
+    const linksSnap = await db.collection(`communitys/${communityId}/creations`).get();
+    const showcaseIds = new Set();
+    linksSnap.docs.forEach(d => { const g = d.data().showcaseGroupId; if (g) showcaseIds.add(g); });
+    for (const sid of showcaseIds) {
+        await rebuildShowcaseIndex(communityId, sid);
+    }
+    return showcaseIds.size;
+};
+
 /**
  * Hält communitySearchIndex/{communityId} synchron mit den Link-Docs
  * communitys/{communityId}/creations/{creationId} (Quelle für Zuordnung,
@@ -1132,6 +1195,25 @@ exports.syncCommunityLinkToIndex = functions.firestore
             ...(change.before.exists ? {} : { count: admin.firestore.FieldValue.increment(1) }),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
+    });
+
+/**
+ * Baut showcaseIndex/{showcaseId} neu, wenn sich die Showcase-Zugehörigkeit eines
+ * Link-Docs ändert (assign/finalize/edit/remove). Läuft parallel zu
+ * syncCommunityLinkToIndex auf demselben Pfad.
+ */
+exports.syncShowcaseIndex = functions.firestore
+    .document('communitys/{communityId}/creations/{creationId}')
+    .onWrite(async (change, context) => {
+        const { communityId } = context.params;
+        const before = change.before.exists ? change.before.data() : null;
+        const after = change.after.exists ? change.after.data() : null;
+        const ids = new Set();
+        if (before && before.showcaseGroupId) ids.add(before.showcaseGroupId);
+        if (after && after.showcaseGroupId) ids.add(after.showcaseGroupId);
+        if (ids.size === 0) return null;
+        await Promise.all([...ids].map(sid => rebuildShowcaseIndex(communityId, sid)));
+        return null;
     });
 
 /**
@@ -1228,19 +1310,77 @@ exports.onBugReportCreated = functions.firestore
         const adminsSnap = await db.collection('users').where('role', '==', 'admin').get();
         if (adminsSnap.empty) return null;
 
-        const preview = (report.description || '').slice(0, 120);
-        const batch = db.batch();
-        adminsSnap.docs.forEach(adminDoc => {
-            const notifRef = db.collection(`users/${adminDoc.id}/notifications`).doc();
-            batch.set(notifRef, {
-                title: `New bug report from ${report.username || 'a user'}`,
-                message: preview + ((report.description || '').length > 120 ? '…' : ''),
-                link: '/admin',
-                isRead: false,
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        const desc = report.description || '';
+        const message = desc.slice(0, 120) + (desc.length > 120 ? '…' : '');
+        const title = `New bug report from ${report.username || 'a user'}`;
+        const link = `/admin?tab=bug-reports&id=${context.params.reportId}`;
+        await Promise.all(adminsSnap.docs.map(a =>
+            notifyUser(a.id, 'bugReport', { title, message, link })));
+        return null;
+    });
+
+// --- Follow / event notifications (inbox doc + web push) ---
+
+// A followed creator posted a new creation → notify their followers.
+exports.notifyFollowersOnNewCreation = functions.firestore
+    .document('creations/{creationId}')
+    .onCreate(async (snap, context) => {
+        const creation = snap.data();
+        const authorId = creation.userId;
+        if (!authorId) return null;
+        const authorProfile = await db.doc(`profiles/${authorId}`).get();
+        const followers = authorProfile.exists ? (authorProfile.data().followers || []) : [];
+        if (followers.length === 0) return null;
+        const title = `${creation.username || 'A creator you follow'} posted a new creation`;
+        const message = creation.title || '';
+        const link = `/creation/${context.params.creationId}`;
+        await Promise.all(followers.map(f =>
+            notifyUser(f, 'newCreation', { title, message, link })));
+        return null;
+    });
+
+// A followed creation gained a new changelog entry → notify its followers
+// (creationFollowers/{creationId}/followers/{uid}).
+exports.notifyOnCreationUpdate = functions.firestore
+    .document('creations/{creationId}')
+    .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        const beforeLen = (before.changelog || []).length;
+        const afterLen = (after.changelog || []).length;
+        if (afterLen <= beforeLen) return null; // only fire on a new changelog entry
+        const creationId = context.params.creationId;
+        const followersSnap = await db.collection(`creationFollowers/${creationId}/followers`).get();
+        if (followersSnap.empty) return null;
+        const latest = after.changelog[after.changelog.length - 1];
+        const title = `Update to "${after.title}"`;
+        const message = latest && latest.text ? String(latest.text).slice(0, 140) : 'A creation you follow was updated.';
+        const link = `/creation/${creationId}`;
+        await Promise.all(followersSnap.docs.map(d =>
+            notifyUser(d.id, 'creationUpdate', { title, message, link })));
+        return null;
+    });
+
+// Someone new followed a user → notify the followed user.
+exports.notifyOnNewFollower = functions.firestore
+    .document('profiles/{userId}')
+    .onUpdate(async (change, context) => {
+        const beforeFollowers = change.before.data().followers || [];
+        const afterFollowers = change.after.data().followers || [];
+        if (afterFollowers.length <= beforeFollowers.length) return null;
+        const newFollowers = afterFollowers.filter(f => !beforeFollowers.includes(f));
+        if (newFollowers.length === 0) return null;
+        const followedUserId = context.params.userId;
+        await Promise.all(newFollowers.map(async (followerId) => {
+            const fProfile = await db.doc(`profiles/${followerId}`).get();
+            const fName = fProfile.exists ? (fProfile.data().username || 'Someone') : 'Someone';
+            await notifyUser(followedUserId, 'newFollower', {
+                title: `${fName} started following you`,
+                message: '',
+                link: `/profile/${followerId}`,
             });
-        });
-        return batch.commit();
+        }));
+        return null;
     });
 
 /**
@@ -1364,8 +1504,9 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
                 return res.status(400).json({ error: "communityId query parameter is required for scope=community." });
             }
             const count = await rebuildCommunityIndex(communityId);
-            console.log(`Community index rebuilt for ${communityId}: ${count} entries`);
-            return res.json({ success: true, communityCounts: { [communityId]: count } });
+            const showcaseCount = await rebuildCommunityShowcaseIndexes(communityId);
+            console.log(`Community index rebuilt for ${communityId}: ${count} entries, ${showcaseCount} showcases`);
+            return res.json({ success: true, communityCounts: { [communityId]: count }, showcaseCounts: { [communityId]: showcaseCount } });
         }
 
         const snapshot = await db.collection('creations').get();
@@ -1408,6 +1549,7 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
         const communityCounts = {};
         for (const communityDoc of communitiesSnap.docs) {
             communityCounts[communityDoc.id] = await rebuildCommunityIndex(communityDoc.id, creationsById);
+            await rebuildCommunityShowcaseIndexes(communityDoc.id);
         }
 
         console.log("Search index rebuilt:", counts, communityCounts, `(${skipped} skipped)`);

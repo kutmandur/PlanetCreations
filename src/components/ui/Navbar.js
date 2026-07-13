@@ -3,12 +3,13 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
 import Icon from './Icon';
 import NotificationDropdown from './NotificationDropdown';
+import InstallHelp from './InstallHelp';
 import PreloadLink from './PreloadLink';
 import { preloadRoute } from '../../utils/preload';
 
 import logo from '../../assets/logo.png'; 
 
-const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
+const Navbar = ({ user, userProfile, onLogout, notifications, className, setModalMessage }) => {
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
     const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
     const profileMenuRef = useRef(null);
@@ -93,6 +94,7 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className }) => {
                                     <Icon path={SHIELD_ICON_PATH} className="w-6 h-6 text-red-500" solid />
                                 </button>
                             )}
+                            <InstallHelp user={user} setModalMessage={setModalMessage} />
                             <div className="relative" ref={notificationMenuRef}>
                                 <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 rounded-full hover:bg-gray-700 relative" title="Notifications">
                                     <Icon path={ICONS.bell} className="w-6 h-6 text-gray-300" />

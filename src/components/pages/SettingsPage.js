@@ -8,6 +8,7 @@ import { joinCommunity } from '../../firebase/community';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
 import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
+import NotificationSettings from '../ui/NotificationSettings';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);
@@ -387,6 +388,8 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                     </button>
                 </div>
             </div>
+
+            {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
 
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Influencer Application</h2>

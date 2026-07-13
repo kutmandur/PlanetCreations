@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../../firebase/config';
 import { doc, getDoc } from 'firebase/firestore';
 
-const ApplicationCard = ({ application, onAccept, onDeny }) => {
+const ApplicationCard = ({ application, onAccept, onDeny, onCopy }) => {
     const [username, setUsername] = useState(application.username || 'No username');
 
     useEffect(() => {
@@ -33,11 +33,14 @@ const ApplicationCard = ({ application, onAccept, onDeny }) => {
         { name: 'Discord', url: application.discord },
     ].filter(link => link.url);
 
+    const communitySizeText = typeof application.communitySize === 'number'
+        ? application.communitySize.toLocaleString()
+        : application.communitySize;
     const details = [
         { label: 'Platform', value: application.platform },
-        { label: 'Community Size', value: application.communitySize },
-        { label: 'Contact Email', value: application.contactEmail },
-        { label: 'Discord', value: application.discordContact },
+        { label: 'Community Size', value: communitySizeText },
+        { label: 'Contact Email', value: application.contactEmail, copy: true },
+        { label: 'Discord', value: application.discordContact, copy: true },
     ].filter(d => d.value);
 
     return (
@@ -67,7 +70,17 @@ const ApplicationCard = ({ application, onAccept, onDeny }) => {
                         {details.map(d => (
                             <div key={d.label}>
                                 <dt className="text-xs font-semibold text-gray-500">{d.label}</dt>
-                                <dd className="text-sm text-gray-800 break-words">{d.value}</dd>
+                                <dd className="text-sm text-gray-800 break-words">
+                                    {d.copy && onCopy ? (
+                                        <button
+                                            onClick={() => onCopy(d.value, d.label)}
+                                            title={`Copy: ${d.value}`}
+                                            className="text-left text-blue-600 hover:underline break-all"
+                                        >
+                                            {d.value}
+                                        </button>
+                                    ) : d.value}
+                                </dd>
                             </div>
                         ))}
                     </dl>

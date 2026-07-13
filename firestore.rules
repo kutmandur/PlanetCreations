@@ -171,6 +171,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Showcase-Index (ein Doc pro Showcase), nur von Cloud Functions gepflegt.
+    match /showcaseIndex/{showcaseId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Bug-Reports: eingeloggte Nutzer melden, nur Admins lesen/verwalten.
     match /bugReports/{reportId} {
       allow create: if isLoggedIn() &&
@@ -205,7 +211,10 @@ service cloud.firestore {
            request.resource.data.reportCount == resource.data.get('reportCount', 0) + 1);
       allow delete: if isOwner(userId) || isAdmin();
 
-      match /notifications/{notificationId} {
+      // Notification hub: single capped inbox doc (users/{uid}/meta/inbox) with
+      // items + unreadCount + prefs + pushTokens. Server (admin) writes items on
+      // fan-out; the owner writes prefs/pushTokens/mark-read/clear.
+      match /meta/{docId} {
         allow read, write: if isOwner(userId) || isAdmin();
       }
       match /following/{creationId} {
@@ -227,6 +236,14 @@ service cloud.firestore {
           request.resource.data.email == request.auth.token.email.lower();
     }
     
+    // Per-creation followers (creationFollowers/{creationId}/followers/{uid}) —
+    // drives "notify me when this creation updates". Each user manages only their
+    // own follow doc; server fan-out reads these with admin (bypasses rules).
+    match /creationFollowers/{creationId}/followers/{followerId} {
+        allow read: if true;
+        allow create, delete: if isLoggedIn() && isOwner(followerId);
+    }
+
     match /dlcs/{gameId} {
         allow read: if isLoggedIn();
         allow write: if isAdmin();
