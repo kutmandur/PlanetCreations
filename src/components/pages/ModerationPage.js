@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
 import { collection, query, onSnapshot, doc, writeBatch, getDocs, where, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -13,6 +14,15 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
+    const location = useLocation();
+
+    // Deep-link support (e.g. from a notification): /moderation?tab=reported-users
+    useEffect(() => {
+        const tabSlug = new URLSearchParams(location.search).get('tab');
+        if (!tabSlug) return;
+        const match = TABS.find(t => t.toLowerCase().replace(/\s+/g, '-') === tabSlug);
+        if (match) setActiveTab(match);
+    }, [location.search, TABS]);
     
     const [reports, setReports] = useState([]);
     const [loadingReports, setLoadingReports] = useState(true);

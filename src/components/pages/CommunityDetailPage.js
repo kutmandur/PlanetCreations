@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
-import { collection, query, onSnapshot, where, doc, getDocs, getDoc, orderBy, limit, startAfter } from 'firebase/firestore';
+import { collection, query, onSnapshot, where, doc, getDocs, getDoc, updateDoc, orderBy, limit, startAfter } from 'firebase/firestore';
 import { joinCommunity, leaveCommunity, deleteCommunityAsAdmin } from '../../firebase/community';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import AddCreationsToCommunityModal from '../modals/AddCreationsToCommunityModal';
@@ -30,6 +30,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [isMember, setIsMember] = useState(false);
+    const [eventNotifyOn, setEventNotifyOn] = useState(true);
     const [isProcessingJoin, setIsProcessingJoin] = useState(false);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const navigate = useNavigate();
@@ -91,6 +92,28 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         });
         return () => { isMounted = false; unsubscribe(); };
     }, [user, community]);
+
+    // Per-community event-notification preference (member doc notifyEvents, default on)
+    useEffect(() => {
+        if (!community || !user || !isMember) return;
+        let mounted = true;
+        getDoc(doc(db, 'communitys', community.id, 'members', user.uid))
+            .then(snap => { if (mounted && snap.exists()) setEventNotifyOn(snap.data().notifyEvents !== false); })
+            .catch(() => {});
+        return () => { mounted = false; };
+    }, [user, community, isMember]);
+
+    const handleToggleEventNotify = async () => {
+        if (!user || !community) return;
+        const next = !eventNotifyOn;
+        setEventNotifyOn(next);
+        try {
+            await updateDoc(doc(db, 'communitys', community.id, 'members', user.uid), { notifyEvents: next });
+        } catch (e) {
+            setEventNotifyOn(!next);
+            setModalMessage(`Could not update event notifications: ${e.message}`);
+        }
+    };
 
     useEffect(() => {
         if (!community) return;
@@ -173,8 +196,20 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     }, [activeTab, fetchMoreEvents]);
 
 
-    const pinnedCreations = useMemo(() => creations.filter(c => c.pinned), [creations]);
-    const unpinnedCreations = useMemo(() => creations.filter(c => !c.pinned), [creations]);
+    // Resolve each creator's community roles to colored rank objects (the index
+    // only supplies role-name strings) so the cards can show rank pills.
+    const creationsRanked = useMemo(() => {
+        const ranks = community?.ranks || [];
+        return creations.map(c => ({
+            ...c,
+            creatorRanks: (c.creatorRoles || [])
+                .map(roleName => ranks.find(r => r.name.toLowerCase() === roleName.toLowerCase()))
+                .filter(Boolean),
+        }));
+    }, [creations, community]);
+
+    const pinnedCreations = useMemo(() => creationsRanked.filter(c => c.pinned), [creationsRanked]);
+    const unpinnedCreations = useMemo(() => creationsRanked.filter(c => !c.pinned), [creationsRanked]);
 
     // Videos-Tab nur anzeigen, wenn es für die Community relevante Videos gibt
     // (verlinkter YouTube-Kanal, Showcase-Videos oder Event-Videos)
@@ -356,16 +391,22 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     <div className="text-center order-3 md:order-3 md:text-right w-48 flex-shrink-0">
                         {user && !isCommunityOwner ? (
                             isMember ? (
-                                <button onClick={handleLeave} disabled={isProcessingJoin} className="bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                    {isProcessingJoin ? 'Leaving...' : 'Leave Community'}
-                                </button>
+                                <div className="flex flex-col items-center md:items-end gap-2">
+                                    <button onClick={handleLeave} disabled={isProcessingJoin} className="bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                        {isProcessingJoin ? 'Leaving...' : 'Leave Community'}
+                                    </button>
+                                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                                        <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={eventNotifyOn} onChange={handleToggleEventNotify} />
+                                        Notify me about events
+                                    </label>
+                                </div>
                             ) : (
                                 <button onClick={handleJoin} disabled={isProcessingJoin} className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors">
                                     {isProcessingJoin ? 'Joining...' : 'Join Community'}
                                 </button>
                             )
                         ) : (
-                            <div className="h-10"></div> 
+                            <div className="h-10"></div>
                         )}
                     </div>
                 </div>

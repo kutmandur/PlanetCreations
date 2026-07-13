@@ -1,9 +1,15 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { clearAllNotifications } from '../../firebase/database';
+import { clearAllNotifications, markAllRead } from '../../firebase/database';
 
 const NotificationDropdown = ({ user, notifications, close }) => {
     const navigate = useNavigate();
+
+    // Opening the dropdown marks everything read (1 write; skipped if already read).
+    useEffect(() => {
+        if (user) markAllRead(user.uid, notifications);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleNotificationClick = (notification) => {
         if (notification.link) {

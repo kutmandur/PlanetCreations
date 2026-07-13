@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
 import { doc, collection, query, where, getDocs, documentId, writeBatch } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -7,7 +8,8 @@ import { containsBlacklistedWord, ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';
 
-const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPasswordConfirm, onCancel, blacklist, userProfile }) => {
+const EditCommunityForm = ({ communityToEdit, setModalMessage, setPasswordConfirm, onCancel, blacklist, userProfile }) => {
+  const navigate = useNavigate();
   const [name, setName] = useState(communityToEdit.name || '');
   const [description, setDescription] = useState(communityToEdit.description || '');
   const [bannerImageUrl, setBannerImageUrl] = useState(communityToEdit.bannerImageUrl || '');
@@ -222,7 +224,7 @@ const EditCommunityForm = ({ communityToEdit, setView, setModalMessage, setPassw
           await deleteCommunityAsAdmin(communityToEdit.id);
 
           setModalMessage('Community has been permanently deleted.');
-          setView({ name: 'communitys' });
+          navigate('/communitys');
         } catch (error) {
           setModalMessage(`Error deleting community: ${error.message}`);
         } finally {

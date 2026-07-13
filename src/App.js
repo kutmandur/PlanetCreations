@@ -2,9 +2,11 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
-import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 
 import { auth, db, isConfigured } from './firebase/config';
+import { enablePush, getPushPermission } from './firebase/push';
+import { isStandalone } from './utils/pwaInstall';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import PreloadLink from './components/ui/PreloadLink';
 import { preloadCriticalComponents } from './utils/preload';
@@ -39,6 +41,7 @@ const ModerationPage = React.lazy(() => import('./components/pages/ModerationPag
 const CommunitysPage = React.lazy(() => import('./components/pages/CommunitysPage'));
 const CreateCommunityForm = React.lazy(() => import('./components/pages/CreateCommunityForm'));
 const CommunityDetailPage = React.lazy(() => import('./components/pages/CommunityDetailPage'));
+const ShowcasePage = React.lazy(() => import('./components/pages/ShowcasePage'));
 const CommunityManagerPage = React.lazy(() => import('./components/pages/CommunityManagerPage'));
 const EventDetailPage = React.lazy(() => import('./components/pages/EventDetailPage'));
 const EventForm = React.lazy(() => import('./components/pages/EventForm'));
@@ -131,6 +134,16 @@ const AppContent = () => {
                             signOut(auth); setLoadingAuth(false); return;
                         }
                         setUserProfile(combinedProfile);
+                        // Firestore rules gate on the token's custom `role` claim, which can lag
+                        // behind a role change (e.g. just promoted to influencer) until the token
+                        // refreshes. If the claim disagrees with the profile role, force a refresh
+                        // so rule checks see the new role immediately.
+                        try {
+                            const tokenResult = await currentUser.getIdTokenResult();
+                            if ((tokenResult.claims.role || 'user') !== (combinedProfile.role || 'user')) {
+                                await currentUser.getIdToken(true);
+                            }
+                        } catch (e) { /* ignore token refresh errors */ }
                         if (combinedProfile.favoriteGame) {
                             setActiveTab(combinedProfile.favoriteGame);
                             const savedPreference = combinedProfile.platformPreferences?.[combinedProfile.favoriteGame];
@@ -140,9 +153,11 @@ const AppContent = () => {
                         setUserProfile({ uid: currentUser.uid, role: 'user' });
                         setActiveTab('planet-coaster-2');
                     }
-                    const notificationsQuery = query(collection(db, 'users', currentUser.uid, 'notifications'), orderBy('timestamp', 'desc'));
-                    notificationUnsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
-                        setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                    // Single capped inbox doc: 1 read loads the whole bell, and
+                    // items are already stored newest-first (server prepends).
+                    const inboxRef = doc(db, 'users', currentUser.uid, 'meta', 'inbox');
+                    notificationUnsubscribe = onSnapshot(inboxRef, (snap) => {
+                        setNotifications(snap.exists() ? (snap.data().items || []) : []);
                     });
                 } catch (error) {
                     console.error('Error fetching user profile:', error);
@@ -178,6 +193,17 @@ const AppContent = () => {
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
     }, []);
+
+    // Installed PWA: ask for notification permission automatically on first open.
+    // If dismissed, the user can re-enable from Settings or the install dialog.
+    useEffect(() => {
+        if (!user || !isStandalone()) return;
+        if (getPushPermission() !== 'default') return;
+        const flag = `pushAutoPrompted-${user.uid}`;
+        if (localStorage.getItem(flag)) return;
+        localStorage.setItem(flag, '1');
+        enablePush(user.uid).catch(() => {});
+    }, [user]);
 
     const handleLogout = async () => {
         try {
@@ -244,7 +270,7 @@ const AppContent = () => {
                 </div>
             )}
 
-            <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" />
+            <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} />
 
             {showVerificationBanner && !isOfflineMode && (
                 <div className="bg-yellow-400 text-center p-2 text-yellow-900 font-semibold flex-shrink-0">
@@ -264,6 +290,7 @@ const AppContent = () => {
                             <Route path="/profile/:userId" element={<ProfilePage user={user} userProfile={userProfile} setReportModal={setReportModal} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
                             <Route path="/communitys" element={<CommunitysPage user={user} userProfile={userProfile} communitysState={communitysState} setCommunitysState={setCommunitysState} setModalMessage={setModalMessage} />} />
                             <Route path="/community/:communityName" element={<CommunityDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
+                            <Route path="/showcase/:showcaseId" element={<ShowcasePage />} />
                             <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" setModalMessage={setModalMessage} />} />
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
@@ -278,7 +305,7 @@ const AppContent = () => {
                             <Route path="/community/:communityId/create-event" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/event/:eventId/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/event/:eventId/manage" element={<ProtectedRoute user={user} userProfile={userProfile}><EventManager user={user} userProfile={userProfile} setModalMessage={setModalMessage} setPopoverView={setPopoverView} /></ProtectedRoute>} />
-                            <Route path="/create-community" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="influencer"><CreateCommunityForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
+                            <Route path="/create-community" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="influencer"><CreateCommunityForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/collaboration/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreateCollaborationForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
                             <Route path="/manager/:id" element={<ProtectedRoute user={user} userProfile={userProfile} checkCommunityOwnership={true} setShowRickRoll={setShowRickRoll}><CommunityManagerPage setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} setConfirmation={setConfirmation} blacklist={blacklist} userProfile={userProfile} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/admin" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="admin" setShowRickRoll={setShowRickRoll}><AdminPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setPasswordConfirm={setPasswordConfirm} /></ProtectedRoute>} />
@@ -297,14 +324,14 @@ const AppContent = () => {
             )}
 
             {!isOfflineMode && (
-                <footer className="text-center p-4 mt-8 text-gray-500 flex-shrink-0">
-                    <div className="flex justify-center items-center space-x-4 text-sm">
+                <footer className="text-center px-4 py-3 text-gray-500 flex-shrink-0">
+                    <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 text-sm">
                         <span>&copy; 2025 PlanetCreations.net</span>
-                        <PreloadLink to="/terms-of-service" className="hover:text-gray-800 hover:underline">Terms of Service</PreloadLink>
-                        <PreloadLink to="/impressum" className="hover:text-gray-800 hover:underline">Impressum / Legal Notice</PreloadLink>
-                        <PreloadLink to="/client-info" className="hover:text-gray-800 hover:underline">About the Client</PreloadLink>
+                        <PreloadLink to="/terms-of-service" className="hover:text-gray-800 hover:underline whitespace-nowrap">Terms of Service</PreloadLink>
+                        <PreloadLink to="/impressum" className="hover:text-gray-800 hover:underline whitespace-nowrap">Impressum / Legal Notice</PreloadLink>
+                        <PreloadLink to="/client-info" className="hover:text-gray-800 hover:underline whitespace-nowrap">About the Client</PreloadLink>
                         {user && (
-                            <button onClick={() => setIsBugReportOpen(true)} className="hover:text-gray-800 hover:underline">
+                            <button onClick={() => setIsBugReportOpen(true)} className="hover:text-gray-800 hover:underline whitespace-nowrap">
                                 Report a Bug
                             </button>
                         )}

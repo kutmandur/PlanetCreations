@@ -17,6 +17,21 @@ const GAME_COLORS = {
 
 export const getGameColor = (gameId) => GAME_COLORS[gameId] || GAME_COLORS['default'];
 
+// Black or white text for readability on a given hex background (YIQ contrast).
+// Shared by the community rank pills across cards.
+export const getTextColorForBackground = (hexColor) => {
+    if (!hexColor) return '#ffffff';
+    try {
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+        const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+        return (yiq >= 128) ? '#000000' : '#ffffff';
+    } catch (e) {
+        return '#ffffff';
+    }
+};
+
 // Matcht nur ganze Wörter, damit harmlose Begriffe wie "button" nicht
 // wegen enthaltener Blacklist-Wörter ("butt") geblockt werden.
 export const findBlacklistedWord = (text, blacklist) => {

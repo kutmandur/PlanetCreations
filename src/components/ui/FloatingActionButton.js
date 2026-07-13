@@ -1,19 +1,22 @@
 import React from 'react';
 import { getGameColor, ICONS } from '../../utils/helpers';
+import { useFooterAwareBottom } from '../../utils/useFooterAwareBottom';
 import Icon from './Icon';
 
 const FloatingActionButton = ({ activeTab }) => {
     const color = getGameColor(activeTab);
+    const bottom = useFooterAwareBottom();
 
     return (
         <div
+            style={{ bottom }}
             className={`
-                group fixed bottom-8 right-8 h-16
-                ${color.bg} ${color.hoverBg} 
-                text-white 
-                rounded-full 
-                flex items-center justify-center 
-                shadow-lg 
+                group fixed right-8 h-16
+                ${color.bg} ${color.hoverBg}
+                text-white
+                rounded-full
+                flex items-center justify-center
+                shadow-lg
                 focus:outline-none focus:ring-2 focus:ring-offset-2 ${color.ring}
                 transition-all duration-300 ease-in-out
                 w-16 hover:w-48

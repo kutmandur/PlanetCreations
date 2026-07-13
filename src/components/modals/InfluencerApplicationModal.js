@@ -4,7 +4,6 @@ import { doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
 
 const PLATFORMS = ['YouTube', 'Twitch', 'Instagram', 'TikTok', 'X (Twitter)', 'Other'];
-const COMMUNITY_SIZES = ['< 1,000', '1,000 – 10,000', '10,000 – 50,000', '50,000 – 100,000', '> 100,000'];
 
 // Erweiterte Influencer-Bewerbung (ersetzt den früheren Ein-Klick-Apply):
 // fragt Plattform, Kanal, Community-Größe, Kontaktmöglichkeiten und eine
@@ -12,13 +11,20 @@ const COMMUNITY_SIZES = ['< 1,000', '1,000 – 10,000', '10,000 – 50,000', '50
 const InfluencerApplicationModal = ({ user, profileData, onClose, onSubmitted, setModalMessage }) => {
     const [platform, setPlatform] = useState('YouTube');
     const [channelUrl, setChannelUrl] = useState(profileData?.youtube || profileData?.twitch || '');
-    const [communitySize, setCommunitySize] = useState(COMMUNITY_SIZES[0]);
+    const [communitySize, setCommunitySize] = useState('');
     const [contactEmail, setContactEmail] = useState(user?.email || '');
     const [discordContact, setDiscordContact] = useState(profileData?.discord || '');
     const [message, setMessage] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const canSubmit = channelUrl.trim() !== '' && contactEmail.trim() !== '' && message.trim().length >= 20;
+    // Nur Ziffern zulassen (führende Nullen entfernen), damit die geschätzte
+    // Community-Größe eine reine Zahl bleibt.
+    const handleCommunitySizeChange = (value) => {
+        const digitsOnly = value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+        setCommunitySize(digitsOnly);
+    };
+
+    const canSubmit = channelUrl.trim() !== '' && contactEmail.trim() !== '' && communitySize !== '' && message.trim().length >= 20;
 
     const handleSubmit = async () => {
         if (!canSubmit || isSubmitting) return;
@@ -28,7 +34,7 @@ const InfluencerApplicationModal = ({ user, profileData, onClose, onSubmitted, s
                 username: profileData?.username || '',
                 platform,
                 channelUrl: channelUrl.trim(),
-                communitySize,
+                communitySize: Number(communitySize),
                 contactEmail: contactEmail.trim(),
                 discordContact: discordContact.trim(),
                 message: message.trim(),
@@ -69,10 +75,15 @@ const InfluencerApplicationModal = ({ user, profileData, onClose, onSubmitted, s
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Community Size</label>
-                            <select value={communitySize} onChange={(e) => setCommunitySize(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white">
-                                {COMMUNITY_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            <label className="block text-sm font-bold text-gray-700 mb-1">Estimated Community Size <span className="text-red-500">*</span></label>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={communitySize}
+                                onChange={(e) => handleCommunitySizeChange(e.target.value)}
+                                placeholder="e.g. 10"
+                                className="w-full p-2.5 border rounded-lg"
+                            />
                         </div>
                     </div>
 

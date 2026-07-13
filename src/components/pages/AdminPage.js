@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import { useLocation } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
 import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -19,6 +20,15 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
+    const location = useLocation();
+
+    // Deep-link support (e.g. from a notification): /admin?tab=bug-reports
+    useEffect(() => {
+        const tabSlug = new URLSearchParams(location.search).get('tab');
+        if (!tabSlug) return;
+        const match = TABS.find(t => t.toLowerCase().replace(/\s+/g, '-') === tabSlug);
+        if (match) setActiveTab(match);
+    }, [location.search, TABS]);
 
     const [selectedGame, setSelectedGame] = useState('planet-coaster');
     const [newCategory, setNewCategory] = useState('');
@@ -191,6 +201,12 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         startTransition(() => {
             setPopoverView({ name: 'profile', userId: userId });
         });
+    };
+
+    const handleCopy = (text, label = 'Value') => {
+        navigator.clipboard.writeText(text)
+            .then(() => setModalMessage(`${label} copied to clipboard!`))
+            .catch(() => setModalMessage('Could not copy to clipboard.'));
     };
 
     const handleRoleChange = async (userId, newRole) => {
@@ -507,7 +523,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         {influencerSubTab === 'Applications' && (
                             applications.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} />)}
+                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} onCopy={handleCopy} />)}
                                 </div>
                             ) : <p className="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md">No pending applications.</p>
                         )}
@@ -544,10 +560,26 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                                                 </a>
                                                             ) : '—'}
                                                         </td>
-                                                        <td className="p-3">{info.communitySize || '—'}</td>
+                                                        <td className="p-3">{typeof info.communitySize === 'number' ? info.communitySize.toLocaleString() : (info.communitySize || '—')}</td>
                                                         <td className="p-3">
-                                                            {info.contactEmail && <p className="truncate max-w-[200px]" title={info.contactEmail}>{info.contactEmail}</p>}
-                                                            {info.discordContact && <p className="text-gray-500 truncate max-w-[200px]" title={info.discordContact}>Discord: {info.discordContact}</p>}
+                                                            {info.contactEmail && (
+                                                                <button
+                                                                    onClick={() => handleCopy(info.contactEmail, 'Email')}
+                                                                    title={`Copy: ${info.contactEmail}`}
+                                                                    className="block truncate max-w-[200px] text-left text-blue-600 hover:underline"
+                                                                >
+                                                                    {info.contactEmail}
+                                                                </button>
+                                                            )}
+                                                            {info.discordContact && (
+                                                                <button
+                                                                    onClick={() => handleCopy(info.discordContact, 'Discord')}
+                                                                    title={`Copy: ${info.discordContact}`}
+                                                                    className="block truncate max-w-[200px] text-left text-gray-500 hover:text-blue-600 hover:underline"
+                                                                >
+                                                                    Discord: {info.discordContact}
+                                                                </button>
+                                                            )}
                                                             {!info.contactEmail && !info.discordContact && '—'}
                                                         </td>
                                                         <td className="p-3 text-gray-500 whitespace-nowrap">

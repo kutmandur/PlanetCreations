@@ -1152,35 +1152,11 @@ const notifyWaitingUsers = async (collaborationId, fileId, fileName, releasedBy,
 
     if (!fileSnap.exists()) return;
 
-    const waitingUsers = fileSnap.data().waitingUsers || [];
-
-    // Get collaboration title
-    const collaborationSnap = await getDoc(doc(db, 'collaborations', collaborationId));
-    const collaborationTitle = collaborationSnap.exists() ? collaborationSnap.data().title : 'Unknown';
-
+    // Collaboration "file available" notifications need a server-side fan-out
+    // (a client cannot write to other users' inbox doc). Deferred until the
+    // Collaboration feature ships; for now just clear the waiting list.
     const batch = writeBatch(db);
-
-    for (const userId of waitingUsers) {
-        if (userId === releasedBy) continue; // Don't notify self
-
-        const notificationRef = doc(collection(db, 'users', userId, 'notifications'));
-        batch.set(notificationRef, {
-            type: 'collaboration_file_available',
-            collaborationId,
-            collaborationTitle,
-            fileId,
-            fileName,
-            releasedBy,
-            releasedByUsername,
-            message: `${fileName} is now available in "${collaborationTitle}"`,
-            timestamp: serverTimestamp(),
-            read: false
-        });
-    }
-
-    // Clear waiting users
     batch.update(fileRef, { waitingUsers: [] });
-
     await batch.commit();
 };
 

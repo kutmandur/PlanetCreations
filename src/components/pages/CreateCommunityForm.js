@@ -135,7 +135,12 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
     }
 
     setLoading(true);
-    
+
+    // Ensure the auth token carries the latest custom role claim (community
+    // creation is gated on the influencer/moderator claim in Firestore rules,
+    // which can be stale right after a role change).
+    try { await auth.currentUser?.getIdToken(true); } catch (e) { /* ignore */ }
+
     const slug = slugify(name);
     const slugQuery = query(collection(db, 'communitys'), where('slug', '==', slug));
     const slugSnapshot = await getDocs(slugQuery);
@@ -193,7 +198,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
       batch.set(memberRef, {
         roles: ['owner'],
         joinedAt: new Date(),
-        username: userProfile.username
+        username: userProfile?.username || ''
       });
       
       const userProfileRef = doc(db, 'profiles', auth.currentUser.uid, 'communityMemberships', communityRef.id);
