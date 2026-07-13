@@ -68,6 +68,9 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     }, []);
 
     const handleProfileClick = useCallback((e) => {
+        // preventDefault, damit der umgebende <Link> zur Creation nicht
+        // zusätzlich navigiert (sonst landen zwei Einträge in der History).
+        e.preventDefault();
         e.stopPropagation();
         preloadComponent('ProfilePage');
         navigate(`/profile/${creation.userId}`);

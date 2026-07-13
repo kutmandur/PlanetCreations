@@ -72,7 +72,11 @@ const CommunityVideosTab = ({ community, creations, events }) => {
             if (!byUrl.has(c.showcaseVideoUrl)) byUrl.set(c.showcaseVideoUrl, []);
             byUrl.get(c.showcaseVideoUrl).push(c);
         });
-        return [...byUrl.entries()].map(([url, list]) => ({ url, creations: list }));
+        return [...byUrl.entries()].map(([url, list]) => ({
+            url,
+            name: list.find(c => c.showcaseName)?.showcaseName || null,
+            creations: list,
+        }));
     }, [creations]);
 
     // Videos aus Community-Events
@@ -138,12 +142,12 @@ const CommunityVideosTab = ({ community, creations, events }) => {
     return (
         <div>
             <div className="flex justify-center mb-8">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     {subTabs.map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveSubTab(tab)}
-                            className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${activeSubTab === tab ? 'bg-[--theme-color] text-white' : 'text-gray-600 hover:text-black'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${activeSubTab === tab ? 'bg-[--theme-color] text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                             {counts[tab] > 0 && (
@@ -219,7 +223,12 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                             {filteredShowcases.map(showcase => (
                                 <div key={showcase.url} className="bg-white rounded-lg shadow-lg overflow-hidden">
                                     <VideoThumb url={showcase.url}>
-                                        <span className="absolute top-2 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded-full">
+                                        {showcase.name && (
+                                            <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 to-transparent px-3 pt-2 pb-6 pointer-events-none">
+                                                <p className="text-white font-bold text-lg text-center truncate" title={showcase.name}>{showcase.name}</p>
+                                            </div>
+                                        )}
+                                        <span className="absolute bottom-2 left-2 text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded-full">
                                             Showcase · {showcase.creations.length} creation{showcase.creations.length !== 1 ? 's' : ''}
                                         </span>
                                     </VideoThumb>

@@ -26,6 +26,7 @@ export function communityEntryToCreation(id, e, communityId) {
         appliedForShowcase: e.app || false,
         appliedAt: e.appAt ? { toMillis: () => e.appAt, seconds: Math.floor(e.appAt / 1000) } : null,
         showcaseVideoUrl: e.svu || null,
+        showcaseName: e.snm || null,
         showcaseGroupId: e.grp || null,
         creatorRoles: e.rk || [],
         linkedAt: e.la || null,

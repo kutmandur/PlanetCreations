@@ -28,6 +28,7 @@ const ReportModal = ({ targetType, onConfirm, onCancel, blacklist = [] }) => {
                         value={reason}
                         onChange={(e) => { setReason(e.target.value); setError(''); }}
                         rows="4"
+                        maxLength={2000}
                         className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500"
                         placeholder={`Why are you reporting this ${targetType}?`}
                     />

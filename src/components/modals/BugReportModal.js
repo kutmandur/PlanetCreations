@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { db } from '../../firebase/config';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { findBlacklistedWord } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 
 // Bug-Report für eingeloggte Nutzer (Footer-Link). Speichert neben der
@@ -16,7 +17,7 @@ const BugReportModal = ({ user, userProfile, onClose, setModalMessage, blacklist
             setModalMessage('Please describe the bug in a bit more detail (at least 10 characters).');
             return;
         }
-        const foundWord = (blacklist || []).find(word => trimmed.toLowerCase().includes(word.toLowerCase()));
+        const foundWord = findBlacklistedWord(trimmed, blacklist || []);
         if (foundWord) {
             setModalMessage(`Your report contains a forbidden word: "${foundWord}"`);
             return;

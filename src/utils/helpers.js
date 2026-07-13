@@ -17,12 +17,21 @@ const GAME_COLORS = {
 
 export const getGameColor = (gameId) => GAME_COLORS[gameId] || GAME_COLORS['default'];
 
-export const containsBlacklistedWord = (text, blacklist) => {
+// Matcht nur ganze Wörter, damit harmlose Begriffe wie "button" nicht
+// wegen enthaltener Blacklist-Wörter ("butt") geblockt werden.
+export const findBlacklistedWord = (text, blacklist) => {
     if (!text || !blacklist || blacklist.length === 0) {
-        return false;
+        return null;
     }
-    const lowerCaseText = text.toLowerCase();
-    return blacklist.some(word => lowerCaseText.includes(word.toLowerCase()));
+    const escaped = blacklist.filter(Boolean).map(word => String(word).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
+    if (escaped.length === 0) return null;
+    const regex = new RegExp(`\\b(${escaped.join('|')})\\b`, 'i');
+    const match = text.match(regex);
+    return match ? match[1] : null;
+};
+
+export const containsBlacklistedWord = (text, blacklist) => {
+    return findBlacklistedWord(text, blacklist) !== null;
 };
 
 export const ICONS = {

@@ -184,41 +184,39 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     return (
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
             <div className="relative text-center mb-8">
-                <div className="absolute top-0 left-0">
+                <div className="flex flex-wrap justify-between items-start gap-2 mb-4 lg:mb-0 lg:absolute lg:inset-x-0 lg:top-0 lg:pointer-events-none">
                     <button
                         onClick={() => navigate(`/community/${community.slug}`)}
-                        className="flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all"
+                        className="flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all lg:pointer-events-auto"
                     >
                         <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
                         Back to Community
                     </button>
-                </div>
-                <div className="max-w-2xl mx-auto">
-                    <h1 className="text-4xl font-bold text-gray-800">Manage Community</h1>
-                    <h2 className="text-2xl text-gray-600">{community.name}</h2>
-                </div>
-                {(isOwner || isModerator) && (
-                    <div className="absolute top-0 right-0">
-                        <button 
+                    {(isOwner || isModerator) && (
+                        <button
                             onClick={() => setIsEditing(true)}
-                            className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg flex items-center"
+                            className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg flex items-center ml-auto lg:pointer-events-auto"
                         >
                             <Icon path={ICONS.edit} className="w-5 h-5 mr-2" />
                             Edit Community
                         </button>
-                    </div>
-                )}
+                    )}
+                </div>
+                <div className="max-w-2xl mx-auto lg:px-48">
+                    <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">Manage Community</h1>
+                    <h2 className="text-xl sm:text-2xl text-gray-600">{community.name}</h2>
+                </div>
             </div>
 
             <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div className={`absolute h-full bg-[--theme-color] rounded-full transition-all duration-500 ease-in-out`} style={gliderStyle} />
                     {TABS.map((tab, index) => (
-                        <button 
-                            key={tab} 
-                            ref={el => tabRefs.current[index] = el} 
-                            onClick={() => setActiveTab(tab)} 
-                            className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                        <button
+                            key={tab}
+                            ref={el => tabRefs.current[index] = el}
+                            onClick={() => setActiveTab(tab)}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                         </button>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion } from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
@@ -44,6 +44,17 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     };
 
     const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
+
+    // View-Tracking: pro Browser-Session und Creation nur einmal zählen.
+    // Die Rules erlauben genau dieses Feld als +1-Inkrement für jeden Besucher.
+    useEffect(() => {
+        if (!id) return;
+        const viewKey = `viewed-${id}`;
+        if (sessionStorage.getItem(viewKey)) return;
+        sessionStorage.setItem(viewKey, '1');
+        updateDoc(doc(db, 'creations', id), { views: increment(1) })
+            .catch(() => sessionStorage.removeItem(viewKey));
+    }, [id]);
 
     useEffect(() => {
         let isMounted = true;
@@ -458,6 +469,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         <div className="mt-6 pt-6 border-t text-sm text-gray-600 space-y-4">
                             <div className="flex items-center justify-between"><span className="font-bold">Status:</span><span className={`px-2 py-1 rounded-full font-semibold text-xs ${creation.status === 'finished' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>{creation.status === 'finished' ? 'Finished' : 'Work in Progress'}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Rating:</span><div className="flex items-center space-x-4"><button onClick={() => handleVote('like')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}><Icon path={ICONS.thumbUp} className="w-5 h-5" solid={userVote === 'like'}/><span className="font-bold">{creation.likes || 0}</span></button><button onClick={() => handleVote('dislike')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}><Icon path={ICONS.thumbDown} className="w-5 h-5" solid={userVote === 'dislike'}/><span className="font-bold">{creation.dislikes || 0}</span></button></div></div>
+                            <div className="flex items-center justify-between"><span className="font-bold">Views:</span><span className="flex items-center space-x-1"><Icon path={ICONS.eye} className="w-5 h-5 text-gray-400"/><span className="font-bold">{creation.views || 0}</span></span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Created:</span><span>{formatDate(creation.createdAt)}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Updated:</span><span>{formatDate(creation.updatedAt)}</span></div>
                             <button onClick={handleReport} disabled={hasAlreadyReported} className="w-full flex items-center justify-center space-x-2 text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors pt-4 border-t mt-4"><Icon path={ICONS.flag} className="w-5 h-5"/><span>{hasAlreadyReported ? 'Already Reported' : 'Report Creation'}</span></button>

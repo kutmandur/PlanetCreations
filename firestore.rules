@@ -91,7 +91,12 @@ service cloud.firestore {
       }
       match /creations/{creationId} {
         allow read: if true;
-        allow create: if isLoggedIn();
+        // Nur eigene Creations dürfen in Communitys eingehängt werden
+        // (Moderatoren dürfen fremde, z. B. beim Bearbeiten im Auftrag).
+        allow create: if isLoggedIn() &&
+            request.resource.data.userId == request.auth.uid &&
+            (get(/databases/$(database)/documents/creations/$(creationId)).data.userId == request.auth.uid ||
+             isModerator());
         // Owner der Creation darf sein Link-Doc entfernen (Creation aus der
         // Community nehmen) und sich einmalig für das Showcase bewerben —
         // dabei dürfen nur die Bewerbungsfelder geändert werden.
@@ -101,7 +106,9 @@ service cloud.firestore {
                 resource.data.userId == request.auth.uid &&
                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appliedForShowcase', 'appliedAt']) &&
                 request.resource.data.appliedForShowcase == true &&
-                !('appliedForShowcase' in resource.data && resource.data.appliedForShowcase == true)
+                !('appliedForShowcase' in resource.data && resource.data.appliedForShowcase == true) &&
+                // Bereits geshowcaste Creations können sich nicht erneut bewerben
+                !('showcaseVideoUrl' in resource.data && resource.data.showcaseVideoUrl != null)
             )
         );
         allow delete: if isLoggedIn() && (isCommunityStaff(communityId) || isModerator() || resource.data.userId == request.auth.uid);
@@ -113,10 +120,21 @@ service cloud.firestore {
       allow create: if isLoggedIn() &&
           request.resource.data.userId == request.auth.uid &&
           isValidCreationCreate(request.resource.data);
-      allow update: if isLoggedIn() && (
+      // View-Zähler: jeder (auch anonym) darf views um genau 1 erhöhen,
+      // ohne andere Felder anzufassen. reportCount analog, aber nur mit
+      // Login (Report-Flow erhöht den Zähler auf fremden Creations).
+      allow update: if (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']) &&
+          request.resource.data.views is int &&
+          request.resource.data.views == resource.data.get('views', 0) + 1
+      ) || (
+          isLoggedIn() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount']) &&
+          request.resource.data.reportCount == resource.data.get('reportCount', 0) + 1
+      ) || (isLoggedIn() && (
           (isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
           isModerator()
-      );
+      ));
       allow delete: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
 
       match /votes/{userId} {
@@ -132,9 +150,11 @@ service cloud.firestore {
         allow delete: if isOwner(userId);
       }
       
+      // Nur lesen: Der Client schreibt unter creations ausschließlich die
+      // votes-Subcollection (eigene strenge Regel oben). Ein Wildcard-write
+      // würde die votes-Regel aushebeln und beliebige Subcollections öffnen.
       match /{subcollection}/{docId} {
         allow read: if true;
-        allow write: if isLoggedIn();
       }
     }
 
@@ -177,7 +197,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) && request.resource.data.role == 'user';
-      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+      // reportCount-Branch: Community-Staff erhöht beim Kick&Report den
+      // Zähler auf dem fremden users-Doc — nur dieses eine Feld, nur +1.
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin() ||
+          (isLoggedIn() &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount']) &&
+           request.resource.data.reportCount == resource.data.get('reportCount', 0) + 1);
       allow delete: if isOwner(userId) || isAdmin();
 
       match /notifications/{notificationId} {
@@ -194,7 +219,12 @@ service cloud.firestore {
 
     match /usernames/{username} {
       allow read: if true;
-      allow create: if isLoggedIn();
+      // Bindet die Reservierung an die eigene Konto-E-Mail (verhindert
+      // Squatting mit fremden/erfundenen E-Mails). Registrierung ist nur
+      // per E-Mail/Passwort möglich, token.email ist also immer gesetzt.
+      allow create: if isLoggedIn() &&
+          request.resource.data.keys().hasOnly(['email']) &&
+          request.resource.data.email == request.auth.token.email.lower();
     }
     
     match /dlcs/{gameId} {
@@ -218,7 +248,11 @@ service cloud.firestore {
         allow write: if isModerator();
     }
     match /reports/{reportId} {
-      allow create: if isLoggedIn();
+      allow create: if isLoggedIn() &&
+          request.resource.data.reporterId == request.auth.uid &&
+          request.resource.data.reason is string &&
+          request.resource.data.reason.size() > 0 &&
+          request.resource.data.reason.size() <= 2000;
       allow list, get: if isModerator();
       allow update, delete: if isModerator();
     }
@@ -348,7 +382,12 @@ service cloud.firestore {
       allow read: if isOwner(userId);
       allow create: if isLoggedIn(); // Any logged in user can send invites
       allow update: if isOwner(userId);
-      allow delete: if isOwner(userId) || isLoggedIn(); // Owner or sender can delete
+      // Empfänger, echter Absender oder ein Collaboration-Owner/Mod
+      // (cancelInvitation darf auch ein Mit-Owner ausführen, der nicht
+      // der ursprüngliche Absender ist).
+      allow delete: if isOwner(userId) ||
+          (isLoggedIn() && resource.data.senderId == request.auth.uid) ||
+          isCollaborationOwnerOrMod(resource.data.collaborationId);
     }
   }
 }

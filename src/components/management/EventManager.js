@@ -605,14 +605,14 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
             <h1 className="text-4xl font-bold text-center">Manage "{eventData.title}"</h1>
             
             <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={gliderRef} className={`absolute h-full ${color.bg} rounded-full transition-all duration-300 ease-in-out`} />
                     {TABS.map((tab, index) => (
-                        <button 
-                            key={tab} 
-                            ref={el => tabRefs.current[index] = el} 
-                            onClick={() => setActiveTab(tab)} 
-                            className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                        <button
+                            key={tab}
+                            ref={el => tabRefs.current[index] = el}
+                            onClick={() => setActiveTab(tab)}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                         </button>

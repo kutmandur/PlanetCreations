@@ -97,7 +97,7 @@ const CommunitySettingsManager = ({ community, setModalMessage }) => {
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Allowed Games</label>
                     <p className="text-sm text-gray-500 mb-3">Select which games can be submitted to this community. At least one must be selected.</p>
-                    <div className="flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                    <div className="flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                         {ALL_GAMES.map(game => {
                             const isActive = allowedGames.includes(game.id);
                             const color = getGameColor(game.id);

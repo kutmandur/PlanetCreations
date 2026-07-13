@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/config';
-import { doc, getDoc, updateDoc, collection, getDocs, setDoc, deleteField, query, where, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteField, query, where, onSnapshot } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, getIdToken, sendEmailVerification } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
 import { joinCommunity } from '../../firebase/community';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
+import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);
@@ -19,6 +20,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [profileData, setProfileData] = useState(null);
     const [canApply, setCanApply] = useState(false);
     const [cooldown, setCooldown] = useState(false);
+    const [showApplicationModal, setShowApplicationModal] = useState(false);
     
     const [isSyncing, setIsSyncing] = useState(false);
     const [linkedDiscordInfo, setLinkedDiscordInfo] = useState(null);
@@ -263,31 +265,10 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         });
     };
 
-    const handleApply = async () => {
+    // Öffnet das Bewerbungs-Modal (Plattform, Community-Größe, Kontakt, ...)
+    const handleApply = () => {
         if (!canApply || !profileData) return;
-        
-        try {
-            const applicationRef = doc(db, 'applications', user.uid);
-            await setDoc(applicationRef, {
-                username: profileData.username,
-                youtube: profileData.youtube || '',
-                twitch: profileData.twitch || '',
-                instagram: profileData.instagram || '',
-                tiktok: profileData.tiktok || '',
-                x: profileData.x || '',
-                discord: profileData.discord || '',
-                appliedAt: serverTimestamp()
-            });
-
-            const userRef = doc(db, 'users', user.uid);
-            await updateDoc(userRef, { lastInfluencerApplication: serverTimestamp() });
-
-            setModalMessage("Your application has been submitted successfully!");
-            setCanApply(false);
-            setCooldown(true);
-        } catch (error) {
-            setModalMessage(`Error submitting application: ${error.message}`);
-        }
+        setShowApplicationModal(true);
     };
 
     const handleResendVerification = async () => {
@@ -410,7 +391,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Influencer Application</h2>
                 <p className="text-gray-600 mb-4">Apply to become an official Influencer. You must have at least one social media link in your profile to apply. You can apply once every 30 days.</p>
-                <button 
+                <button
                     onClick={handleApply}
                     disabled={!canApply || loading}
                     className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -418,6 +399,16 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                     {cooldown ? "You have recently applied" : (!canApply ? "Add social links to your profile to apply" : "Apply for Influencer Role")}
                 </button>
             </div>
+
+            {showApplicationModal && (
+                <InfluencerApplicationModal
+                    user={user}
+                    profileData={profileData}
+                    onClose={() => setShowApplicationModal(false)}
+                    onSubmitted={() => { setCanApply(false); setCooldown(true); }}
+                    setModalMessage={setModalMessage}
+                />
+            )}
 
             <div className="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
                 <h2 className="text-2xl font-bold mb-2 text-red-700">Delete Account</h2>

@@ -120,6 +120,10 @@ const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessag
     };
 
     const handleApply = async (creation) => {
+        if (links?.[creation.id]?.showcaseVideoUrl) {
+            setModalMessage('This creation has already been showcased in this community.');
+            return;
+        }
         setBusyId(creation.id);
         try {
             await updateDoc(doc(db, 'communitys', community.id, 'creations', creation.id), {
@@ -214,6 +218,7 @@ const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessag
                                 const link = links[creation.id];
                                 const isAdded = !!link;
                                 const hasApplied = link?.appliedForShowcase === true;
+                                const isShowcased = !!link?.showcaseVideoUrl;
                                 const isBusy = busyId === creation.id;
                                 return (
                                     <div key={creation.id} className="border rounded-lg overflow-hidden bg-gray-50 flex flex-col">
@@ -237,7 +242,11 @@ const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessag
                                                     >
                                                         Remove
                                                     </button>
-                                                    {hasApplied ? (
+                                                    {isShowcased ? (
+                                                        <span className="flex-1 text-center text-sm font-semibold py-1.5 px-3 rounded-lg bg-purple-100 text-purple-700" title="This creation has already been showcased in this community.">
+                                                            Showcased ✓
+                                                        </span>
+                                                    ) : hasApplied ? (
                                                         <span className="flex-1 text-center text-sm font-semibold py-1.5 px-3 rounded-lg bg-gray-200 text-gray-500" title="Each creation can only apply once.">
                                                             Applied ✓
                                                         </span>

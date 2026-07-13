@@ -15,6 +15,53 @@ const ALL_GAMES = [
     { id: 'planet-zoo', name: 'Planet Zoo' },
 ];
 
+// Seiteninternes Modal zum Fertigstellen/Bearbeiten eines Showcases
+// (ersetzt die früheren Browser-prompt()-Dialoge): Name + Video-URL.
+const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, onClose }) => {
+    const [name, setName] = useState(initialName || '');
+    const [url, setUrl] = useState(initialUrl || '');
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+                <h2 className="text-xl font-bold text-gray-800 mb-4">{title}</h2>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Showcase Name</label>
+                <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={80}
+                    placeholder="e.g. Summer Showcase #3"
+                    className="w-full p-3 border rounded-lg mb-4 focus:outline-none focus:ring-2"
+                    style={{ '--tw-ring-color': 'var(--theme-color)' }}
+                />
+                <label className="block text-sm font-bold text-gray-700 mb-1">YouTube Video URL</label>
+                <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2"
+                    style={{ '--tw-ring-color': 'var(--theme-color)' }}
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter' && url.trim()) onSave(name.trim(), url.trim()); }}
+                />
+                <div className="flex justify-end gap-2 mt-6">
+                    <button onClick={onClose} className="py-2 px-4 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 font-semibold">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => onSave(name.trim(), url.trim())}
+                        disabled={isSaving || !url.trim()}
+                        className="py-2 px-6 rounded-lg bg-[--theme-color] hover:brightness-90 text-white font-semibold disabled:opacity-50"
+                    >
+                        {isSaving ? <Spinner size="small" /> : 'Save'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ShowcaseManager = ({ creations: allCreations, setCreations, community, setCommunity, setModalMessage, setPopoverView, setConfirmation, blacklist }) => {
     const [activeSubTab, setActiveSubTab] = useState('Applications');
     const subTabRefs = useRef([]);
@@ -39,6 +86,9 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
     const [newGroupName, setNewGroupName] = useState('');
     const [isSavingGroup, setIsSavingGroup] = useState(false);
+    // { mode: 'finalize', group: <showcaseGroup> } oder { mode: 'edit', group: <{url, name, creations}> }
+    const [videoModal, setVideoModal] = useState(null);
+    const [isSavingVideo, setIsSavingVideo] = useState(false);
     const [groupMenu, setGroupMenu] = useState(null);        // Waitlist: Kreation -> Gruppe zuordnen
     // Waitlist-Popover: { kind: 'group', groupId } (Gruppe befüllen)
     // oder { kind: 'showcased', url } (nachträglich zu einem Gruppen-Showcase hinzufügen)
@@ -89,8 +139,9 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         const singles = [];
         const groups = [];
         byUrl.forEach((list, url) => {
+            const name = list.find(c => c.showcaseName)?.showcaseName || null;
             if (list.length === 1) singles.push(list[0]);
-            else groups.push({ url, creations: list });
+            else groups.push({ url, name, creations: list });
         });
         return { showcasedSingles: singles, showcasedGroups: groups };
     }, [alreadyShowcased]);
@@ -180,19 +231,24 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         }
     };
 
-    const handleAddVideoToGroup = async (group) => {
-        const videoUrl = prompt(`Enter the YouTube video URL for all creations in the "${group.name}" group:`);
-        if (!videoUrl) return;
+    // Gruppe fertigstellen: Modal öffnen (Name ist mit dem Gruppennamen vorbelegt)
+    const handleAddVideoToGroup = (group) => {
+        const creationsInThisGroup = creations.filter(c => c.showcaseGroupId === group.id);
+        if (creationsInThisGroup.length === 0) {
+            setModalMessage("No creations found in this group to update.");
+            return;
+        }
+        setVideoModal({ mode: 'finalize', group });
+    };
+
+    const finalizeGroupShowcase = async (group, showcaseName, videoUrl) => {
+        setIsSavingVideo(true);
         try {
             const batch = writeBatch(db);
             const creationsToUpdate = creations.filter(c => c.showcaseGroupId === group.id);
-            if (creationsToUpdate.length === 0) {
-                setModalMessage("No creations found in this group to update.");
-                return;
-            }
             creationsToUpdate.forEach(c => {
                 const linkRef = doc(db, 'communitys', community.id, 'creations', c.id);
-                batch.update(linkRef, { showcaseVideoUrl: videoUrl });
+                batch.update(linkRef, { showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null });
             });
 
             const communityRef = doc(db, 'communitys', community.id);
@@ -200,15 +256,18 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
             await batch.commit();
 
-            setCreations(prev => prev.map(c => c.showcaseGroupId === group.id ? { ...c, showcaseVideoUrl: videoUrl } : c));
+            setCreations(prev => prev.map(c => c.showcaseGroupId === group.id ? { ...c, showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null } : c));
             setCommunity(prevCommunity => ({
                 ...prevCommunity,
                 showcaseGroups: (prevCommunity.showcaseGroups || []).filter(g => g.id !== group.id)
             }));
 
+            setVideoModal(null);
             setModalMessage(`Showcase video added to ${creationsToUpdate.length} creation(s) and the group has been cleared.`);
         } catch (error) {
             setModalMessage(`Error adding video to group: ${error.message}`);
+        } finally {
+            setIsSavingVideo(false);
         }
     };
 
@@ -230,8 +289,8 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
     const handleRemoveShowcaseVideo = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
-            await updateDoc(linkRef, { showcaseVideoUrl: null });
-            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: null } : c));
+            await updateDoc(linkRef, { showcaseVideoUrl: null, showcaseName: null });
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: null, showcaseName: null } : c));
             setModalMessage("Showcase video removed successfully.");
         } catch (error) {
             setModalMessage(`Error removing showcase video: ${error.message}`);
@@ -255,30 +314,38 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         return (yiq >= 128) ? '#000000' : '#ffffff';
     };
 
-    // Video-URL eines bestehenden Gruppen-Showcases nachträglich ändern
-    const handleEditGroupShowcaseUrl = async (group) => {
-        const newUrl = prompt('Enter the new video URL for this group showcase:', group.url);
-        if (!newUrl || newUrl === group.url) return;
+    // Name/Video-URL eines bestehenden Gruppen-Showcases nachträglich ändern (Modal)
+    const handleEditGroupShowcaseUrl = (group) => {
+        setVideoModal({ mode: 'edit', group });
+    };
+
+    const updateGroupShowcase = async (group, showcaseName, videoUrl) => {
+        setIsSavingVideo(true);
         try {
             const batch = writeBatch(db);
             group.creations.forEach(c => {
-                batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: newUrl });
+                batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null });
             });
             await batch.commit();
             const ids = group.creations.map(c => c.id);
-            setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: newUrl } : c));
-            setModalMessage(`Video URL updated for ${group.creations.length} creation(s).`);
+            setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null } : c));
+            setVideoModal(null);
+            setModalMessage(`Showcase updated for ${group.creations.length} creation(s).`);
         } catch (error) {
-            setModalMessage(`Error updating video URL: ${error.message}`);
+            setModalMessage(`Error updating showcase: ${error.message}`);
+        } finally {
+            setIsSavingVideo(false);
         }
     };
 
     // Kreation von der Waitlist nachträglich zu einem Gruppen-Showcase hinzufügen
+    // (übernimmt den Showcase-Namen der bestehenden Gruppe)
     const handleAddToShowcasedGroup = async (creationId, videoUrl) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
+        const existingName = creations.find(c => c.showcaseVideoUrl === videoUrl && c.showcaseName)?.showcaseName || null;
         try {
-            await updateDoc(linkRef, { showcaseVideoUrl: videoUrl });
-            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: videoUrl } : c));
+            await updateDoc(linkRef, { showcaseVideoUrl: videoUrl, showcaseName: existingName });
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: videoUrl, showcaseName: existingName } : c));
             setModalMessage('Creation added to the group showcase.');
         } catch (error) {
             setModalMessage(`Error adding to group showcase: ${error.message}`);
@@ -293,11 +360,11 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                 try {
                     const batch = writeBatch(db);
                     group.creations.forEach(c => {
-                        batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: null });
+                        batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: null, showcaseName: null });
                     });
                     await batch.commit();
                     const ids = group.creations.map(c => c.id);
-                    setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: null } : c));
+                    setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: null, showcaseName: null } : c));
                     setModalMessage(`Group showcase removed from ${group.creations.length} creation(s).`);
                 } catch (error) {
                     setModalMessage(`Error removing group showcase: ${error.message}`);
@@ -481,7 +548,9 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             {filteredGroups.map(group => (
                 <div key={group.url} className="p-4 bg-white rounded-lg shadow border">
                     <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-bold text-gray-800">Group Showcase ({group.creations.length} creations)</h4>
+                        <h4 className="font-bold text-gray-800 truncate pr-2" title={group.name || 'Group Showcase'}>
+                            {group.name || 'Group Showcase'} <span className="font-normal text-gray-500">({group.creations.length} creations)</span>
+                        </h4>
                         <div className="flex items-center gap-1 flex-shrink-0">
                             <a href={group.url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mr-2">
                                 Watch video ↗
@@ -529,7 +598,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         <div>
             {communityGames.length > 1 && (
                 <div className="flex justify-center mb-4">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                         {communityGames.map(game => {
                             const gameColor = getGameColor(game.id);
                             return (
@@ -547,14 +616,14 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             )}
 
             <div className="flex justify-center mb-8">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={subGliderRef} className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out" />
                     {SUB_TABS.map((tab, index) => (
                         <button
                             key={tab}
                             ref={el => subTabRefs.current[index] = el}
                             onClick={() => setActiveSubTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeSubTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${activeSubTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                             {tab === 'Applications' && openApplicationsCount > 0 && (
@@ -637,6 +706,20 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                         ))
                     )}
                 </div>
+            )}
+
+            {/* Showcase fertigstellen / bearbeiten (Name + Video-URL) */}
+            {videoModal && (
+                <ShowcaseVideoModal
+                    title={videoModal.mode === 'finalize' ? `Showcase "${videoModal.group.name}"` : 'Edit Showcase'}
+                    initialName={videoModal.group.name || ''}
+                    initialUrl={videoModal.mode === 'edit' ? videoModal.group.url : ''}
+                    isSaving={isSavingVideo}
+                    onSave={(name, url) => videoModal.mode === 'finalize'
+                        ? finalizeGroupShowcase(videoModal.group, name, url)
+                        : updateGroupShowcase(videoModal.group, name, url)}
+                    onClose={() => { if (!isSavingVideo) setVideoModal(null); }}
+                />
             )}
         </div>
     );

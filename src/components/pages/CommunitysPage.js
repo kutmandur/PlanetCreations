@@ -7,7 +7,6 @@ import CommunityCard from '../cards/CommunityCard';
 import FloatingActionButtonCommunity from '../ui/FloatingActionButtonCommunity';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 import AllEventsPage from './AllEventsPage';
-import CollaborationsTab from '../collaboration/CollaborationsTab';
 import CommunitySuggestions from '../ui/CommunitySuggestions';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
@@ -273,7 +272,16 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 return <AllEventsPage userProfile={userProfile} />;
             
             case 'Collaborations':
-                return <CollaborationsTab user={user} userProfile={userProfile} setModalMessage={setModalMessage} />;
+                // Feature ist noch nicht freigegeben – vorerst nur Teaser anzeigen.
+                return (
+                    <div className="max-w-xl mx-auto mt-12 text-center bg-white rounded-xl shadow-md p-10">
+                        <h2 className="text-3xl font-bold text-gray-800 mb-3">Collaborations</h2>
+                        <p className="text-xl font-semibold text-yellow-600 mb-2">Coming soon!</p>
+                        <p className="text-gray-500">
+                            Work on shared creations with other members of your communities. This feature is currently in development and will be available soon.
+                        </p>
+                    </div>
+                );
 
             default:
                 return null;
@@ -287,10 +295,10 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
             <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">Community Hub</h1>
             
             <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={gliderRef} className="absolute h-full bg-yellow-500 rounded-full transition-all duration-500 ease-in-out" />
                     {TABS.map((tab, index) => (
-                        <button key={tab} ref={el => tabRefs.current[index] = el} onClick={() => handleTabClick(tab)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ communitysState.activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
+                        <button key={tab} ref={el => tabRefs.current[index] = el} onClick={() => handleTabClick(tab)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ communitysState.activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
                             {tab}
                         </button>
                     ))}
@@ -299,10 +307,10 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
 
             {communitysState.activeTab === 'Browser' && (
                 <div className="flex justify-center my-6">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div ref={gameGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
                         {GAME_TABS.map((tab, index) => (
-                            <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setCommunitysState(prev => ({...prev, activeGameFilter: tab.id}))} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ communitysState.activeGameFilter === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
+                            <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setCommunitysState(prev => ({...prev, activeGameFilter: tab.id}))} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ communitysState.activeGameFilter === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
                                 {tab.name}
                             </button>
                         ))}

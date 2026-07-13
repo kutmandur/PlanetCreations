@@ -25,6 +25,7 @@ export function entryToCreation(id, e) {
         videoUrls: e.vid ? [e.vid] : [],
         likes: e.l || 0,
         dislikes: e.dl || 0,
+        views: e.v || 0,
         createdAt: e.ca ? { toMillis: () => e.ca, seconds: Math.floor(e.ca / 1000) } : null,
         userId: e.u || '',
         username: e.un || '',
