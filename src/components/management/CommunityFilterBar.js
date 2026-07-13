@@ -84,13 +84,15 @@ const CommunityFilterBar = ({
                                     {statusOptions.map(opt => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
                                 </select>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">Creator Rank</label>
-                                <select value={filters.rank} onChange={(e) => onFilterChange('rank', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
-                                    <option value="all">All Ranks</option>
-                                    {ranks.map(rank => (<option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>))}
-                                </select>
-                            </div>
+                            {ranks.length > 0 && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Creator Rank</label>
+                                    <select value={filters.rank} onChange={(e) => onFilterChange('rank', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
+                                        <option value="all">All Ranks</option>
+                                        {ranks.map(rank => (<option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>))}
+                                    </select>
+                                </div>
+                            )}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">Tag</label>
                                 <input type="text" placeholder="e.g. Coaster" value={filters.tag} onChange={(e) => onFilterChange('tag', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm" />

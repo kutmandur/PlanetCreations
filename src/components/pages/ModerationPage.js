@@ -204,14 +204,14 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
         <div className="container mx-auto p-4 sm:p-8">
             <h1 className="text-3xl font-bold mb-6 text-gray-800">Moderation Panel</h1>
             <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={gliderRef} className="absolute h-full bg-yellow-500 rounded-full transition-all duration-300 ease-in-out" />
                     {TABS.map((tab, index) => (
-                        <button 
-                            key={tab} 
-                            ref={el => tabRefs.current[index] = el} 
-                            onClick={() => setActiveTab(tab)} 
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                        <button
+                            key={tab}
+                            ref={el => tabRefs.current[index] = el}
+                            onClick={() => setActiveTab(tab)}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                         </button>

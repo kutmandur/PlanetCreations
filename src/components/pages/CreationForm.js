@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom'; 
 import {
-    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId
+    addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId, Timestamp
 } from 'firebase/firestore';
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -177,6 +177,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const IMAGE_LIMIT = 25;
     const VIDEO_LIMIT = 5;
+    const TAG_LIMIT = 10;
 
     const tabRefs = useRef([]);
     const categoryTabRefs = useRef([]);
@@ -502,7 +503,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         try {
             const finalImageUrls = imageItems.map(item => item.url);
             const finalVideoUrls = videoItems.map(item => item.url);
-            const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag && !containsBlacklistedWord(tag, blacklist));
+            const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag && !containsBlacklistedWord(tag, blacklist)).slice(0, TAG_LIMIT);
             const finalMods = (usesMods && game !== 'planet-coaster-2') ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
             const communityAssignments = userCommunities.filter(c => selectedCommunities.includes(c.id)).map(c => ({ communityId: c.id, communityName: c.name }));
             
@@ -536,7 +537,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 
                 const mainUpdateData = { ...creationData };
                 if (changelogEntry.trim()) {
-                    mainUpdateData.changelog = arrayUnion({ text: changelogEntry.trim(), timestamp: serverTimestamp() });
+                    mainUpdateData.changelog = arrayUnion({ text: changelogEntry.trim(), timestamp: Timestamp.now() });
                 }
                 
                 const batch = writeBatch(db);
@@ -612,6 +613,10 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         const newTag = tagToAdd.trim().toLowerCase();
         if (newTag === '') return;
         const currentTags = tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+        if (currentTags.length >= TAG_LIMIT) {
+            setModalMessage(`You can add a maximum of ${TAG_LIMIT} tags.`);
+            return;
+        }
         if (!currentTags.includes(newTag)) {
             setTags(prev => prev.trim().length > 0 ? `${prev.trim()}, ${newTag}` : newTag);
         }
@@ -646,10 +651,10 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             <h2 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'New Creation'}</h2>
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="flex justify-center my-6">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} style={gliderStyle} />
                         {TABS.map((tab, index) => (
-                            <button key={tab.id} type="button" ref={el => tabRefs.current[index] = el} onClick={() => setGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${game === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
+                            <button key={tab.id} type="button" ref={el => tabRefs.current[index] = el} onClick={() => setGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${game === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
                         ))}
                     </div>
                 </div>
@@ -826,7 +831,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                 );
                             })}
                         </div>
-                        <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} className="w-full bg-transparent focus:outline-none" placeholder="Add tags with spacebar..." />
+                        <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} disabled={selectedTags.length >= TAG_LIMIT} className="w-full bg-transparent focus:outline-none disabled:cursor-not-allowed" placeholder={selectedTags.length >= TAG_LIMIT ? `Maximum of ${TAG_LIMIT} tags reached.` : "Add tags with spacebar..."} />
                         {suggestedTags.length > 0 && (
                             <div className="mt-2 pt-2 border-t flex flex-wrap gap-2">
                                 {suggestedTags.map(tag => (
@@ -840,7 +845,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </div>
 
                 {userCommunities.length > 0 && (<div><label className="block text-gray-700 font-bold mb-2">Assign to Communities</label><div className="p-3 border rounded-lg flex flex-wrap gap-2">{userCommunities.map(c => <button key={c.id} type="button" onClick={() => handleCommunitySelect(c.id)} className={`flex items-center text-sm font-medium px-3 py-1.5 rounded-full transition-colors ${selectedCommunities.includes(c.id) ? 'bg-blue-600 text-white ring-2 ring-offset-1 ring-blue-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}><span>{c.name}</span></button>)}</div></div>)}
-                {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomFieldData={setCustomFieldData} />)}
+                {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomData={setCustomFieldData} />)}
                 <div className="flex space-x-4 pt-4">
                     <button type="submit" disabled={loading || isUploading} className={`w-full ${color.bg} ${color.hoverBg} text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors`}>{loading ? <Spinner size="small" /> : (creationToEditId ? 'Save Changes' : 'Submit Creation')}</button>
                     <button type="button" onClick={() => navigate(-1)} className="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors">Cancel</button>

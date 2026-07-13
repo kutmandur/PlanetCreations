@@ -213,10 +213,10 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
             <h2 className="text-2xl font-bold mb-4 text-center">Manage Community Creations</h2>
             
             <div className="flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={gliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
                     {TABS.map((tab, index) => (
-                        <button key={tab.id} ref={el => tabRefs.current[index] = el} onClick={() => handleStateChange('activeGame', tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ managerState.activeGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
+                        <button key={tab.id} ref={el => tabRefs.current[index] = el} onClick={() => handleStateChange('activeGame', tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ managerState.activeGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
                             {tab.name}
                         </button>
                     ))}

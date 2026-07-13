@@ -7,7 +7,7 @@ const HighlightableTextarea = ({ value, onChange, blacklist, ...props }) => {
         const escapedBlacklist = blacklist.map(word => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
         if (escapedBlacklist.length === 0) return <span>{value}</span>;
         
-        const regex = new RegExp(`(${escapedBlacklist.join('|')})`, 'gi');
+        const regex = new RegExp(`\\b(${escapedBlacklist.join('|')})\\b`, 'gi');
         const parts = value.split(regex);
 
         return parts.map((part, index) => {

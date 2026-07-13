@@ -384,32 +384,48 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 </div>
             )}
 
-            <div className="relative flex justify-center items-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
-                    <div
-                        ref={gliderRef}
-                        className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out"
-                    />
-                    {visibleTabs.map((tab, index) => (
+            <div className="relative my-6">
+                <div className="flex justify-center items-center">
+                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                        <div
+                            ref={gliderRef}
+                            className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out"
+                        />
+                        {visibleTabs.map((tab, index) => (
+                            <button
+                                key={tab}
+                                ref={el => tabRefs.current[index] = el}
+                                onClick={() => setActiveTab(tab)}
+                                className={`relative z-10 py-2 px-4 sm:px-8 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                            >
+                                {tab}
+                            </button>
+                        ))}
+                    </div>
+                    {/* Desktop: + Button neben den Tabs */}
+                    {user && isMember && (
                         <button
-                            key={tab}
-                            ref={el => tabRefs.current[index] = el}
-                            onClick={() => setActiveTab(tab)}
-                            className={`relative z-10 py-2 px-8 rounded-full transition-colors duration-300 font-medium ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="hidden sm:flex ml-3 w-11 h-11 items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all flex-shrink-0"
+                            title="Add or remove your creations in this community"
+                            aria-label="Manage your creations in this community"
                         >
-                            {tab}
+                            <Icon path={ICONS.plus} className="w-6 h-6" />
                         </button>
-                    ))}
+                    )}
                 </div>
+                {/* Mobile: + Button in eigener Zeile unter den Tabs */}
                 {user && isMember && (
-                    <button
-                        onClick={() => setIsAddModalOpen(true)}
-                        className="ml-3 w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all flex-shrink-0"
-                        title="Add or remove your creations in this community"
-                        aria-label="Manage your creations in this community"
-                    >
-                        <Icon path={ICONS.plus} className="w-6 h-6" />
-                    </button>
+                    <div className="flex sm:hidden justify-center mt-3">
+                        <button
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all"
+                            title="Add or remove your creations in this community"
+                            aria-label="Manage your creations in this community"
+                        >
+                            <Icon path={ICONS.plus} className="w-6 h-6" />
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -533,7 +549,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             {activeTab === 'Creations' && (
               <>
                 <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                    {filteredContent.map(item => <CreationCard key={item.id} creation={item} />)}
+                    {filteredContent.map(item => <CreationCard key={item.id} creation={item} onTagClick={(tag) => setCreationTagFilter(tag)} />)}
                 </div>
                 {filteredContent.length === 0 && (
                     <p className="text-center text-gray-500 mt-10 text-xl">No creations found.</p>

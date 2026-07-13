@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import { db, auth } from '../../firebase/config';
-import { doc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
@@ -15,7 +15,7 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500' }) => (
 );
 
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = useRef(['User Management', 'Data Management', 'Indexes', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
+    const TABS = useRef(['User Management', 'Influencer', 'Data Management', 'Indexes', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
@@ -41,6 +41,11 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [bugReports, setBugReports] = useState([]);
     const [bugSubTab, setBugSubTab] = useState('Open');
     const [loadingBugs, setLoadingBugs] = useState(true);
+
+    // Influencer-Tab
+    const [influencerSubTab, setInfluencerSubTab] = useState('Applications');
+    const [influencers, setInfluencers] = useState([]);
+    const [loadingInfluencers, setLoadingInfluencers] = useState(true);
 
     const gameTabRefs = useRef([]);
     const gameGliderRef = useRef(null);
@@ -89,17 +94,32 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         setLoadingUsers(true);
         const usersQuery = collection(db, 'users');
         const profilesQuery = collection(db, 'profiles');
-        const appsQuery = collection(db, 'applications');
         const unsubUsers = onSnapshot(usersQuery, async (usersSnapshot) => {
             const profilesSnapshot = await getDocs(profilesQuery);
             const profilesMap = new Map(profilesSnapshot.docs.map(doc => [doc.id, doc.data()]));
             const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ...profilesMap.get(doc.id) }));
             if (isMounted) { setUsers(usersData); setLoadingUsers(false); }
         });
-        const unsubApps = onSnapshot(appsQuery, (snapshot) => {
+        return () => { isMounted = false; unsubUsers(); };
+    }, [activeTab]);
+
+    // Influencer-Tab: offene Bewerbungen + Liste aller Influencer
+    useEffect(() => {
+        if (activeTab !== 'Influencer') return;
+        let isMounted = true;
+        setLoadingInfluencers(true);
+        const unsubApps = onSnapshot(collection(db, 'applications'), (snapshot) => {
             if (isMounted) setApplications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
-        return () => { isMounted = false; unsubUsers(); unsubApps(); };
+        const influencersQuery = query(collection(db, 'users'), where('role', '==', 'influencer'));
+        const unsubInfluencers = onSnapshot(influencersQuery, async (snapshot) => {
+            const withProfiles = await Promise.all(snapshot.docs.map(async (userDoc) => {
+                const profileSnap = await getDoc(doc(db, 'profiles', userDoc.id));
+                return { id: userDoc.id, ...userDoc.data(), ...(profileSnap.exists() ? profileSnap.data() : {}) };
+            }));
+            if (isMounted) { setInfluencers(withProfiles); setLoadingInfluencers(false); }
+        });
+        return () => { isMounted = false; unsubApps(); unsubInfluencers(); };
     }, [activeTab]);
 
     useEffect(() => {
@@ -190,7 +210,14 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                     await reauthenticateWithCredential(user, credential);
                     const batch = writeBatch(db);
                     if (accepted) {
-                        batch.update(doc(db, 'users', applicationId), { role: 'influencer' });
+                        // Bewerbungsdaten am User-Doc sichern, damit der
+                        // Users-Untertab sie nach dem Löschen der Bewerbung noch hat
+                        const application = applications.find(a => a.id === applicationId);
+                        const { id, appliedAt, ...applicationInfo } = application || {};
+                        batch.update(doc(db, 'users', applicationId), {
+                            role: 'influencer',
+                            influencerInfo: { ...applicationInfo, acceptedAt: serverTimestamp() },
+                        });
                         batch.update(doc(db, 'profiles', applicationId), { role: 'influencer' });
                     }
                     batch.delete(doc(db, 'applications', applicationId));
@@ -418,14 +445,6 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
             case 'User Management':
                 return (
                     <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>
-                        <div className="mb-6">
-                            <h2 className="text-2xl font-bold mb-4 text-center">Influencer Applications</h2>
-                            {applications.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} />)}
-                                </div>
-                            ) : <p className="text-center text-gray-500">No pending applications.</p>}
-                        </div>
                         <div>
                             <h2 className="text-2xl font-bold mb-4 text-center">All Users</h2>
                             <input type="text" placeholder="Search by username..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full max-w-md p-2 border rounded-lg mb-4 block mx-auto"/>
@@ -465,14 +484,93 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         </div>
                     </div>
                 );
+            case 'Influencer':
+                return (
+                    <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>
+                        <div className="flex justify-center mb-8">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                                {['Applications', 'Users'].map(tab => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setInfluencerSubTab(tab)}
+                                        className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${influencerSubTab === tab ? 'bg-blue-500 text-white' : 'text-gray-600 hover:text-black'}`}
+                                    >
+                                        {tab}
+                                        <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${influencerSubTab === tab ? 'bg-white text-gray-800' : 'bg-gray-300 text-gray-700'}`}>
+                                            {tab === 'Applications' ? applications.length : influencers.length}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {influencerSubTab === 'Applications' && (
+                            applications.length > 0 ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} />)}
+                                </div>
+                            ) : <p className="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md">No pending applications.</p>
+                        )}
+
+                        {influencerSubTab === 'Users' && (
+                            loadingInfluencers ? <Spinner /> : influencers.length === 0 ? (
+                                <p className="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md">No influencers yet.</p>
+                            ) : (
+                                <div className="overflow-x-auto bg-white rounded-lg shadow">
+                                    <table className="min-w-full text-left text-sm">
+                                        <thead className="border-b bg-gray-50">
+                                            <tr>
+                                                <th className="p-3 font-semibold">Username</th>
+                                                <th className="p-3 font-semibold">Platform</th>
+                                                <th className="p-3 font-semibold">Channel</th>
+                                                <th className="p-3 font-semibold">Community Size</th>
+                                                <th className="p-3 font-semibold">Contact</th>
+                                                <th className="p-3 font-semibold">Influencer since</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {influencers.map(inf => {
+                                                const info = inf.influencerInfo || {};
+                                                return (
+                                                    <tr key={inf.id} className="border-b hover:bg-gray-50 align-top">
+                                                        <td className="p-3">
+                                                            <button onClick={() => handleProfileClick(inf.id)} className="text-blue-500 hover:underline focus:outline-none font-semibold">{inf.username || 'N/A'}</button>
+                                                        </td>
+                                                        <td className="p-3">{info.platform || '—'}</td>
+                                                        <td className="p-3 max-w-[220px]">
+                                                            {info.channelUrl ? (
+                                                                <a href={info.channelUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline block truncate" title={info.channelUrl}>
+                                                                    {info.channelUrl.replace(/^https?:\/\/(www\.)?/, '')}
+                                                                </a>
+                                                            ) : '—'}
+                                                        </td>
+                                                        <td className="p-3">{info.communitySize || '—'}</td>
+                                                        <td className="p-3">
+                                                            {info.contactEmail && <p className="truncate max-w-[200px]" title={info.contactEmail}>{info.contactEmail}</p>}
+                                                            {info.discordContact && <p className="text-gray-500 truncate max-w-[200px]" title={info.discordContact}>Discord: {info.discordContact}</p>}
+                                                            {!info.contactEmail && !info.discordContact && '—'}
+                                                        </td>
+                                                        <td className="p-3 text-gray-500 whitespace-nowrap">
+                                                            {info.acceptedAt?.seconds ? new Date(info.acceptedAt.seconds * 1000).toLocaleDateString() : '—'}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )
+                        )}
+                    </div>
+                );
             case 'Data Management':
                 return (
                     <div>
                         <div className="relative flex justify-center my-6">
-                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                                 <div ref={gameGliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
                                 {GAME_TABS.map((tab, index) => (
-                                    <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
+                                    <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
                                 ))}
                             </div>
                         </div>
@@ -514,12 +612,12 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                 return (
                     <div>
                         <div className="flex justify-center mb-8">
-                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                                 {['General', 'Communitys'].map(tab => (
                                     <button
                                         key={tab}
                                         onClick={() => setIndexSubTab(tab)}
-                                        className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${indexSubTab === tab ? 'bg-blue-500 text-white' : 'text-gray-600 hover:text-black'}`}
+                                        className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${indexSubTab === tab ? 'bg-blue-500 text-white' : 'text-gray-600 hover:text-black'}`}
                                     >
                                         {tab}
                                     </button>
@@ -598,12 +696,12 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                 return (
                     <div className="max-w-4xl mx-auto">
                         <div className="flex justify-center mb-8">
-                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                                 {['Open', 'Closed'].map(tab => (
                                     <button
                                         key={tab}
                                         onClick={() => setBugSubTab(tab)}
-                                        className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${bugSubTab === tab ? (tab === 'Open' ? 'bg-red-500 text-white' : 'bg-green-600 text-white') : 'text-gray-600 hover:text-black'}`}
+                                        className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${bugSubTab === tab ? (tab === 'Open' ? 'bg-red-500 text-white' : 'bg-green-600 text-white') : 'text-gray-600 hover:text-black'}`}
                                     >
                                         {tab}
                                         <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${bugSubTab === tab ? 'bg-white text-gray-800' : 'bg-gray-300 text-gray-700'}`}>
@@ -690,14 +788,14 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         <div className="container mx-auto p-4 sm:p-8">
             <h1 className="text-3xl font-bold mb-6 text-gray-800">Admin Management</h1>
             <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div ref={mainGliderRef} className="absolute h-full bg-red-500 rounded-full transition-all duration-300 ease-in-out" />
                     {TABS.map((tab, index) => (
                         <button
                             key={tab}
                             ref={el => mainTabRefs.current[index] = el}
                             onClick={() => setActiveTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                         >
                             {tab}
                         </button>

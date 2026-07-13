@@ -161,15 +161,15 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                     <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">My Game Preferences</h3>
                     <p className="text-sm text-gray-500 mb-4">Select a game to manage your preferences and owned DLCs.</p>
                     <div className="flex justify-center">
-                        <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                        <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                             <div ref={gliderRef} className={`absolute h-full rounded-full ${dlcSelectorColor.bg} transition-all duration-500 ease-in-out`} />
                             {TABS.map((tab, index) => (
-                                <button 
-                                    key={tab.id} 
+                                <button
+                                    key={tab.id}
                                     type="button"
-                                    ref={el => tabRefs.current[index] = el} 
-                                    onClick={() => setSelectedGameForDlc(tab.id)} 
-                                    className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${ selectedGameForDlc === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                                    ref={el => tabRefs.current[index] = el}
+                                    onClick={() => setSelectedGameForDlc(tab.id)}
+                                    className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ selectedGameForDlc === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}
                                 >
                                     {tab.name}
                                 </button>

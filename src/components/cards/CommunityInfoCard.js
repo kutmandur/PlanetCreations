@@ -89,22 +89,24 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
         textOverflow: 'ellipsis',
     };
 
+    // Layout (von oben nach unten): Bild zentriert, Community-Name,
+    // Ränge des Creators, creation-spezifische Community-Infos.
     return (
-        <div 
-            className="bg-white rounded-lg shadow-md flex flex-col sm:flex-row overflow-hidden ring-4"
+        <div
+            className="bg-white rounded-lg shadow-md flex flex-col overflow-hidden ring-4"
             style={{ '--tw-ring-color': themeColor }}
         >
-            <div 
-                className="w-full sm:w-1/3 p-4 flex flex-col items-center text-center border-r sm:flex-shrink-0"
+            <div
+                className="w-full p-4 flex flex-col items-center text-center"
                 style={{ backgroundColor: hexToRgba(themeColor) }}
             >
                 <Link to={`/community/${communityInfo.slug}`} className="flex flex-col items-center">
-                    <img 
+                    <img
                         src={communityInfo.communityProfileImageUrl || 'https://placehold.co/96x96/e2e8f0/64748b?text=C'}
                         alt={`${communityInfo.communityName} profile`}
                         className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-md mb-2"
                     />
-                    <h4 
+                    <h4
                         className="font-bold text-lg text-gray-800 hover:underline break-all"
                         style={nameStyle}
                         title={communityInfo.communityName}
@@ -116,7 +118,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                     <p className="text-xs font-semibold text-gray-500 mb-2">Creator's Ranks</p>
                     <div className="flex flex-wrap gap-1 justify-center">
                         {communityInfo.creatorRanksInCommunity?.map(rank => (
-                             <span 
+                             <span
                                 key={rank.name}
                                 className="text-xs font-semibold px-2 py-1 rounded-full capitalize"
                                 style={{ backgroundColor: rank.color, color: getTextColorForBackground(rank.color) }}
@@ -131,7 +133,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                 </div>
             </div>
 
-            <div className="w-full sm:w-2/3 p-4 flex flex-col items-center justify-center">
+            <div className="w-full p-4 flex flex-col items-center border-t">
                 <div className="space-y-3 w-full max-w-xs">
                     {communityInfo.customFieldsSchema?.map(field => (
                         <div key={field.id} className="text-center">

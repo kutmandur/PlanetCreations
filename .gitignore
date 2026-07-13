@@ -14,6 +14,7 @@
 
 # misc
 .DS_Store
+.env
 .env.local
 .env.development.local
 .env.test.local
@@ -26,6 +27,7 @@ yarn-error.log*
 # Claude Code
 .claude/
 CLAUDE.md
+conversation.txt
 
 # Firebase (lokale Deploy-Caches, Debug-Logs)
 .firebase/
