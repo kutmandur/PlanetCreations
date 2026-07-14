@@ -73,11 +73,16 @@ const SharingQrCode = ({
     heading = 'Share via QR Code',
     previewClassName = 'max-w-[160px]',
     containerClassName = 'mt-4',
+    copyLabel = 'Copy Link',
 }) => {
     const offscreenRef = useRef(null);
     const [previewUrl, setPreviewUrl] = useState('');
     const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
     const [errorMsg, setErrorMsg] = useState('');
+    const [copied, setCopied] = useState(false);
+    const copyTimerRef = useRef(null);
+
+    useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -182,6 +187,30 @@ const SharingQrCode = ({
         }, 'image/png');
     };
 
+    const handleCopyLink = async () => {
+        if (!url) return;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+            } else {
+                // Fallback für Kontexte ohne Clipboard-API (z. B. kein HTTPS)
+                const ta = document.createElement('textarea');
+                ta.value = url;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+            }
+            setCopied(true);
+            if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+            copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+        } catch (e) {
+            console.error('Copy link failed:', e);
+        }
+    };
+
     if (status === 'error') {
         return (
             <div className={containerClassName}>
@@ -215,6 +244,13 @@ const SharingQrCode = ({
                 className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-semibold disabled:opacity-50"
             >
                 Download QR Code
+            </button>
+            <button
+                onClick={handleCopyLink}
+                disabled={!url}
+                className={`w-full mt-2 py-2 px-4 rounded-lg font-semibold disabled:opacity-50 transition-colors ${copied ? 'bg-green-100 text-green-700' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
+            >
+                {copied ? 'Link copied!' : copyLabel}
             </button>
         </div>
     );
