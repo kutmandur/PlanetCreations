@@ -13,6 +13,7 @@ const CreationSharingQrCode = ({ creationId, creationName }) => {
             url={`${PUBLIC_ORIGIN}/#/creation/${creationId}`}
             name={creationName}
             fileLabel={creationName}
+            copyLabel="Copy Creation Link"
         />
     );
 };

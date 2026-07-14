@@ -818,6 +818,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                             heading={null}
                             previewClassName="max-w-[240px]"
                             containerClassName=""
+                            copyLabel={qrModal.showcaseId ? 'Copy Showcase Link' : 'Copy Creation Link'}
                         />
                         {qrModal.showcaseId && (
                             <button
