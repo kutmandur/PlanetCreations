@@ -123,15 +123,27 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         filterState.dlc !== 'all' ||
         filterState.tag.trim() !== '';
 
+    // Gültige Gruppen-IDs der Community. Eine Kreation, deren showcaseGroupId auf
+    // eine nicht (mehr) existierende Gruppe zeigt (z. B. nach dem Finalisieren oder
+    // Entfernen eines Showcases), gilt als "keiner Gruppe zugeordnet" und landet
+    // wieder auf der Waitlist, statt unsichtbar zu verschwinden.
+    const validGroupIds = useMemo(
+        () => new Set((community.showcaseGroups || []).map(g => g.id)),
+        [community.showcaseGroups]);
+
+    const inLiveGroup = (c) => c.showcaseGroupId && validGroupIds.has(c.showcaseGroupId);
+
     const { waitlist, alreadyShowcased } = useMemo(() => {
-        const marked = creations.filter(c => c.markedForShowcase && !c.showcaseVideoUrl && !c.showcaseGroupId);
+        const marked = creations.filter(c => c.markedForShowcase && !c.showcaseVideoUrl && !inLiveGroup(c));
         const showcased = creations.filter(c => !!c.showcaseVideoUrl);
         return { waitlist: marked, alreadyShowcased: showcased };
-    }, [creations]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [creations, validGroupIds]);
 
     const openApplicationsCount = useMemo(() =>
-        creations.filter(c => c.appliedForShowcase && !c.markedForShowcase && !c.showcaseVideoUrl && !c.showcaseGroupId).length,
-        [creations]);
+        creations.filter(c => c.appliedForShowcase && !c.markedForShowcase && !c.showcaseVideoUrl && !inLiveGroup(c)).length,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [creations, validGroupIds]);
 
     // Showcased: Creations mit derselben Video-URL wurden zusammen (als Gruppe)
     // geshowcased und werden in einer gemeinsamen Karte angezeigt.
@@ -277,6 +289,26 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         }
     };
 
+    // Einzelne Kreation (ohne Gruppe) direkt fertigstellen: Modal öffnen.
+    const handleFinalizeSingle = (creation) => {
+        setVideoModal({ mode: 'single', creation });
+    };
+
+    const finalizeSingleShowcase = async (creation, showcaseName, videoUrl) => {
+        setIsSavingVideo(true);
+        const linkRef = doc(db, 'communitys', community.id, 'creations', creation.id);
+        try {
+            await updateDoc(linkRef, { showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null });
+            setCreations(prev => prev.map(c => c.id === creation.id ? { ...c, showcaseVideoUrl: videoUrl, showcaseName: showcaseName || null } : c));
+            setVideoModal(null);
+            setModalMessage('Creation showcased. Its QR code links directly to the creation.');
+        } catch (error) {
+            setModalMessage(`Error showcasing creation: ${error.message}`);
+        } finally {
+            setIsSavingVideo(false);
+        }
+    };
+
     const handleRemoveFromShowcase = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
@@ -295,8 +327,11 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
     const handleRemoveShowcaseVideo = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
-            await updateDoc(linkRef, { showcaseVideoUrl: null, showcaseName: null });
-            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: null, showcaseName: null } : c));
+            // showcaseGroupId ebenfalls leeren: sonst bleibt die Kreation mit einer
+            // verwaisten Gruppen-ID zurück und taucht weder auf der Waitlist noch
+            // in einer Gruppe wieder auf.
+            await updateDoc(linkRef, { showcaseVideoUrl: null, showcaseName: null, showcaseGroupId: null });
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, showcaseVideoUrl: null, showcaseName: null, showcaseGroupId: null } : c));
             setModalMessage("Showcase video removed successfully.");
         } catch (error) {
             setModalMessage(`Error removing showcase video: ${error.message}`);
@@ -366,11 +401,11 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                 try {
                     const batch = writeBatch(db);
                     group.creations.forEach(c => {
-                        batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: null, showcaseName: null });
+                        batch.update(doc(db, 'communitys', community.id, 'creations', c.id), { showcaseVideoUrl: null, showcaseName: null, showcaseGroupId: null });
                     });
                     await batch.commit();
                     const ids = group.creations.map(c => c.id);
-                    setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: null, showcaseName: null } : c));
+                    setCreations(prev => prev.map(c => ids.includes(c.id) ? { ...c, showcaseVideoUrl: null, showcaseName: null, showcaseGroupId: null } : c));
                     setModalMessage(`Group showcase removed from ${group.creations.length} creation(s).`);
                 } catch (error) {
                     setModalMessage(`Error removing group showcase: ${error.message}`);
@@ -449,6 +484,13 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     Add to Group
                                 </button>
                                 <button
+                                    onClick={() => handleFinalizeSingle(creation)}
+                                    className="flex items-center gap-1 text-sm font-semibold py-2 px-3 rounded-lg text-white bg-green-500 hover:bg-green-600"
+                                    title="Finalize this creation on its own (QR links directly to the creation)"
+                                >
+                                    <Icon path={ICONS.video} className="w-4 h-4" /> Finalize
+                                </button>
+                                <button
                                     onClick={() => handleRemoveFromShowcase(creation.id)}
                                     className="p-2 rounded-lg bg-gray-100 text-gray-500 hover:bg-red-100 hover:text-red-600"
                                     title="Remove from Waitlist"
@@ -507,7 +549,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     <button onClick={() => handleAddVideoToGroup(group)} className="p-2 text-gray-500 hover:text-green-600" title="Add Video to Group (showcases all creations)">
                                         <Icon path={ICONS.video} className="w-5 h-5" />
                                     </button>
-                                    <button onClick={() => setQrModal({ showcaseId: group.id, name: group.name })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                    <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/showcase/${group.id}`, name: group.name, showcaseId: group.id })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
                                         <Icon path={ICONS.share} className="w-5 h-5" />
                                     </button>
                                     <button onClick={() => handleDeleteGroup(group)} className="p-2 text-gray-500 hover:text-red-600" title="Delete Group">
@@ -571,7 +613,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                 <Icon path={ICONS.edit} className="w-5 h-5" />
                             </button>
                             {group.showcaseId && (
-                                <button onClick={() => setQrModal({ showcaseId: group.showcaseId, name: group.name })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/showcase/${group.showcaseId}`, name: group.name, showcaseId: group.showcaseId })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
                                     <Icon path={ICONS.share} className="w-5 h-5" />
                                 </button>
                             )}
@@ -596,12 +638,22 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             ))}
             {filteredSingles.map(creation => (
                 <div key={creation.id} className="flex items-center justify-between p-3 bg-white rounded-lg shadow border">
-                    <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="font-semibold text-blue-600 hover:underline truncate text-left w-full pr-2" title={creation.title}>
-                        {creation.title}
+                    <button onClick={() => setPopoverView({ name: 'detail', id: creation.id })} className="font-semibold text-blue-600 hover:underline truncate text-left w-full pr-2" title={creation.showcaseName || creation.title}>
+                        {creation.showcaseName || creation.title}
                     </button>
-                    <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-2 text-gray-500 hover:text-red-600 flex-shrink-0" title="Remove Showcase Video">
-                        <Icon path={ICONS.xCircle} className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                        {creation.showcaseVideoUrl && (
+                            <a href={creation.showcaseVideoUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mr-1 whitespace-nowrap">
+                                Watch video ↗
+                            </a>
+                        )}
+                        <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/creation/${creation.id}`, name: creation.showcaseName || creation.title, showcaseId: null })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code (links directly to the creation)">
+                            <Icon path={ICONS.share} className="w-5 h-5" />
+                        </button>
+                        <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-2 text-gray-500 hover:text-red-600" title="Remove Showcase Video">
+                            <Icon path={ICONS.xCircle} className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
             ))}
         </div>
@@ -725,12 +777,25 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             {/* Showcase fertigstellen / bearbeiten (Name + Video-URL) */}
             {videoModal && (
                 <ShowcaseVideoModal
-                    title={videoModal.mode === 'finalize' ? `Showcase "${videoModal.group.name}"` : 'Edit Showcase'}
-                    initialName={videoModal.group.name || ''}
-                    initialUrl={videoModal.mode === 'edit' ? videoModal.group.url : ''}
+                    title={
+                        videoModal.mode === 'finalize' ? `Showcase "${videoModal.group.name}"`
+                        : videoModal.mode === 'single' ? `Showcase "${videoModal.creation.title}"`
+                        : 'Edit Showcase'
+                    }
+                    initialName={
+                        videoModal.mode === 'single'
+                            ? (videoModal.creation.showcaseName || videoModal.creation.title || '')
+                            : (videoModal.group.name || '')
+                    }
+                    initialUrl={
+                        videoModal.mode === 'edit' ? videoModal.group.url
+                        : videoModal.mode === 'single' ? (videoModal.creation.showcaseVideoUrl || '')
+                        : ''
+                    }
                     isSaving={isSavingVideo}
-                    onSave={(name, url) => videoModal.mode === 'finalize'
-                        ? finalizeGroupShowcase(videoModal.group, name, url)
+                    onSave={(name, url) =>
+                        videoModal.mode === 'finalize' ? finalizeGroupShowcase(videoModal.group, name, url)
+                        : videoModal.mode === 'single' ? finalizeSingleShowcase(videoModal.creation, name, url)
                         : updateGroupShowcase(videoModal.group, name, url)}
                     onClose={() => { if (!isSavingVideo) setVideoModal(null); }}
                 />
@@ -740,25 +805,28 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
             {qrModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={() => setQrModal(null)}>
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-                        <h2 className="text-xl font-bold text-gray-800 mb-1">Showcase QR code</h2>
+                        <h2 className="text-xl font-bold text-gray-800 mb-1">Sharing QR code</h2>
                         <p className="text-sm text-gray-500 mb-4">
-                            Add this QR code to your showcase video. When viewers scan it, it opens all
-                            the creations in this showcase at once on PlanetCreations.
+                            {qrModal.showcaseId
+                                ? 'Add this QR code to your showcase video. When viewers scan it, it opens all the creations in this showcase at once on PlanetCreations.'
+                                : 'Add this QR code to your video. When viewers scan it, it opens this creation directly on PlanetCreations.'}
                         </p>
                         <SharingQrCode
-                            url={`${PUBLIC_ORIGIN}/#/showcase/${qrModal.showcaseId}`}
-                            name={qrModal.name || 'Showcase'}
-                            fileLabel={qrModal.name || 'showcase'}
+                            url={qrModal.url}
+                            name={qrModal.name || (qrModal.showcaseId ? 'Showcase' : 'Creation')}
+                            fileLabel={qrModal.name || (qrModal.showcaseId ? 'showcase' : 'creation')}
                             heading={null}
                             previewClassName="max-w-[240px]"
                             containerClassName=""
                         />
-                        <button
-                            onClick={() => setPreviewModal({ showcaseId: qrModal.showcaseId, name: qrModal.name })}
-                            className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold"
-                        >
-                            Preview landing page
-                        </button>
+                        {qrModal.showcaseId && (
+                            <button
+                                onClick={() => setPreviewModal({ showcaseId: qrModal.showcaseId, name: qrModal.name })}
+                                className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold"
+                            >
+                                Preview landing page
+                            </button>
+                        )}
                         <div className="flex justify-end mt-4">
                             <button onClick={() => setQrModal(null)} className="py-2 px-4 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 font-semibold">Close</button>
                         </div>
