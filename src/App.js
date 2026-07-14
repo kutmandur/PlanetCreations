@@ -251,7 +251,11 @@ const AppContent = () => {
             {passwordConfirm && <PasswordConfirmationModal message={passwordConfirm.message} onConfirm={(password) => { passwordConfirm.onConfirm(password); setPasswordConfirm(null); }} onCancel={() => setPasswordConfirm(null)} />}
             {reportModal && <ReportModal targetType={reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
             {strikeModal && <StrikeModal onConfirm={(reason) => { strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
-            {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>{renderPopoverContent()}</PopoverModal>}
+            {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>
+                <Suspense fallback={<div className="h-64 flex justify-center items-center"><Spinner /></div>}>
+                    {renderPopoverContent()}
+                </Suspense>
+            </PopoverModal>}
             {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
             
             {updateDownloaded ? (
