@@ -10,6 +10,7 @@ import { isStandalone } from './utils/pwaInstall';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import PreloadLink from './components/ui/PreloadLink';
 import { preloadCriticalComponents } from './utils/preload';
+import lazyWithReload from './utils/lazyWithReload';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -29,28 +30,28 @@ import CookieConsent from './components/modals/CookieConsent';
 import BugReportModal from './components/modals/BugReportModal';
 import ClientDashboard from './components/pages/ClientDashboard';
 
-const HomePage = React.lazy(() => import('./components/pages/HomePage'));
-const AuthPage = React.lazy(() => import('./components/pages/AuthPage'));
-const ProfilePage = React.lazy(() => import('./components/pages/ProfilePage'));
-const EditProfilePage = React.lazy(() => import('./components/pages/EditProfilePage'));
-const SettingsPage = React.lazy(() => import('./components/pages/SettingsPage'));
-const CreationForm = React.lazy(() => import('./components/pages/CreationForm'));
-const CreationDetail = React.lazy(() => import('./components/pages/CreationDetail'));
-const AdminPage = React.lazy(() => import('./components/pages/AdminPage'));
-const ModerationPage = React.lazy(() => import('./components/pages/ModerationPage'));
-const CommunitysPage = React.lazy(() => import('./components/pages/CommunitysPage'));
-const CreateCommunityForm = React.lazy(() => import('./components/pages/CreateCommunityForm'));
-const CommunityDetailPage = React.lazy(() => import('./components/pages/CommunityDetailPage'));
-const ShowcasePage = React.lazy(() => import('./components/pages/ShowcasePage'));
-const CommunityManagerPage = React.lazy(() => import('./components/pages/CommunityManagerPage'));
-const EventDetailPage = React.lazy(() => import('./components/pages/EventDetailPage'));
-const EventForm = React.lazy(() => import('./components/pages/EventForm'));
-const EventManager = React.lazy(() => import('./components/management/EventManager'));
-const LegalPage = React.lazy(() => import('./components/pages/LegalPage'));
-const ClientInfoPage = React.lazy(() => import('./components/pages/ClientInfoPage'));
-const CollaborationDetailPage = React.lazy(() => import('./components/pages/CollaborationDetailPage'));
-const CreateCollaborationForm = React.lazy(() => import('./components/pages/CreateCollaborationForm'));
-const JoinCollaborationPage = React.lazy(() => import('./components/pages/JoinCollaborationPage'));
+const HomePage = lazyWithReload(() => import('./components/pages/HomePage'));
+const AuthPage = lazyWithReload(() => import('./components/pages/AuthPage'));
+const ProfilePage = lazyWithReload(() => import('./components/pages/ProfilePage'));
+const EditProfilePage = lazyWithReload(() => import('./components/pages/EditProfilePage'));
+const SettingsPage = lazyWithReload(() => import('./components/pages/SettingsPage'));
+const CreationForm = lazyWithReload(() => import('./components/pages/CreationForm'));
+const CreationDetail = lazyWithReload(() => import('./components/pages/CreationDetail'));
+const AdminPage = lazyWithReload(() => import('./components/pages/AdminPage'));
+const ModerationPage = lazyWithReload(() => import('./components/pages/ModerationPage'));
+const CommunitysPage = lazyWithReload(() => import('./components/pages/CommunitysPage'));
+const CreateCommunityForm = lazyWithReload(() => import('./components/pages/CreateCommunityForm'));
+const CommunityDetailPage = lazyWithReload(() => import('./components/pages/CommunityDetailPage'));
+const ShowcasePage = lazyWithReload(() => import('./components/pages/ShowcasePage'));
+const CommunityManagerPage = lazyWithReload(() => import('./components/pages/CommunityManagerPage'));
+const EventDetailPage = lazyWithReload(() => import('./components/pages/EventDetailPage'));
+const EventForm = lazyWithReload(() => import('./components/pages/EventForm'));
+const EventManager = lazyWithReload(() => import('./components/management/EventManager'));
+const LegalPage = lazyWithReload(() => import('./components/pages/LegalPage'));
+const ClientInfoPage = lazyWithReload(() => import('./components/pages/ClientInfoPage'));
+const CollaborationDetailPage = lazyWithReload(() => import('./components/pages/CollaborationDetailPage'));
+const CreateCollaborationForm = lazyWithReload(() => import('./components/pages/CreateCollaborationForm'));
+const JoinCollaborationPage = lazyWithReload(() => import('./components/pages/JoinCollaborationPage'));
 
 const queryClient = new QueryClient({
     defaultOptions: {

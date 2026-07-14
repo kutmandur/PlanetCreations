@@ -14,6 +14,22 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     // You can also log the error to an error reporting service
     console.error("ErrorBoundary caught an error:", error, errorInfo);
+
+    // A ChunkLoadError almost always means a new version was deployed and the
+    // running page references old, now-missing chunk files. Reload once (guarded
+    // against loops via the same key lazyWithReload uses) to fetch fresh assets.
+    const isChunkError =
+      error &&
+      (error.name === 'ChunkLoadError' ||
+        /Loading (CSS )?chunk [\w-]+ failed/i.test(error.message || ''));
+    if (isChunkError) {
+      let last = 0;
+      try { last = Number(window.sessionStorage.getItem('chunkReloadAt') || 0); } catch (e) { /* ignore */ }
+      if (Date.now() - last > 10000) {
+        try { window.sessionStorage.setItem('chunkReloadAt', String(Date.now())); } catch (e) { /* ignore */ }
+        window.location.reload();
+      }
+    }
   }
 
   handleTryAgain = () => {
