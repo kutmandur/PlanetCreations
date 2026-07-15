@@ -81,6 +81,8 @@ const EventDiscordSettings = ({
     votingEnabled = true,
     reminderChannels = 'both',
     setReminderChannels,
+    autoPostSubmissions = false,
+    setAutoPostSubmissions,
     notificationTemplates,
     setNotificationTemplates,
     getMessageSuggestions
@@ -106,6 +108,17 @@ const EventDiscordSettings = ({
                         </div>
                         <p className="text-xs text-gray-500 mt-1">"Site" sends in-app / push notifications to community members on PlanetCreations.</p>
                     </div>
+                    {(reminderChannels === 'both' || reminderChannels === 'discord') && (
+                        <label className="flex items-center gap-2 text-sm text-gray-700 pt-2 border-t cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={autoPostSubmissions}
+                                onChange={(e) => setAutoPostSubmissions(e.target.checked)}
+                                className="h-4 w-4 rounded"
+                            />
+                            Automatically post new event submissions to Discord
+                        </label>
+                    )}
                     {reminderChannels !== 'none' && (<>
                         <p className="text-sm text-gray-600 pt-2 border-t">Set up to 3 automated reminders before the submission period ends.</p>
                         {[0, 1, 2].map(index =>

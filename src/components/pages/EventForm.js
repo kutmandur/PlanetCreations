@@ -55,6 +55,8 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     const [voteLimit, setVoteLimit] = useState(1);
     const [votingEnabled, setVotingEnabled] = useState(true);
     const [reminderChannels, setReminderChannels] = useState('both');
+    const [autoPostSubmissions, setAutoPostSubmissions] = useState(false);
+    const [publishResultsImmediately, setPublishResultsImmediately] = useState(false);
     const [imageItems, setImageItems] = useState([]);
     const [videoItems, setVideoItems] = useState([]);
     const IMAGE_LIMIT = 10;
@@ -141,6 +143,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     setVoteLimit(data.voteLimit || 1);
                     setVotingEnabled(data.votingEnabled !== false);
                     setReminderChannels(data.reminderChannels || 'both');
+                    setAutoPostSubmissions(data.autoPostSubmissions === true);
                     if (data.notificationTemplates) setNotificationTemplates(data.notificationTemplates);
                     
                     const loadedReminders = (data.reminders || []).map(parseReminderString);
@@ -324,15 +327,16 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
             creatorId: user.uid, updatedAt: serverTimestamp(), classes: eventClasses,
             reminders: finalReminders, voteReminders: (separateVoteTime && votingEnabled) ? finalVoteReminders : [],
             voteType, voteLimit: voteType === 'multiple' ? Number(voteLimit) : 1,
-            votingEnabled, reminderChannels,
+            votingEnabled, reminderChannels, autoPostSubmissions,
             notificationsSent: isEditing ? (await getDoc(doc(db, 'events', eventId))).data().notificationsSent || {} : {},
             notificationTemplates,
         };
         // Nach Ablauf geht das Event in die "Managing Phase" (Ergebnisse werden erst
-        // nach manuellem Publish angezeigt). Bereits veröffentlichte Events behalten
+        // nach manuellem Publish angezeigt) — außer der Veranstalter wählt beim
+        // Erstellen direktes Publishing. Bereits veröffentlichte Events behalten
         // ihren Status.
         if (!isEditing) {
-            eventData.resultsStatus = 'managing';
+            eventData.resultsStatus = publishResultsImmediately ? 'published' : 'managing';
         }
         try {
             const newClasses = eventClasses.filter(c => !allCommunityClasses.some(ac => ac.toLowerCase() === c.toLowerCase()));
@@ -401,12 +405,33 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     votingEnabled={votingEnabled}
                     reminderChannels={reminderChannels}
                     setReminderChannels={setReminderChannels}
+                    autoPostSubmissions={autoPostSubmissions}
+                    setAutoPostSubmissions={setAutoPostSubmissions}
                     notificationTemplates={notificationTemplates}
                     setNotificationTemplates={setNotificationTemplates}
                     getMessageSuggestions={getMessageSuggestions}
                 />
 
                 <EventVisibility status={status} setStatus={setStatus} />
+
+                {!isEditing && (
+                    <div>
+                        <label className="block text-gray-700 font-bold mb-2">Results</label>
+                        <div className="flex items-center space-x-4 bg-gray-100 p-3 rounded-lg">
+                            <span className="text-gray-600 flex-grow">Publish results immediately when the event ends?</span>
+                            <div
+                                className="relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 flex-shrink-0"
+                                onClick={() => setPublishResultsImmediately(prev => !prev)}
+                                style={{ backgroundColor: publishResultsImmediately ? '#34D399' : '#D1D5DB' }}
+                            >
+                                <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${publishResultsImmediately ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                            </div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1 px-1">
+                            Off: the event enters a managing phase after it ends — you review, order and publish the results yourself (with optional video groups).
+                        </p>
+                    </div>
+                )}
 
                 <div className="flex space-x-4 pt-4">
                     <button type="submit" disabled={loading} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50">

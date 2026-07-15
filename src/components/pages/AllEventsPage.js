@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/config';
-import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
 import EventCard from '../cards/EventCard';
+import { isEventHidden } from '../../utils/helpers';
 
 const AllEventsPage = ({ userProfile }) => {
     const [events, setEvents] = useState([]);
@@ -10,10 +11,15 @@ const AllEventsPage = ({ userProfile }) => {
 
     useEffect(() => {
         const fetchEvents = async () => {
-            const eventsQuery = query(collection(db, 'events'), where('status', '==', 'visible'));
-            
+            // Alle Events laden und clientseitig filtern: 'invisible' gilt nur bis
+            // zum Startzeitpunkt ("Invisible until event starts?"), ein reiner
+            // status-Filter würde bereits gestartete Events dauerhaft ausblenden.
+            const eventsQuery = query(collection(db, 'events'));
+
             const unsubscribe = onSnapshot(eventsQuery, async (snapshot) => {
-                const eventsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const eventsData = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(event => !isEventHidden(event));
 
                 // To style the event cards, we need the theme color from each community.
                 // It's more efficient to fetch all communities once.

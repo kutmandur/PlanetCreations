@@ -5,7 +5,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
-import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed } from '../../utils/helpers';
+import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed, isEventHidden } from '../../utils/helpers';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 
@@ -13,6 +13,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     const { eventId } = useParams();
     const navigate = useNavigate();
     const [event, setEvent] = useState(null);
+    const [loadError, setLoadError] = useState(null);
     const [community, setCommunity] = useState(null);
     const [members, setMembers] = useState([]);
     const [connectedCreations, setConnectedCreations] = useState([]);
@@ -31,50 +32,49 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     useEffect(() => {
         if (!eventId) return;
         let isMounted = true;
-        
+
         const eventRef = doc(db, 'events', eventId);
+        // Alle Folge-Reads parallel und in try/finally: vorher liefen vier serielle
+        // awaits ungeschützt im Snapshot-Callback — jeder Fehler übersprang
+        // setLoading(false) und ließ die Seite dauerhaft im Spinner hängen.
         const unsubscribe = onSnapshot(eventRef, async (docSnap) => {
-            if (isMounted) {
+            try {
+                if (!isMounted) return;
                 if (docSnap.exists()) {
                     const eventData = { id: docSnap.id, ...docSnap.data() };
                     setEvent(eventData);
+                    setLoadError(null);
 
-                    let communityData = null;
-                    if (eventData.communityId) {
-                        const communityRef = doc(db, 'communitys', eventData.communityId);
-                        const communitySnap = await getDoc(communityRef);
-                        if (communitySnap.exists()) {
-                            communityData = {id: communitySnap.id, ...communitySnap.data()};
-                            setCommunity(communityData);
-                        }
+                    const communityId = eventData.communityId;
+                    const [communitySnap, membersSnap, memberSnap, creationsSnap] = await Promise.all([
+                        communityId ? getDoc(doc(db, 'communitys', communityId)) : null,
+                        communityId ? getDocs(query(collection(db, 'communitys', communityId, 'members'))) : null,
+                        (user && communityId) ? getDoc(doc(db, 'communitys', communityId, 'members', user.uid)) : null,
+                        getDocs(query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId))),
+                    ]);
+                    if (!isMounted) return;
+
+                    if (communitySnap?.exists()) {
+                        setCommunity({ id: communitySnap.id, ...communitySnap.data() });
                     }
-
-                    const membersQuery = query(collection(db, 'communitys', eventData.communityId, 'members'));
-                    const membersSnap = await getDocs(membersQuery);
-                    const membersData = membersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setMembers(membersData);
+                    setMembers(membersSnap ? membersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) : []);
 
                     const isSiteStaff = userProfile?.role === 'admin' || userProfile?.role === 'moderator';
-                    let isCommunityStaff = false;
-                    if (user && eventData.communityId) {
-                        const memberRef = doc(db, 'communitys', eventData.communityId, 'members', user.uid);
-                        const memberSnap = await getDoc(memberRef);
-                        if (memberSnap.exists()) {
-                            const memberData = memberSnap.data();
-                            if (memberData.roles?.includes('owner') || memberData.roles?.includes('moderator')) {
-                                isCommunityStaff = true;
-                            }
-                        }
-                    }
+                    const memberRoles = memberSnap?.exists() ? (memberSnap.data().roles || []) : [];
+                    const isCommunityStaff = memberRoles.includes('owner') || memberRoles.includes('moderator');
                     setCanManageEvent(isSiteStaff || isCommunityStaff);
 
-                    const creationsQuery = query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId));
-                    const creationsSnap = await getDocs(creationsQuery);
-                    const creationsData = creationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setConnectedCreations(creationsData);
+                    setConnectedCreations(creationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                 }
-                setLoading(false);
+            } catch (error) {
+                console.error('Error loading event details:', error);
+                if (isMounted) setLoadError(error);
+            } finally {
+                if (isMounted) setLoading(false);
             }
+        }, (error) => {
+            console.error('Event snapshot listener failed:', error);
+            if (isMounted) { setLoadError(error); setLoading(false); }
         });
         return () => { isMounted = false; unsubscribe(); };
     }, [eventId, user, userProfile]);
@@ -195,7 +195,25 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     }, [connectedCreations, members, rankFilter, sortBy, isVotingOver, voteCounts]);
 
     if (loading) return <Spinner />;
+    if (loadError && !event) {
+        return (
+            <div className="text-center p-8">
+                <h2 className="text-2xl font-bold text-gray-800">Couldn't load this event</h2>
+                <p className="mt-2 text-gray-600">Please check your connection and try again.</p>
+                <button onClick={() => window.location.reload()} className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg">Retry</button>
+            </div>
+        );
+    }
     if (!event) return <div className="text-center p-8">Event not found.</div>;
+    // "Invisible until event starts": vor dem Start nur für Manager sichtbar.
+    if (isEventHidden(event) && !canManageEvent) {
+        return (
+            <div className="text-center p-8">
+                <h2 className="text-2xl font-bold text-gray-800">This event isn't public yet</h2>
+                <p className="mt-2 text-gray-600">Check back once the event has started.</p>
+            </div>
+        );
+    }
 
     const hexToRgba = (hex, alpha = 0.1) => {
         if (!hex) return `rgba(255, 255, 255, 1)`;
