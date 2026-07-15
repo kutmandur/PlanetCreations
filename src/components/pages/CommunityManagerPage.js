@@ -156,14 +156,11 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             members={members}
                             ranks={community.ranks || []}
                             communityId={communityId}
-                            community={community}
                             setPopoverView={setPopoverView}
                             setModalMessage={setModalMessage}
                             setConfirmation={setConfirmation}
-                            setPasswordConfirm={setPasswordConfirm}
                             currentUserRankWeight={currentUserRankWeight}
                             currentUserId={userProfile?.uid}
-                            onTransferComplete={() => navigate('/communitys')}
                         />;
             case 'Showcases':
                 return <ShowcaseManager
@@ -182,7 +179,13 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             case 'Discord':
                 return <DiscordManager community={community} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;
             case 'Settings': 
-                return <CommunitySettingsManager community={community} setModalMessage={setModalMessage} />;
+                return <CommunitySettingsManager
+                            community={community}
+                            members={members}
+                            setModalMessage={setModalMessage}
+                            setPasswordConfirm={setPasswordConfirm}
+                            onTransferComplete={() => navigate('/communitys')}
+                        />;
             default: return null;
         }
     };
