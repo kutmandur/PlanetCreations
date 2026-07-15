@@ -14,6 +14,7 @@ import CommunityCardEditor from '../management/CommunityCardEditor';
 import DiscordManager from '../management/DiscordManager';
 import CommunitySettingsManager from '../management/CommunitySettingsManager';
 import ShowcaseManager from '../management/ShowcaseManager';
+import EventsManager from '../management/EventsManager';
 
 const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirmation, blacklist, userProfile, setPopoverView }) => {
     const { id: communityId } = useParams();
@@ -23,7 +24,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     const [members, setMembers] = useState([]);
     const [creations, setCreations] = useState([]);
 
-    const TABS = useRef(['Creations', 'Members', 'Showcases', 'Card Editor', 'Discord', 'Settings']).current;
+    const TABS = useRef(['Creations', 'Members', 'Events', 'Showcases', 'Card Editor', 'Discord', 'Settings']).current;
     const [activeTab, setActiveTab] = useState('Creations');
     const tabRefs = useRef([]);
     const [gliderStyle, setGliderStyle] = useState({});
@@ -161,6 +162,12 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             setConfirmation={setConfirmation}
                             currentUserRankWeight={currentUserRankWeight}
                             currentUserId={userProfile?.uid}
+                        />;
+            case 'Events':
+                return <EventsManager
+                            community={community}
+                            userProfile={userProfile}
+                            setModalMessage={setModalMessage}
                         />;
             case 'Showcases':
                 return <ShowcaseManager

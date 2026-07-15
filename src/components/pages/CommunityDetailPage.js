@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate, Link, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, doc, getDocs, getDoc, updateDoc, orderBy, limit, startAfter } from 'firebase/firestore';
@@ -251,35 +251,16 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     }, [activeTab, loading, visibleTabs]);
 
     const isSiteAdmin = userProfile?.role === 'admin';
-    const isSiteModerator = userProfile?.role === 'moderator';
     const currentUserMemberInfo = members.find(m => m.id === user?.uid);
     const isCommunityOwner = currentUserMemberInfo?.roles?.includes('owner');
     const isCommunityModerator = currentUserMemberInfo?.roles?.includes('moderator');
     const showManageButton = isSiteAdmin || isCommunityModerator || isCommunityOwner;
-    const canCreateEvent = isCommunityOwner || isCommunityModerator;
-    const isStaffForEvents = isSiteAdmin || isSiteModerator || isCommunityOwner || isCommunityModerator;
 
-    const visibleEvents = useMemo(() => {
-        let filtered;
-        if (isStaffForEvents) {
-            filtered = events;
-        } else {
-            filtered = events.filter(event => event.status !== 'invisible');
-        }
-
-        if (isStaffForEvents) {
-            const sortableFiltered = [...filtered];
-            sortableFiltered.sort((a, b) => {
-                const aIsInvisible = a.status === 'invisible';
-                const bIsInvisible = b.status === 'invisible';
-                if (aIsInvisible && !bIsInvisible) return -1;
-                if (!aIsInvisible && bIsInvisible) return 1;
-                return 0;
-            });
-            return sortableFiltered;
-        }
-        return filtered;
-    }, [events, isStaffForEvents]);
+    // Öffentlicher Events-Tab ist für Owner und Nutzer identisch: unsichtbare
+    // Events erscheinen nur noch im Community-Manager (Events-Tab).
+    const visibleEvents = useMemo(
+        () => events.filter(event => event.status !== 'invisible'),
+        [events]);
 
     const filteredContent = useMemo(() => {
         let content;
@@ -565,19 +546,10 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
             {activeTab === 'Events' && (
                 <div>
-                    {canCreateEvent && (
-                        <div className="text-center mb-6">
-                            <Link to={`/community/${community.id}/create-event`} state={{ communityName: community.name }}>
-                                <button className="bg-[--theme-color] hover:brightness-90 text-white font-bold py-2 px-6 rounded-lg">
-                                    Create New Event
-                                </button>
-                            </Link>
-                        </div>
-                    )}
                     {visibleEvents.length > 0 ? (
                         <>
                             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                                {visibleEvents.map(event => <EventCard key={event.id} event={event} community={community} userProfile={userProfile} />)}
+                                {visibleEvents.map(event => <EventCard key={event.id} event={event} community={community} userProfile={userProfile} showStatus={false} />)}
                             </div>
                             {loadingMoreEvents && <div className="text-center col-span-full p-8"><Spinner /></div>}
                             {!hasMoreEvents && events.length > 0 && (
