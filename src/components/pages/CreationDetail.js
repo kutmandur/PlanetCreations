@@ -318,8 +318,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     batch.set(reportRef, { targetId: id, targetType: 'creation', targetTitle: creation.title, reason, reporterId: user.uid, timestamp: serverTimestamp() });
                     const reportMarkerRef = doc(db, 'users', user.uid, 'reportedItems', id);
                     batch.set(reportMarkerRef, { reportedAt: serverTimestamp() });
-                    const creationRef = doc(db, 'creations', id);
-                    batch.update(creationRef, { reportCount: increment(1) });
+                    // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
                     await batch.commit();
                     setHasAlreadyReported(true);
                     setModalMessage("Creation reported successfully. Our team will review it.");

@@ -128,7 +128,7 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
                 reporterId: auth.currentUser.uid,
                 timestamp: serverTimestamp(),
             });
-            batch.update(creationRef, { reportCount: increment(1) });
+            // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
             await batch.commit();
             setModalMessage("Creation has been unlinked from the community and a report has been filed.");
         } catch (error) {
