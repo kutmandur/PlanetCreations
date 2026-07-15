@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
@@ -18,6 +18,9 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
     const color = getGameColor(activeTab);
 
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    // Nach dem Login zur ursprünglich angeforderten Seite zurück (z. B. Collaboration-Join)
+    const redirectTo = searchParams.get('redirect') || '/';
 
     const validatePassword = () => {
         const checks = {
@@ -72,7 +75,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     }
                 }
                 await signInWithEmailAndPassword(auth, finalEmail, password);
-                navigate('/');
+                navigate(redirectTo);
 
             } else { // Registration logic
                 const email = emailOrUsername.trim();

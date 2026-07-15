@@ -104,10 +104,14 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
         };
 
         if (action === 'resolve') {
-            const batch = writeBatch(db);
-            await clearReportsAndMarkers(batch);
-            await batch.commit();
-            setModalMessage("Report resolved and all user flags have been cleared.");
+            try {
+                const batch = writeBatch(db);
+                await clearReportsAndMarkers(batch);
+                await batch.commit();
+                setModalMessage("Report resolved and all user flags have been cleared.");
+            } catch (error) {
+                setModalMessage(`Error resolving report: ${error.message}`);
+            }
         }
 
         if (action === 'delete' || action === 'ban') {

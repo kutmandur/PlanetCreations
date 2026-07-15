@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
-import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, updateDoc } from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
@@ -131,7 +131,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 if (memberSnap.exists()) {
                                     const memberData = memberSnap.data();
                                     const creatorRanks = (memberData.roles || []).map(roleName => {
-                                        return communityData.ranks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+                                        return (communityData.ranks || []).find(r => r.name.toLowerCase() === roleName.toLowerCase());
                                     }).filter(Boolean);
 
                                     return {
@@ -281,11 +281,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         const currentlyFollowing = isFollowing;
         try {
             if (currentlyFollowing) {
-                const newFollowingList = (userProfile.following || []).filter(id => id !== creation.userId);
-                batch.update(currentUserRef, { following: newFollowingList });
-                const targetDoc = await getDoc(targetUserRef);
-                const targetFollowers = (targetDoc.data()?.followers || []).filter(id => id !== user.uid);
-                batch.update(targetUserRef, { followers: targetFollowers });
+                // arrayRemove statt read-modify-write: kein Clobbering bei parallelen Änderungen
+                batch.update(currentUserRef, { following: arrayRemove(creation.userId) });
+                batch.update(targetUserRef, { followers: arrayRemove(user.uid) });
             } else {
                 batch.update(currentUserRef, { following: arrayUnion(creation.userId) });
                 batch.update(targetUserRef, { followers: arrayUnion(user.uid) });

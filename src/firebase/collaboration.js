@@ -605,15 +605,15 @@ export const searchUsersForInvite = async (searchTerm, limitCount = 10) => {
 
     const usersQuery = query(
         collection(db, 'profiles'),
-        where('usernameLower', '>=', searchLower),
-        where('usernameLower', '<=', searchUpper)
+        where('username_lowercase', '>=', searchLower),
+        where('username_lowercase', '<=', searchUpper)
     );
 
     const snapshot = await getDocs(usersQuery);
     return snapshot.docs.slice(0, limitCount).map(doc => ({
         id: doc.id,
         username: doc.data().username,
-        avatar: doc.data().avatar
+        avatar: doc.data().profilePictureUrl
     }));
 };
 

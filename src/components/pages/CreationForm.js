@@ -5,7 +5,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
+import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import HighlightableTextarea from '../ui/HighlightableTextarea';
@@ -366,7 +366,13 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const handleMediaPaste = (e, mediaType) => {
         e.preventDefault();
         const pastedText = e.clipboardData.getData('text');
-        const links = pastedText.split(/[\s,]+/).filter(Boolean);
+        const rawLinks = pastedText.split(/[\s,]+/).filter(Boolean);
+        // Nur echte http(s)-URLs übernehmen (blockt javascript:/data: und Müll).
+        const links = rawLinks.filter(isSafeHttpUrl);
+        const rejected = rawLinks.length - links.length;
+        if (rejected > 0) {
+            setModalMessage(`${rejected} link(s) were ignored because they are not valid http(s) URLs.`);
+        }
         const currentItems = mediaType === 'image' ? imageItems : videoItems;
         const limit = mediaType === 'image' ? IMAGE_LIMIT : VIDEO_LIMIT;
         const availableSlots = limit - currentItems.length;
@@ -507,6 +513,12 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         
         if (isUploading) {
             setModalMessage("Please wait for the backup upload to finish.");
+            return;
+        }
+
+        // Custom Media Link wird später via window.open geöffnet — nur http(s) zulassen.
+        if (customMediaLink.trim() && !isSafeHttpUrl(customMediaLink)) {
+            setModalMessage("The Custom Media Link must be a valid http(s) URL.");
             return;
         }
 

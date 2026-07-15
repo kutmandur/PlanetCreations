@@ -61,8 +61,16 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     const shouldUseIndexSearch = useMemo(() => {
         const hasSearchTerm = homeState.searchTerm.trim() !== '';
         const tagCount = homeState.filterTags?.length || 0;
-        return hasSearchTerm || tagCount > 0;
-    }, [homeState.searchTerm, homeState.filterTags]);
+        // DLC-/Mods-/Plattform-Filter müssen über den kompletten Spiel-Index laufen.
+        // Sonst werden sie nur auf die ersten 24 nach Datum geladenen Creations
+        // angewendet und zeigen falsche/leere Ergebnisse (der paginierte Firestore-
+        // Pfad kann diese Felder nicht serverseitig filtern).
+        const isPlatformGame = activeTab === 'planet-coaster' || activeTab === 'planet-zoo';
+        const modsFilterActive = isPlatformGame && homeState.showModsOnly;
+        const platformFilterActive = isPlatformGame && homeState.platformFilter === 'console';
+        const dlcActive = dlcFilterMode !== 'all';
+        return hasSearchTerm || tagCount > 0 || modsFilterActive || platformFilterActive || dlcActive;
+    }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, dlcFilterMode, activeTab]);
 
     // Suchindex des aktiven Spiels: 1 Firestore-Read, 5 Minuten gecacht,
     // wird erst geladen wenn tatsächlich gesucht wird.
@@ -267,23 +275,31 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             setLoading(true);
             setHasMore(true);
 
-            const creationsQuery = buildFirestoreQuery(false, null);
-            const documentSnapshots = await getDocs(creationsQuery);
-            const initialCreations = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const lastDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
-            const lastTs = lastDoc?.data()?.createdAt || null;
-            const hasMoreItems = documentSnapshots.docs.length >= 24;
+            try {
+                const creationsQuery = buildFirestoreQuery(false, null);
+                const documentSnapshots = await getDocs(creationsQuery);
+                const initialCreations = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const lastDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
+                const lastTs = lastDoc?.data()?.createdAt || null;
+                const hasMoreItems = documentSnapshots.docs.length >= 24;
 
-            setCreations(initialCreations);
-            setLastTimestamp(lastTs);
-            setHasMore(hasMoreItems);
-            setLoading(false);
+                setCreations(initialCreations);
+                setLastTimestamp(lastTs);
+                setHasMore(hasMoreItems);
 
-            // Creations im zentralen Cache speichern
-            cacheCreations(queryClient, initialCreations);
-            // Listen-Cache speichert nur IDs
-            const creationIds = initialCreations.map(c => c.id);
-            cacheHomePageList(queryClient, cacheKey, creationIds, lastTs, hasMoreItems);
+                // Creations im zentralen Cache speichern
+                cacheCreations(queryClient, initialCreations);
+                // Listen-Cache speichert nur IDs
+                const creationIds = initialCreations.map(c => c.id);
+                cacheHomePageList(queryClient, cacheKey, creationIds, lastTs, hasMoreItems);
+            } catch (err) {
+                // Ohne catch bleibt der Spinner bei jedem Query-Fehler (offline,
+                // fehlender Composite-Index, Rules) für immer stehen.
+                console.error('Failed to load creations:', err);
+                setHasMore(false);
+            } finally {
+                setLoading(false);
+            }
         };
         fetchInitialCreations();
     }, [cacheKey, queryClient, getCreationsFromCacheByIds, buildFirestoreQuery, shouldUseIndexSearch, getFromBroaderCache]);
@@ -292,34 +308,39 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         if (loading || loadingMore || !hasMore || !lastTimestamp || shouldUseIndexSearch) return;
         setLoadingMore(true);
 
-        const nextQuery = buildFirestoreQuery(true, lastTimestamp);
+        try {
+            const nextQuery = buildFirestoreQuery(true, lastTimestamp);
 
-        const documentSnapshots = await getDocs(nextQuery);
-        const newCreations = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const documentSnapshots = await getDocs(nextQuery);
+            const newCreations = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        if (newCreations.length > 0) {
-            const updatedCreations = [...creations, ...newCreations];
-            const newLastDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
-            const newLastTs = newLastDoc?.data()?.createdAt || null;
-            const hasMoreItems = newCreations.length >= 24;
+            if (newCreations.length > 0) {
+                const updatedCreations = [...creations, ...newCreations];
+                const newLastDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
+                const newLastTs = newLastDoc?.data()?.createdAt || null;
+                const hasMoreItems = newCreations.length >= 24;
 
-            setCreations(updatedCreations);
-            setLastTimestamp(newLastTs);
-            setHasMore(hasMoreItems);
+                setCreations(updatedCreations);
+                setLastTimestamp(newLastTs);
+                setHasMore(hasMoreItems);
 
-            // Neue Creations im zentralen Cache speichern
-            cacheCreations(queryClient, newCreations);
-            // Listen-Cache mit allen IDs aktualisieren
-            const allIds = updatedCreations.map(c => c.id);
-            cacheHomePageList(queryClient, cacheKey, allIds, newLastTs, hasMoreItems);
-        } else {
+                // Neue Creations im zentralen Cache speichern
+                cacheCreations(queryClient, newCreations);
+                // Listen-Cache mit allen IDs aktualisieren
+                const allIds = updatedCreations.map(c => c.id);
+                cacheHomePageList(queryClient, cacheKey, allIds, newLastTs, hasMoreItems);
+            } else {
+                setHasMore(false);
+                // Cache mit hasMore=false aktualisieren
+                const currentIds = creations.map(c => c.id);
+                cacheHomePageList(queryClient, cacheKey, currentIds, lastTimestamp, false);
+            }
+        } catch (err) {
+            console.error('Failed to load more creations:', err);
             setHasMore(false);
-            // Cache mit hasMore=false aktualisieren
-            const currentIds = creations.map(c => c.id);
-            cacheHomePageList(queryClient, cacheKey, currentIds, lastTimestamp, false);
+        } finally {
+            setLoadingMore(false);
         }
-
-        setLoadingMore(false);
     }, [loading, loadingMore, hasMore, cacheKey, lastTimestamp, creations, queryClient, buildFirestoreQuery, shouldUseIndexSearch]);
 
     useEffect(() => {
