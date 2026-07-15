@@ -208,8 +208,21 @@ service cloud.firestore {
       // profile.role fürs UI-Gating).
       allow create: if isOwner(userId) && isValidProfileData(request.resource.data) &&
           (!('role' in request.resource.data.keys()) || request.resource.data.role == 'user');
-      allow update: if (isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data) &&
-          (isAdmin() || request.resource.data.get('role', 'user') == resource.data.get('role', 'user'));
+      allow update: if
+          ((isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data) &&
+           (isAdmin() || request.resource.data.get('role', 'user') == resource.data.get('role', 'user')))
+          ||
+          // Fremdes Profil: eingeloggte Nutzer dürfen sich NUR selbst in die
+          // followers-Liste eintragen/austragen (Follow/Unfollow) — nichts anderes.
+          (isLoggedIn() &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers']) && (
+             (request.auth.uid in request.resource.data.get('followers', []) &&
+              !(request.auth.uid in resource.data.get('followers', [])) &&
+              request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() + 1) ||
+             (!(request.auth.uid in request.resource.data.get('followers', [])) &&
+              request.auth.uid in resource.data.get('followers', []) &&
+              request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() - 1)
+           ));
       allow delete: if isOwner(userId) || isAdmin();
 
       match /communityMemberships/{communityId} {
