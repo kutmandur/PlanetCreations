@@ -12,7 +12,7 @@ import CreationCard from '../cards/CreationCard';
 import MiniCreationCard from '../cards/MiniCreationCard';
 import MemberCard from '../cards/MemberCard';
 import EventCard from '../cards/EventCard';
-import { ICONS, SOCIAL_PLATFORMS } from '../../utils/helpers';
+import { ICONS, SOCIAL_PLATFORMS, isEventHidden } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 
@@ -258,8 +258,9 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
     // Öffentlicher Events-Tab ist für Owner und Nutzer identisch: unsichtbare
     // Events erscheinen nur noch im Community-Manager (Events-Tab).
+    // "Invisible until event starts": ab Startzeitpunkt zählen sie als sichtbar.
     const visibleEvents = useMemo(
-        () => events.filter(event => event.status !== 'invisible'),
+        () => events.filter(event => !isEventHidden(event)),
         [events]);
 
     const filteredContent = useMemo(() => {

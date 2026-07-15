@@ -14,7 +14,8 @@ async function buildCreationEmbed(creationId, communityId, includeVoteCounter) {
     const embed = new EmbedBuilder()
         .setColor(communityData.themeColor || '#F97316')
         .setTitle(creationData.title)
-        .setURL(`https://planetcreations.net/creation/${creationId}`)
+        // HashRouter: ohne /#/ landet der Link auf der Startseite
+        .setURL(`https://planetcreations.net/#/creation/${creationId}`)
         .setAuthor({ name: creationData.username, iconURL: creationData.userProfilePictureUrl || undefined })
         .setTimestamp(creationData.createdAt.toDate());
     

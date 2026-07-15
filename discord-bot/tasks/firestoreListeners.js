@@ -98,11 +98,55 @@ function initializeAllListeners(client) {
         });
     }, error => console.error('[Creation Announcer] Listener failed:', error));
 
+    // --- Event-Submission Announcer: postet neue Submissions in den gemappten
+    // Discord-Channel, wenn das Event autoPostSubmissions aktiviert hat.
+    // Marker (autoPostedSubmissions.<creationId> auf dem Event-Doc) verhindern
+    // Doppel-Posts über Bot-Neustarts hinweg. ---
+    const announceEventSubmissions = async (creationDoc) => {
+        const creationData = creationDoc.data();
+        const eventIds = creationData.eventIds || [];
+        if (eventIds.length === 0) return;
+        for (const eventId of eventIds) {
+            const event = activeEventsCache.find(e => e.id === eventId);
+            if (!event || event.autoPostSubmissions !== true) continue;
+            const rc = event.reminderChannels || 'both';
+            if (rc !== 'both' && rc !== 'discord') continue;
+            if (event.autoPostedSubmissions?.[creationDoc.id]) continue;
+            try {
+                const communityDoc = await db.collection('communitys').doc(event.communityId).get();
+                if (!communityDoc.exists) continue;
+                const eventClass = event.classes?.[0] || 'general';
+                const channelId = communityDoc.data().discordChannelMapping?.[eventClass.toLowerCase()];
+                if (!channelId) continue;
+                const channel = await client.channels.fetch(channelId);
+                if (!channel) continue;
+                const embed = await buildCreationEmbed(creationDoc.id, event.communityId, false);
+                embed.setTitle(`📥 New submission for "${event.title}": ${embed.data.title}`);
+                const message = await channel.send({ embeds: [embed] });
+                // Cache sofort mitziehen (verhindert Doppel-Post, bis der
+                // Event-Snapshot den persistierten Marker nachliefert).
+                event.autoPostedSubmissions = { ...(event.autoPostedSubmissions || {}), [creationDoc.id]: message.id };
+                await db.collection('events').doc(eventId).update({ [`autoPostedSubmissions.${creationDoc.id}`]: message.id });
+                console.log(`[Submission Announcer] ✅ Posted submission ${creationDoc.id} for event ${eventId}`);
+            } catch (error) {
+                console.error(`[Submission Announcer] ❌ Failed for ${creationDoc.id} / event ${eventId}:`, error.message);
+            }
+        }
+    };
+
     // --- Vote Update & Creation Deletion Listener ---
+    // Erster Snapshot liefert alle Creations als 'added' — wird übersprungen
+    // (der Announcer soll nur echte neue Submissions posten).
+    let isCreationsInitialLoad = true;
     db.collection('creations').onSnapshot(snapshot => {
+        if (isCreationsInitialLoad) { isCreationsInitialLoad = false; return; }
         snapshot.docChanges().forEach(async (change) => {
             const creationId = change.doc.id;
             const creationData = change.doc.data();
+
+            if (change.type === 'added' || change.type === 'modified') {
+                await announceEventSubmissions(change.doc);
+            }
 
             if (change.type === 'modified') {
                 if (creationData.eventIds?.length > 0) return;

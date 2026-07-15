@@ -1,18 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../ui/Icon';
-import { ICONS, getYoutubeThumbnailUrl } from '../../utils/helpers';
+import { ICONS } from '../../utils/helpers';
+import useHoverSlideshow from '../../hooks/useHoverSlideshow';
 
 const ManagedCreationCard = ({ creation, onPinToggle, onUnlink, onClick, onMarkForShowcase }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
-
-    const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
-
-    const initialThumbnail = creation.imageUrls?.length > 0
-        ? creation.imageUrls[0]
-        : creation.videoUrls?.length > 0
-        ? getYoutubeThumbnail(creation.videoUrls[0])
-        : 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
+    const { imgSrc, onMouseEnter, onMouseLeave } = useHoverSlideshow(creation);
 
     const getTextColorForBackground = (hexColor) => {
         if (!hexColor) return '#ffffff';
@@ -45,12 +39,12 @@ const ManagedCreationCard = ({ creation, onPinToggle, onUnlink, onClick, onMarkF
     };
 
     return (
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col h-full relative group">
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col h-full relative group" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
             <button onClick={onClick} className="w-full h-full text-left focus:outline-none">
                 <div className="relative">
                     <div className="overflow-hidden h-40">
                         <img
-                            src={initialThumbnail}
+                            src={imgSrc}
                             alt={creation.title}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x225/333333/ffffff?text=Image+Missing'; }}

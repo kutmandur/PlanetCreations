@@ -1,27 +1,18 @@
-import React, { useState, useRef, useCallback, memo } from 'react';
+import React, { useCallback, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchCreationById } from '../../firebase/creationsService';
-import { ICONS, getYoutubeThumbnailUrl, getTextColorForBackground } from '../../utils/helpers';
+import { ICONS, getTextColorForBackground } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import { preloadComponent } from '../../utils/preload';
-
-// Hilfsfunktion außerhalb der Komponente (kein Re-Create bei jedem Render)
-const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
+import useHoverSlideshow from '../../hooks/useHoverSlideshow';
 
 const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     const queryClient = useQueryClient();
-    const [hoverIndex, setHoverIndex] = useState(0);
-    const intervalRef = useRef(null);
     const navigate = useNavigate();
-
-    const imageUrls = creation.imageUrls || [];
-    const videoUrls = creation.videoUrls || [];
-
-    const slideshowImages = imageUrls.filter(Boolean);
-    const initialThumbnail = imageUrls.length > 0 ? imageUrls[0] : videoUrls.length > 0 ? getYoutubeThumbnail(videoUrls[0]) : 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
+    const { imgSrc, onMouseEnter: startHover, onMouseLeave: stopHover } = useHoverSlideshow(creation);
 
     const handlePrefetch = useCallback(() => {
         // Prefetch der Creation-Daten via React Query
@@ -45,27 +36,11 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
         preloadComponent('CreationDetail');
     }, [queryClient, creation.id, creation.userId]);
 
-    const startSlideshow = useCallback(() => {
-        if (intervalRef.current) return;
-        if (slideshowImages.length > 1) {
-            intervalRef.current = setInterval(() => {
-                setHoverIndex(prevIndex => (prevIndex + 1) % slideshowImages.length);
-            }, 1500);
-        }
-    }, [slideshowImages.length]);
-
     const handleMouseEnter = useCallback(() => {
-        startSlideshow();
+        startHover();
         handlePrefetch();
-    }, [startSlideshow, handlePrefetch]);
-
-    const stopSlideshow = useCallback(() => {
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
-        setHoverIndex(0);
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [handlePrefetch]);
 
     const handleProfileClick = useCallback((e) => {
         // preventDefault, damit der umgebende <Link> zur Creation nicht
@@ -87,9 +62,9 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     const CardContent = () => (
         <article className="bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full">
             <div className="relative h-48 overflow-hidden">
-                <img 
-                    src={slideshowImages[hoverIndex] || initialThumbnail} 
-                    alt={creation.title} 
+                <img
+                    src={imgSrc}
+                    alt={creation.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x225/333333/ffffff?text=Image+Missing'; }}
                 />
@@ -144,10 +119,10 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     );
 
     return isLink ? (
-        <Link 
+        <Link
             to={`/creation/${creation.id}`}
             onMouseEnter={handleMouseEnter}
-            onMouseLeave={stopSlideshow}
+            onMouseLeave={stopHover}
             onTouchStart={handlePrefetch}
         >
             <CardContent />
@@ -155,7 +130,7 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     ) : (
         <div
             onMouseEnter={handleMouseEnter}
-            onMouseLeave={stopSlideshow}
+            onMouseLeave={stopHover}
             onTouchStart={handlePrefetch}
         >
             <CardContent />

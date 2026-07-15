@@ -1,14 +1,17 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
+import { useFooterAwareBottom } from '../../utils/useFooterAwareBottom';
 import Icon from './Icon';
 
 const FloatingActionButtonManage = ({ communityId }) => {
+    const bottom = useFooterAwareBottom();
     return (
         <Link
             to={`/manager/${communityId}`}
+            style={{ bottom }}
             className={`
-                group fixed bottom-8 right-8 h-16 w-16 
+                group fixed right-8 h-16 w-16
                 bg-purple-600 hover:bg-purple-700 
                 text-white 
                 rounded-full 

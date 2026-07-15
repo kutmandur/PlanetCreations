@@ -80,7 +80,7 @@ function startEventNotifier(client) {
                     console.log(`[Event Notifier] Sending START for: ${event.title}`);
                     const customText = applyTemplate(event, 'eventStart', vars, null);
                     if (channel) {
-                        const startEmbed = new EmbedBuilder().setColor(community.themeColor || '#5865F2').setTitle(`🎉 Event Started: ${event.title}`).setURL(`https://planetcreations.net/event/${event.id}`).setDescription(customText || (event.description ? event.description.substring(0, 500) : 'The event has now begun!')).setTimestamp(startDate);
+                        const startEmbed = new EmbedBuilder().setColor(community.themeColor || '#5865F2').setTitle(`🎉 Event Started: ${event.title}`).setURL(eventLink).setDescription(customText || (event.description ? event.description.substring(0, 500) : 'The event has now begun!')).setTimestamp(startDate);
                         if (event.bannerImageUrl) startEmbed.setImage(event.bannerImageUrl);
                         await channel.send({ embeds: [startEmbed] });
                     }
@@ -226,7 +226,7 @@ function startEventNotifier(client) {
                         }
                         const ch = await getChannel();
                         if (ch) {
-                            await ch.send(`🎬 Results for **${event.title}** — **${group.name}** ${group.videoUrl ? `is out: ${group.videoUrl}` : 'has been published!'}\nSee all results: https://planetcreations.net/event/${event.id}`);
+                            await ch.send(`🎬 Results for **${event.title}** — **${group.name}** ${group.videoUrl ? `is out: ${group.videoUrl}` : 'has been published!'}\nSee all results: ${SITE_ORIGIN}/#/event/${event.id}`);
                         }
                         group.notified = true;
                         groupsChanged = true;
@@ -257,7 +257,7 @@ function startEventNotifier(client) {
                     }
                     const ch = await getChannel();
                     if (ch) {
-                        await ch.send(`🏆 The results for **${event.title}** are out! https://planetcreations.net/event/${event.id}`);
+                        await ch.send(`🏆 The results for **${event.title}** are out! ${SITE_ORIGIN}/#/event/${event.id}`);
                     }
                     await eventDocRef.update({ 'notificationsSent.results': true, resultsStatus: 'published' });
                 }

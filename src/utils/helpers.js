@@ -124,6 +124,16 @@ export const getYoutubeEmbed = (url) => {
     return id ? `https://www.youtube.com/embed/${id}` : url;
 };
 
+// Events mit status 'invisible' sind nur BIS zum Startzeitpunkt versteckt
+// (EventForm-Toggle: "Invisible until event starts?"). Ab Start zählen sie
+// überall als sichtbar; ohne Startdatum bleiben sie versteckt.
+export const isEventHidden = (event) => {
+    if (!event || event.status !== 'invisible') return false;
+    const start = event.startDate?.toDate ? event.startDate.toDate()
+        : (event.startDate ? new Date(event.startDate) : null);
+    return !start || start > new Date();
+};
+
 // Erlaubt nur echte http(s)-URLs. Blockt u. a. `javascript:`-Schemata, die sonst
 // über <input type="url"> gespeichert und via window.open ausgeführt werden könnten.
 export const isSafeHttpUrl = (value) => {

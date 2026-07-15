@@ -170,6 +170,14 @@ service cloud.firestore {
       }
     }
 
+    // Collection-Group-Queries auf votes (EventDetailPage: "welche Creations habe
+    // ich in diesem Event schon gevotet?"). Die Pfad-Regel oben greift für
+    // collectionGroup() NICHT — ohne diese Regel liefert die Query permission-denied.
+    // votes existieren nur unter creations und sind dort ohnehin öffentlich lesbar.
+    match /{path=**}/votes/{voteId} {
+      allow read: if true;
+    }
+
     // Kompakter Suchindex (ein Doc pro Spiel), wird nur von Cloud Functions
     // (Admin SDK, umgeht Rules) geschrieben — Clients lesen ihn für die Suche.
     match /searchIndex/{gameId} {
