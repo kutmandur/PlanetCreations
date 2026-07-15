@@ -109,6 +109,21 @@ export const assignCommunityRole = async (communityId, targetUserId, newRoles) =
 };
 
 /**
+ * [OWNER ONLY] Transfers community ownership to another member. The previous owner
+ * is demoted to the community's default rank. Atomic batch — the rules allow it
+ * because they evaluate against the pre-batch state (current owner is still owner).
+ */
+export const transferCommunityOwnership = async (communityId, newOwnerId, oldOwnerId, defaultRankName = 'member') => {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'communitys', communityId), { ownerId: newOwnerId });
+    batch.update(doc(db, 'communitys', communityId, 'members', newOwnerId), { roles: ['owner'] });
+    batch.update(doc(db, 'communitys', communityId, 'members', oldOwnerId), {
+        roles: [String(defaultRankName || 'member').toLowerCase()],
+    });
+    await batch.commit();
+};
+
+/**
  * [ADMIN ONLY] Deletes a community and all associated data.
  * @param {string} communityId The ID of the community to delete.
  */
