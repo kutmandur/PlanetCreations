@@ -832,12 +832,43 @@ exports.onCreationWrite = functions
 exports.onCreationDelete = functions.firestore
     .document('creations/{creationId}')
     .onDelete(async (snap, context) => {
+        const creationId = context.params.creationId;
         const deletedData = snap.data();
-        const backupUrl = deletedData.backupUrl;
 
+        // --- Cascade-Cleanup: sonst bleiben verwaiste Referenzen zurück ---
+        // 1) Community-Link-Docs (sonst erscheint die Creation weiter in Community-
+        //    Seiten/Index; die Link-Doc-Trigger bereinigen danach die Indexe).
+        const communityIds = deletedData.communityIds || [];
+        await Promise.all(communityIds.map(cid =>
+            db.doc(`communitys/${cid}/creations/${creationId}`).delete()
+                .catch(e => console.error(`Failed to delete community link ${cid}/${creationId}:`, e.message))
+        ));
+
+        // 2) Follower-Subcollection (creationFollowers/{id}/followers/*)
+        try {
+            const followersSnap = await db.collection(`creationFollowers/${creationId}/followers`).get();
+            if (!followersSnap.empty) {
+                const fBatch = db.batch();
+                followersSnap.docs.forEach(d => fBatch.delete(d.ref));
+                await fBatch.commit();
+            }
+        } catch (e) { console.error(`Failed to clean followers for ${creationId}:`, e.message); }
+
+        // 3) Votes-Subcollection (creations/{id}/votes/*)
+        try {
+            const votesSnap = await db.collection(`creations/${creationId}/votes`).get();
+            if (!votesSnap.empty) {
+                const vBatch = db.batch();
+                votesSnap.docs.forEach(d => vBatch.delete(d.ref));
+                await vBatch.commit();
+            }
+        } catch (e) { console.error(`Failed to clean votes for ${creationId}:`, e.message); }
+
+        // --- S3-Backup löschen ---
+        const backupUrl = deletedData.backupUrl;
         // Lösche keine temporären Dateien, da diese automatisch ablaufen
         if (!backupUrl || backupUrl.includes('/temp-uploads/')) {
-            console.log(`Creation ${context.params.creationId} had no permanent backupUrl. No file to delete.`);
+            console.log(`Creation ${creationId} had no permanent backupUrl. No file to delete.`);
             return null;
         }
 
@@ -1356,8 +1387,10 @@ exports.notifyOnCreationUpdate = functions.firestore
         const title = `Update to "${after.title}"`;
         const message = latest && latest.text ? String(latest.text).slice(0, 140) : 'A creation you follow was updated.';
         const link = `/creation/${creationId}`;
-        await Promise.all(followersSnap.docs.map(d =>
-            notifyUser(d.id, 'creationUpdate', { title, message, link })));
+        // Autor nicht über sein eigenes Update benachrichtigen
+        await Promise.all(followersSnap.docs
+            .filter(d => d.id !== after.userId)
+            .map(d => notifyUser(d.id, 'creationUpdate', { title, message, link })));
         return null;
     });
 
@@ -1380,6 +1413,168 @@ exports.notifyOnNewFollower = functions.firestore
                 link: `/profile/${followerId}`,
             });
         }));
+        return null;
+    });
+
+// --- Report-Zähler serverseitig pflegen (Client darf reportCount nicht mehr
+//     direkt erhöhen → verhindert Manipulation/Harassment) ---
+exports.onReportCreated = functions.firestore
+    .document('reports/{reportId}')
+    .onCreate(async (snap) => {
+        const r = snap.data();
+        if (!r || !r.targetId || !r.targetType) return null;
+        const col = r.targetType === 'creation' ? 'creations'
+            : (r.targetType === 'user' ? 'users' : null);
+        if (!col) return null;
+        await db.doc(`${col}/${r.targetId}`)
+            .update({ reportCount: admin.firestore.FieldValue.increment(1) })
+            .catch(e => console.error('reportCount increment failed:', e.message));
+        return null;
+    });
+
+// --- Collaboration-Beitritt per Invite-Code (serverseitig, damit Clients nicht
+//     mehr alle Collaborations inkl. Invite-Codes auflisten dürfen) ---
+exports.joinCollaborationByInviteCode = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const code = ((data && data.inviteCode) || '').trim();
+    if (!code) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invite code is required.');
+    }
+
+    const snap = await db.collection('collaborations')
+        .where('inviteCode', '==', code)
+        .where('status', '==', 'active')
+        .limit(1)
+        .get();
+    if (snap.empty) {
+        throw new functions.https.HttpsError('not-found', 'Invalid or expired invite code.');
+    }
+
+    const collaborationId = snap.docs[0].id;
+    const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
+    const memberSnap = await memberRef.get();
+    if (memberSnap.exists) {
+        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
+    }
+
+    const profileSnap = await db.doc(`profiles/${userId}`).get();
+    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+
+    const batch = db.batch();
+    batch.set(memberRef, {
+        role: 'editor',
+        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        username,
+    });
+    batch.update(db.doc(`collaborations/${collaborationId}`), {
+        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+    });
+    await batch.commit();
+
+    return { collaborationId };
+});
+
+// --- Benachrichtigung: Creation ins Showcase aufgenommen bzw. Bewerbung angenommen ---
+exports.notifyOnShowcaseStatus = functions.firestore
+    .document('communitys/{communityId}/creations/{creationId}')
+    .onWrite(async (change, context) => {
+        const before = change.before.exists ? change.before.data() : {};
+        const after = change.after.exists ? change.after.data() : {};
+        const ownerId = after.userId;
+        if (!ownerId) return null;
+
+        const nowShowcased = !!after.showcaseVideoUrl && !before.showcaseVideoUrl;
+        const nowMarked = after.markedForShowcase === true &&
+            before.markedForShowcase !== true && !after.showcaseVideoUrl;
+        if (!nowShowcased && !nowMarked) return null;
+
+        const communityId = context.params.communityId;
+        const comSnap = await db.doc(`communitys/${communityId}`).get();
+        if (!comSnap.exists) return null;
+        const comName = comSnap.data().name || 'a community';
+
+        if (nowShowcased) {
+            const label = after.showcaseName ? `"${after.showcaseName}"` : 'a showcase';
+            await notifyUser(ownerId, 'showcased', {
+                title: 'Your creation was showcased! 🎉',
+                message: `${comName} featured your creation in ${label}.`,
+                link: `/creation/${context.params.creationId}`,
+            });
+        } else if (nowMarked) {
+            await notifyUser(ownerId, 'showcaseAccepted', {
+                title: 'Showcase application accepted',
+                message: `${comName} added your creation to the showcase waitlist.`,
+                link: `/creation/${context.params.creationId}`,
+            });
+        }
+        return null;
+    });
+
+// --- Benachrichtigung: Community-Rolle geändert ---
+exports.notifyOnCommunityRoleChange = functions.firestore
+    .document('communitys/{communityId}/members/{userId}')
+    .onUpdate(async (change, context) => {
+        const beforeRoles = change.before.data().roles || [];
+        const afterRoles = change.after.data().roles || [];
+        const same = beforeRoles.length === afterRoles.length &&
+            beforeRoles.every(r => afterRoles.includes(r));
+        if (same) return null;
+
+        const userId = context.params.userId;
+        const communityId = context.params.communityId;
+        const comSnap = await db.doc(`communitys/${communityId}`).get();
+        if (!comSnap.exists) return null;
+        const comData = comSnap.data();
+        const roleList = afterRoles.length ? afterRoles.join(', ') : 'member';
+        await notifyUser(userId, 'communityRole', {
+            title: `Your role changed in ${comData.name || 'a community'}`,
+            message: `You are now: ${roleList}.`,
+            link: `/community/${comData.slug || communityId}`,
+        });
+        return null;
+    });
+
+// --- Cascade-Cleanup beim Löschen einer Community (serverseitig, da Clients die
+//     Index-Docs nicht schreiben/löschen dürfen). Alles best-effort (.catch). ---
+exports.onCommunityDelete = functions.firestore
+    .document('communitys/{communityId}')
+    .onDelete(async (snap, context) => {
+        const communityId = context.params.communityId;
+
+        // 1) Community-Link-Docs entfernen (danach räumen die Link-Doc-Trigger die Indexe)
+        try {
+            const linkSnap = await db.collection(`communitys/${communityId}/creations`).get();
+            if (!linkSnap.empty) {
+                const b = db.batch();
+                linkSnap.docs.forEach(d => b.delete(d.ref));
+                await b.commit();
+            }
+        } catch (e) { console.error('community link cleanup failed:', e.message); }
+
+        // 2) Community-Suchindex + zugehörige Showcase-Indexe löschen
+        await db.doc(`communitySearchIndex/${communityId}`).delete().catch(() => {});
+        try {
+            const showcaseSnap = await db.collection('showcaseIndex')
+                .where('communityId', '==', communityId).get();
+            await Promise.all(showcaseSnap.docs.map(d => d.ref.delete().catch(() => {})));
+        } catch (e) { console.error('showcaseIndex cleanup failed:', e.message); }
+
+        // 3) Events der Community (inkl. voters-Subcollection) löschen
+        try {
+            const eventsSnap = await db.collection('events')
+                .where('communityId', '==', communityId).get();
+            for (const evDoc of eventsSnap.docs) {
+                const votersSnap = await db.collection(`events/${evDoc.id}/voters`).get();
+                const b = db.batch();
+                votersSnap.docs.forEach(v => b.delete(v.ref));
+                b.delete(evDoc.ref);
+                await b.commit();
+            }
+        } catch (e) { console.error('events cleanup failed:', e.message); }
+
         return null;
     });
 

@@ -17,6 +17,7 @@ import {
     increment,
     collectionGroup
 } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./config";
 
 const STORAGE_LIMIT = 500 * 1024 * 1024; // 500 MB
@@ -176,45 +177,11 @@ export const updateCollaboration = async (collaborationId, updates) => {
  * @returns {string} The collaboration ID.
  */
 export const joinCollaborationByCode = async (userId, inviteCode) => {
-    const collaborationsQuery = query(
-        collection(db, 'collaborations'),
-        where('inviteCode', '==', inviteCode),
-        where('status', '==', 'active')
-    );
-
-    const snapshot = await getDocs(collaborationsQuery);
-    if (snapshot.empty) {
-        throw new Error('Invalid or expired invite code.');
-    }
-
-    const collaborationDoc = snapshot.docs[0];
-    const collaborationId = collaborationDoc.id;
-
-    // Check if already a member
-    const memberRef = doc(db, 'collaborations', collaborationId, 'members', userId);
-    const memberSnap = await getDoc(memberRef);
-
-    if (memberSnap.exists()) {
-        throw new Error('You are already a member of this collaboration.');
-    }
-
-    // Get username
-    const profileSnap = await getDoc(doc(db, 'profiles', userId));
-    const username = profileSnap.exists() ? profileSnap.data().username : 'Unknown';
-
-    // Add as member and update memberIds array
-    const batch = writeBatch(db);
-    batch.set(memberRef, {
-        role: 'editor',
-        joinedAt: serverTimestamp(),
-        username
-    });
-    batch.update(doc(db, 'collaborations', collaborationId), {
-        memberIds: arrayUnion(userId)
-    });
-    await batch.commit();
-
-    return collaborationId;
+    // Läuft serverseitig (Cloud Function), damit Clients nicht mehr alle
+    // Collaborations inkl. Invite-Codes auflisten müssen/dürfen.
+    const callable = httpsCallable(getFunctions(), 'joinCollaborationByInviteCode');
+    const result = await callable({ inviteCode });
+    return result.data.collaborationId;
 };
 
 /**

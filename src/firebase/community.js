@@ -90,10 +90,7 @@ export const kickAndReportUser = async (communityId, targetUserId, reason, staff
         reporterId: staffUserId,
         timestamp: serverTimestamp(),
     });
-
-    const userRef = doc(db, 'users', targetUserId);
-    batch.update(userRef, { reportCount: increment(1) });
-    
+    // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
     await batch.commit();
 };
 
