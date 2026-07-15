@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 
-const EventCard = ({ event, community, userProfile }) => {
+// showStatus: undefined = automatisch (Staff sieht Badge), true/false = erzwingen.
+// Der öffentliche Community-Tab übergibt false (Owner-Ansicht = Nutzer-Ansicht),
+// der Manager-Tab true.
+const EventCard = ({ event, community, userProfile, showStatus }) => {
     const themeColor = community?.themeColor || '#F97316';
     const [countdown, setCountdown] = useState('');
 
@@ -61,7 +64,7 @@ const EventCard = ({ event, community, userProfile }) => {
     const currentUserMembership = community?.members?.find(m => m.id === userProfile?.uid);
     const isCommunityStaff = currentUserMembership?.roles.some(r => ['owner', 'moderator'].includes(r));
 
-    const showVisibility = isSiteStaff || isCommunityStaff;
+    const showVisibility = showStatus !== undefined ? showStatus : (isSiteStaff || isCommunityStaff);
 
     return (
         <Link to={`/event/${event.id}`}>
