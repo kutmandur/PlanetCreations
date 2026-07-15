@@ -80,7 +80,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
 
     // Creations kommen aus dem Community-Index (1 Read). Mutationen der Manager
     // aktualisieren den lokalen State direkt; der Index zieht per Trigger nach.
-    const { data: indexCreations } = useQuery({
+    const { data: indexCreations, isError: indexError } = useQuery({
         queryKey: ['communityIndex', communityId],
         queryFn: () => fetchCommunityIndex(communityId),
         enabled: !!community,
@@ -88,6 +88,9 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     });
 
     useEffect(() => {
+        // Ohne Fehlerbehandlung bliebe der Spinner bei einem Index-Query-Fehler
+        // für immer stehen (indexCreations bleibt undefined).
+        if (indexError) { setLoading(false); return; }
         if (!indexCreations || !community) return;
         const communityRanks = community.ranks || [];
         setCreations(indexCreations.map(creation => ({
@@ -97,7 +100,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                 .filter(Boolean),
         })));
         setLoading(false);
-    }, [indexCreations, community]);
+    }, [indexCreations, community, indexError]);
 
     useEffect(() => {
         if (!loading) {

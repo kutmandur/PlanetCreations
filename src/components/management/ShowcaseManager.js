@@ -312,12 +312,15 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
     const handleRemoveFromShowcase = async (creationId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
         try {
+            // appliedForShowcase ebenfalls zurücksetzen, sonst taucht die Kreation
+            // sofort wieder unter "Applications" auf (= keine echte Ablehnung möglich).
             await updateDoc(linkRef, {
                 markedForShowcase: false,
+                appliedForShowcase: false,
                 showcaseNote: '',
                 showcaseGroupId: null
             });
-            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, markedForShowcase: false, showcaseNote: '', showcaseGroupId: null } : c));
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, markedForShowcase: false, appliedForShowcase: false, showcaseNote: '', showcaseGroupId: null } : c));
             setModalMessage("Creation removed from the waitlist.");
         } catch (error) {
             setModalMessage(`Error removing from waitlist: ${error.message}`);

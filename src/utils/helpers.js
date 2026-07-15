@@ -124,6 +124,18 @@ export const getYoutubeEmbed = (url) => {
     return id ? `https://www.youtube.com/embed/${id}` : url;
 };
 
+// Erlaubt nur echte http(s)-URLs. Blockt u. a. `javascript:`-Schemata, die sonst
+// über <input type="url"> gespeichert und via window.open ausgeführt werden könnten.
+export const isSafeHttpUrl = (value) => {
+    if (!value || typeof value !== 'string') return false;
+    try {
+        const u = new URL(value.trim());
+        return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch (e) {
+        return false;
+    }
+};
+
 // Social-Media-Plattformen für Community-Links (Settings + Banner-Icons).
 // Marken-Icons als 24x24-Fill-Pfade (Icon-Komponente mit solid={true} nutzen),
 // nur "website" ist ein Stroke-Icon (solid={false}).

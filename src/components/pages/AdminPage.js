@@ -210,10 +210,25 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     };
 
     const handleRoleChange = async (userId, newRole) => {
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'users', userId), { role: newRole });
-        batch.update(doc(db, 'profiles', userId), { role: newRole });
-        await batch.commit();
+        // Rollenänderung ist ein Privileg-Wechsel → Passwort-Bestätigung + Feedback
+        // (vorher: stiller, ungeprüfter Write ohne Fehlerbehandlung).
+        setPasswordConfirm({
+            message: `Change this user's role to "${newRole}"? Please confirm with your password.`,
+            onConfirm: async (password) => {
+                try {
+                    const u = auth.currentUser;
+                    const credential = EmailAuthProvider.credential(u.email, password);
+                    await reauthenticateWithCredential(u, credential);
+                    const batch = writeBatch(db);
+                    batch.update(doc(db, 'users', userId), { role: newRole });
+                    batch.update(doc(db, 'profiles', userId), { role: newRole });
+                    await batch.commit();
+                    setModalMessage(`Role updated to "${newRole}".`);
+                } catch (error) {
+                    setModalMessage(`Error updating role: ${error.message}`);
+                }
+            }
+        });
     };
 
     const handleApplication = async (applicationId, accepted) => {

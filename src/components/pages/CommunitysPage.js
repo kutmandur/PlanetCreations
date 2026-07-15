@@ -177,8 +177,8 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
         if (communitysState.searchTerm.trim()) {
             const lowerCaseSearch = communitysState.searchTerm.toLowerCase();
             communitys = communitys.filter(c =>
-                c.name.toLowerCase().includes(lowerCaseSearch) ||
-                c.description.toLowerCase().includes(lowerCaseSearch)
+                (c.name || '').toLowerCase().includes(lowerCaseSearch) ||
+                (c.description || '').toLowerCase().includes(lowerCaseSearch)
             );
         }
         

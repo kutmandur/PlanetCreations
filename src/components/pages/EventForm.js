@@ -286,7 +286,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
         const textsToCheck = [
             title,
             description,
-            ...rules,
+            ...rules.map(r => (r && typeof r === 'object') ? r.text : r),
             ...customFields.map(f => f.label)
         ];
         for (const text of textsToCheck) {

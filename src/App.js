@@ -11,6 +11,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import PreloadLink from './components/ui/PreloadLink';
 import { preloadCriticalComponents } from './utils/preload';
 import lazyWithReload from './utils/lazyWithReload';
+import { isSafeHttpUrl } from './utils/helpers';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -247,9 +248,9 @@ const AppContent = () => {
         <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100">
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
-            {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { window.open(externalLink, '_blank'); setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
+            {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { if (isSafeHttpUrl(externalLink)) { window.open(externalLink, '_blank', 'noopener,noreferrer'); } setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
             {passwordConfirm && <PasswordConfirmationModal message={passwordConfirm.message} onConfirm={(password) => { passwordConfirm.onConfirm(password); setPasswordConfirm(null); }} onCancel={() => setPasswordConfirm(null)} />}
-            {reportModal && <ReportModal targetType={reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
+            {reportModal && <ReportModal targetType={reportModal.targetType || reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
             {strikeModal && <StrikeModal onConfirm={(reason) => { strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
             {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>
                 <Suspense fallback={<div className="h-64 flex justify-center items-center"><Spinner /></div>}>
