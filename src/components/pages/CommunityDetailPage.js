@@ -321,12 +321,18 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         finally { setIsProcessingJoin(false); }
     };
 
-    const handleLeave = async () => {
+    const handleLeave = () => {
         if (!user) return;
-        setIsProcessingJoin(true);
-        try { await leaveCommunity(community.id, user.uid); }
-        catch (error) { console.error("Error leaving community:", error); setModalMessage(error.message); }
-        finally { setIsProcessingJoin(false); }
+        // Bestätigung: Verlassen entfernt die Community-Rollen des Nutzers unwiderruflich.
+        setConfirmation({
+            message: `Leave "${community.name}"? You will lose your roles in this community.`,
+            onConfirm: async () => {
+                setIsProcessingJoin(true);
+                try { await leaveCommunity(community.id, user.uid); }
+                catch (error) { console.error("Error leaving community:", error); setModalMessage(error.message); }
+                finally { setIsProcessingJoin(false); }
+            }
+        });
     };
     
     const themeColor = community?.themeColor || '#F97316';

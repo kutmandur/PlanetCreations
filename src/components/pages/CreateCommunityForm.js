@@ -9,6 +9,12 @@ import InfoBox from '../ui/InfoBox';
 
 const API_BASE_URL = "https://us-central1-planetcreationsdotnet.cloudfunctions.net/api";
 
+const CREATE_GAMES = [
+  { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
+  { id: 'planet-zoo', name: 'Planet Zoo' },
+  { id: 'planet-coaster', name: 'Planet Coaster' },
+];
+
 const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -16,6 +22,8 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
   const [profileImageUrl, setProfileImageUrl] = useState('');
   const [themeColor, setThemeColor] = useState('#A855F7');
   const [discordServerId, setDiscordServerId] = useState('');
+  const [allowedGames, setAllowedGames] = useState(CREATE_GAMES.map(g => g.id));
+  const [mainGame, setMainGame] = useState('planet-coaster-2');
   const [suggestedRanks, setSuggestedRanks] = useState([]);
   const [isFetchingRanks, setIsFetchingRanks] = useState(false);
   const [isServerIdInputVisible, setIsServerIdInputVisible] = useState(false);
@@ -180,6 +188,13 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
     const allRanks = [...specialRanks, ...customRanks];
     const defaultRankName = ranks[defaultRankIndex]?.name || 'Member';
 
+    if (allowedGames.length === 0) {
+      setModalMessage('Please select at least one game for this community.');
+      setLoading(false);
+      return;
+    }
+    const finalMainGame = allowedGames.includes(mainGame) ? mainGame : allowedGames[0];
+
     try {
       const communityRef = await addDoc(collection(db, 'communitys'), {
         name,
@@ -191,6 +206,8 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         ownerId: auth.currentUser.uid,
         ranks: allRanks,
         defaultRankName,
+        allowedGames,
+        mainGame: finalMainGame,
         discordServerId,
       });
 
@@ -244,6 +261,34 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
             className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
             required
           ></textarea>
+        </div>
+
+        <div>
+          <label className="block text-gray-700 font-bold mb-2">Games</label>
+          <p className="text-sm text-gray-500 mb-2">Which game(s) is this community for? This drives the game filters and the showcase game selector.</p>
+          <div className="flex flex-wrap gap-4">
+            {CREATE_GAMES.map(g => (
+              <label key={g.id} className="flex items-center gap-2 text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={allowedGames.includes(g.id)}
+                  onChange={() => setAllowedGames(prev => prev.includes(g.id) ? prev.filter(id => id !== g.id) : [...prev, g.id])}
+                  className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                {g.name}
+              </label>
+            ))}
+          </div>
+          {allowedGames.length > 1 && (
+            <div className="mt-3">
+              <label className="block text-gray-700 font-bold mb-1">Main Game</label>
+              <select value={allowedGames.includes(mainGame) ? mainGame : allowedGames[0]} onChange={(e) => setMainGame(e.target.value)} className="w-full p-2 border rounded-lg">
+                {CREATE_GAMES.filter(g => allowedGames.includes(g.id)).map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div>

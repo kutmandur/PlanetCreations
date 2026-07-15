@@ -154,6 +154,8 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                         <div><label className="block text-gray-700 font-bold mb-1" htmlFor="tiktok">TikTok</label><input type="url" name="tiktok" id="tiktok" value={profileData.tiktok || ''} onChange={handleChange} className="w-full p-2 border rounded-lg" placeholder="https://tiktok.com/@..." /></div>
                         <div><label className="block text-gray-700 font-bold mb-1" htmlFor="x">X (Twitter)</label><input type="url" name="x" id="x" value={profileData.x || ''} onChange={handleChange} className="w-full p-2 border rounded-lg" placeholder="https://x.com/..." /></div>
                         <div><label className="block text-gray-700 font-bold mb-1" htmlFor="discord">Discord</label><input type="text" name="discord" id="discord" value={profileData.discord || ''} onChange={handleChange} className="w-full p-2 border rounded-lg" placeholder="User-ID" /></div>
+                        <div><label className="block text-gray-700 font-bold mb-1" htmlFor="steam">Steam</label><input type="url" name="steam" id="steam" value={profileData.steam || ''} onChange={handleChange} className="w-full p-2 border rounded-lg" placeholder="https://steamcommunity.com/id/..." /></div>
+                        <div><label className="block text-gray-700 font-bold mb-1" htmlFor="website">Website</label><input type="url" name="website" id="website" value={profileData.website || ''} onChange={handleChange} className="w-full p-2 border rounded-lg" placeholder="https://..." /></div>
                     </div>
                 </div>
 
