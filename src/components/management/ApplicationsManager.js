@@ -56,6 +56,21 @@ const ApplicationsManager = ({ creations, setCreations, community, setModalMessa
         }
     };
 
+    // Bewerbung ablehnen: appliedForShowcase zurücksetzen (verschwindet aus der Liste).
+    // Der Owner kann die Creation später trotzdem via "Mark for Showcase"
+    // (CreationManager) wieder aufnehmen. Der onShowcaseStatus-Trigger benachrichtigt
+    // den Bewerber über die Ablehnung.
+    const handleDeny = async (creationId) => {
+        const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
+        try {
+            await setDoc(linkRef, { appliedForShowcase: false }, { merge: true });
+            setCreations(prev => prev.map(c => c.id === creationId ? { ...c, appliedForShowcase: false } : c));
+            setModalMessage('Application denied. You can still add this creation later via "Mark for Showcase".');
+        } catch (error) {
+            setModalMessage(`Error denying application: ${error.message}`);
+        }
+    };
+
     // Direkt in eine Showcase-Gruppe aufnehmen
     const handleAssignGroup = async (creationId, groupId) => {
         const linkRef = doc(db, 'communitys', community.id, 'creations', creationId);
@@ -118,6 +133,13 @@ const ApplicationsManager = ({ creations, setCreations, community, setModalMessa
                                     title={(community.showcaseGroups || []).length === 0 ? 'Create a showcase group first (Groups tab)' : 'Accept and add directly to a showcase group'}
                                 >
                                     Add to Group
+                                </button>
+                                <button
+                                    onClick={() => handleDeny(creation.id)}
+                                    className="text-sm font-semibold py-2 px-3 rounded-lg bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-600"
+                                    title="Deny this application"
+                                >
+                                    Deny
                                 </button>
                             </div>
                         </CreationShowcaseCard>

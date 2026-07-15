@@ -1489,7 +1489,13 @@ exports.notifyOnShowcaseStatus = functions.firestore
         const nowShowcased = !!after.showcaseVideoUrl && !before.showcaseVideoUrl;
         const nowMarked = after.markedForShowcase === true &&
             before.markedForShowcase !== true && !after.showcaseVideoUrl;
-        if (!nowShowcased && !nowMarked) return null;
+        // Ablehnung: appliedForShowcase true→false, ohne dass markiert/showcased wurde
+        // (grenzt sich von "aus Waitlist entfernen" ab, wo markedForShowcase true war).
+        const nowDenied = change.after.exists &&
+            before.appliedForShowcase === true && after.appliedForShowcase !== true &&
+            before.markedForShowcase !== true && after.markedForShowcase !== true &&
+            !after.showcaseVideoUrl && !after.showcaseGroupId;
+        if (!nowShowcased && !nowMarked && !nowDenied) return null;
 
         const communityId = context.params.communityId;
         const comSnap = await db.doc(`communitys/${communityId}`).get();
@@ -1507,6 +1513,12 @@ exports.notifyOnShowcaseStatus = functions.firestore
             await notifyUser(ownerId, 'showcaseAccepted', {
                 title: 'Showcase application accepted',
                 message: `${comName} added your creation to the showcase waitlist.`,
+                link: `/creation/${context.params.creationId}`,
+            });
+        } else if (nowDenied) {
+            await notifyUser(ownerId, 'showcaseDenied', {
+                title: 'Showcase application update',
+                message: `${comName} didn't select your creation for a showcase this time.`,
                 link: `/creation/${context.params.creationId}`,
             });
         }

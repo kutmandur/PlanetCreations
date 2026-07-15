@@ -152,15 +152,18 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             blacklist={blacklist}
                         />;
             case 'Members': 
-                return <MemberManager 
-                            members={members} 
-                            ranks={community.ranks || []} 
+                return <MemberManager
+                            members={members}
+                            ranks={community.ranks || []}
                             communityId={communityId}
+                            community={community}
                             setPopoverView={setPopoverView}
                             setModalMessage={setModalMessage}
                             setConfirmation={setConfirmation}
+                            setPasswordConfirm={setPasswordConfirm}
                             currentUserRankWeight={currentUserRankWeight}
                             currentUserId={userProfile?.uid}
+                            onTransferComplete={() => navigate('/communitys')}
                         />;
             case 'Showcases':
                 return <ShowcaseManager
