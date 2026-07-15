@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getDocs, startAfter, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getDocs, startAfter, writeBatch, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS, SOCIAL_PLATFORMS, getYoutubeThumbnailUrl } from '../../utils/helpers';
@@ -61,6 +61,9 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const [loadingShowcases, setLoadingShowcases] = useState(false);
 
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
+    const [isFollowing, setIsFollowing] = useState(false);
+    const [followerCount, setFollowerCount] = useState(0);
+    const [isFollowingBusy, setIsFollowingBusy] = useState(false);
     const tabRefs = useRef([]);
     const [gliderStyle, setGliderStyle] = useState({});
     const color = getGameColor(selectedGame);
@@ -289,6 +292,35 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         }
     };
 
+    useEffect(() => { setFollowerCount(profile?.followers?.length || 0); }, [profile]);
+    useEffect(() => { setIsFollowing((userProfile?.following || []).includes(userId)); }, [userProfile, userId]);
+
+    const handleFollow = async () => {
+        if (!user || !userProfile) { setModalMessage("You must be logged in to follow."); return; }
+        if (user.uid === userId || isFollowingBusy) return;
+        setIsFollowingBusy(true);
+        const meRef = doc(db, 'profiles', user.uid);
+        const targetRef = doc(db, 'profiles', userId);
+        const wasFollowing = isFollowing;
+        const batch = writeBatch(db);
+        if (wasFollowing) {
+            batch.update(meRef, { following: arrayRemove(userId) });
+            batch.update(targetRef, { followers: arrayRemove(user.uid) });
+        } else {
+            batch.update(meRef, { following: arrayUnion(userId) });
+            batch.update(targetRef, { followers: arrayUnion(user.uid) });
+        }
+        try {
+            await batch.commit();
+            setIsFollowing(!wasFollowing);
+            setFollowerCount(c => Math.max(0, c + (wasFollowing ? -1 : 1)));
+        } catch (error) {
+            setModalMessage(`Error updating follow: ${error.message}`);
+        } finally {
+            setIsFollowingBusy(false);
+        }
+    };
+
     const handleReportUser = () => {
         if (!user) { setModalMessage("You must be logged in to report a user."); return; }
         if (hasAlreadyReported) { setModalMessage("You have already reported this user."); return; }
@@ -363,7 +395,17 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         {profile?.country && <p className="text-gray-500 mt-1">{profile.country}</p>}
                         {profile?.favoriteGame && <p className="text-sm bg-gray-200 text-gray-800 px-2 py-1 rounded-full inline-block mt-2">{profile.favoriteGame.replace(/-/g, ' ')}</p>}
 
+                        <div className="flex items-center justify-center gap-6 mt-3 text-sm">
+                            <span><span className="font-bold">{followerCount}</span> <span className="text-gray-500">Followers</span></span>
+                            <span><span className="font-bold">{profile?.following?.length || 0}</span> <span className="text-gray-500">Following</span></span>
+                        </div>
+
                         <div className="flex items-center justify-center mt-6 space-x-2">
+                            {user && user.uid !== userId && (
+                                <button onClick={handleFollow} disabled={isFollowingBusy} className={`font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 ${isFollowing ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'text-white'}`} style={isFollowing ? {} : { backgroundColor: themeHex }}>
+                                    {isFollowing ? 'Following' : 'Follow'}
+                                </button>
+                            )}
                             {user && user.uid !== userId && (
                                 <button onClick={handleReportUser} disabled={hasAlreadyReported} className="text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed">
                                     {hasAlreadyReported ? 'Already Reported' : 'Report User'}
