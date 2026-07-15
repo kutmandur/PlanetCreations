@@ -66,44 +66,72 @@ const NotificationTemplateInput = ({ templateKey, templates, setTemplates, getSu
 };
 
 
+const REMINDER_CHANNEL_OPTIONS = [
+    { id: 'both', label: 'Discord + Site' },
+    { id: 'discord', label: 'Discord only' },
+    { id: 'site', label: 'Site only' },
+    { id: 'none', label: 'None' },
+];
+
 const EventDiscordSettings = ({
-    reminders, 
-    voteReminders, 
-    handleReminderChange, 
+    reminders,
+    voteReminders,
+    handleReminderChange,
     separateVoteTime,
-    notificationTemplates, 
-    setNotificationTemplates, 
+    votingEnabled = true,
+    reminderChannels = 'both',
+    setReminderChannels,
+    notificationTemplates,
+    setNotificationTemplates,
     getMessageSuggestions
 }) => {
     return (
         <>
             <div>
-                <label className="block text-gray-700 font-bold mb-2">Discord Reminders</label>
+                <label className="block text-gray-700 font-bold mb-2">Reminders</label>
                 <div className="p-4 border rounded-lg bg-gray-50 space-y-3">
-                    <p className="text-sm text-gray-600">Set up to 3 automated reminders before the submission period ends.</p>
-                    {[0, 1, 2].map(index => 
-                        <ReminderInput 
-                            key={`sub-${index}`} 
-                            index={index} 
-                            reminder={reminders[index]} 
-                            onchange={handleReminderChange} 
-                        />
-                    )}
+                    <div>
+                        <p className="text-sm font-semibold text-gray-700 mb-2">Send reminders & event notifications via:</p>
+                        <div className="flex flex-wrap gap-2">
+                            {REMINDER_CHANNEL_OPTIONS.map(opt => (
+                                <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={() => setReminderChannels(opt.id)}
+                                    className={`px-3 py-1 text-sm rounded-full font-semibold ${reminderChannels === opt.id ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">"Site" sends in-app / push notifications to community members on PlanetCreations.</p>
+                    </div>
+                    {reminderChannels !== 'none' && (<>
+                        <p className="text-sm text-gray-600 pt-2 border-t">Set up to 3 automated reminders before the submission period ends.</p>
+                        {[0, 1, 2].map(index =>
+                            <ReminderInput
+                                key={`sub-${index}`}
+                                index={index}
+                                reminder={reminders[index]}
+                                onchange={handleReminderChange}
+                            />
+                        )}
+                    </>)}
                 </div>
             </div>
 
-            {separateVoteTime && (
+            {separateVoteTime && votingEnabled && reminderChannels !== 'none' && (
                 <div>
-                    <label className="block text-gray-700 font-bold mb-2">Discord Voting Reminders</label>
+                    <label className="block text-gray-700 font-bold mb-2">Voting Reminders</label>
                     <div className="p-4 border rounded-lg bg-gray-50 space-y-3">
                         <p className="text-sm text-gray-600">Set reminders for the voting period.</p>
-                        {[0, 1, 2].map(index => 
-                            <ReminderInput 
-                                key={`vote-${index}`} 
-                                index={index} 
-                                reminder={voteReminders[index]} 
-                                onchange={handleReminderChange} 
-                                isVoteReminder 
+                        {[0, 1, 2].map(index =>
+                            <ReminderInput
+                                key={`vote-${index}`}
+                                index={index}
+                                reminder={voteReminders[index]}
+                                onchange={handleReminderChange}
+                                isVoteReminder
                             />
                         )}
                     </div>
