@@ -3,6 +3,7 @@ const { buildCreationEmbed } = require('../utils/embedBuilder');
 const { Client } = require('discord.js');
 
 let activeEventsCache = [];
+let managingEventsCache = [];
 let isInitialLoad = true;
 
 /**
@@ -17,6 +18,15 @@ function initializeAllListeners(client) {
         activeEventsCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         console.log(`[Event Cache] Cache updated. Now tracking ${activeEventsCache.length} active events.`);
     }, error => console.error('[Event Cache] Listener failed:', error));
+
+    // --- Managing-Phase Cache: beendete Events mit noch unveröffentlichten
+    // Ergebnissen. Vom Event Notifier für geplantes Publishing + Ergebnis-
+    // Benachrichtigungen genutzt (der aktive Cache verliert Events nach voteEndDate).
+    const managingQuery = db.collection('events').where('resultsStatus', '==', 'managing');
+    managingQuery.onSnapshot(snapshot => {
+        managingEventsCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        console.log(`[Event Cache] Managing cache updated. Now tracking ${managingEventsCache.length} events.`);
+    }, error => console.error('[Managing Cache] Listener failed:', error));
 
     // --- Creation Announcer & Unlink Listener ---
     const creationsQuery = db.collectionGroup('creations');
@@ -142,4 +152,4 @@ function initializeAllListeners(client) {
     }, error => console.error('[Vote Updater] Listener failed:', error));
 }
 
-module.exports = { initializeAllListeners, getActiveEventsCache: () => activeEventsCache };
+module.exports = { initializeAllListeners, getActiveEventsCache: () => activeEventsCache, getManagingEventsCache: () => managingEventsCache };

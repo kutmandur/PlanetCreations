@@ -53,6 +53,8 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     const [suggestedClasses, setSuggestedClasses] = useState([]);
     const [voteType, setVoteType] = useState('single');
     const [voteLimit, setVoteLimit] = useState(1);
+    const [votingEnabled, setVotingEnabled] = useState(true);
+    const [reminderChannels, setReminderChannels] = useState('both');
     const [imageItems, setImageItems] = useState([]);
     const [videoItems, setVideoItems] = useState([]);
     const IMAGE_LIMIT = 10;
@@ -137,6 +139,8 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     setEventClasses(data.classes || []);
                     setVoteType(data.voteType || 'single');
                     setVoteLimit(data.voteLimit || 1);
+                    setVotingEnabled(data.votingEnabled !== false);
+                    setReminderChannels(data.reminderChannels || 'both');
                     if (data.notificationTemplates) setNotificationTemplates(data.notificationTemplates);
                     
                     const loadedReminders = (data.reminders || []).map(parseReminderString);
@@ -318,11 +322,18 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
             blockOldCreations, creationCutoffDate: blockOldCreations ? new Date(creationCutoffDate) : null,
             game, communityId: isEditing ? (await getDoc(doc(db, 'events', eventId))).data().communityId : communityId,
             creatorId: user.uid, updatedAt: serverTimestamp(), classes: eventClasses,
-            reminders: finalReminders, voteReminders: separateVoteTime ? finalVoteReminders : [],
+            reminders: finalReminders, voteReminders: (separateVoteTime && votingEnabled) ? finalVoteReminders : [],
             voteType, voteLimit: voteType === 'multiple' ? Number(voteLimit) : 1,
+            votingEnabled, reminderChannels,
             notificationsSent: isEditing ? (await getDoc(doc(db, 'events', eventId))).data().notificationsSent || {} : {},
             notificationTemplates,
         };
+        // Nach Ablauf geht das Event in die "Managing Phase" (Ergebnisse werden erst
+        // nach manuellem Publish angezeigt). Bereits veröffentlichte Events behalten
+        // ihren Status.
+        if (!isEditing) {
+            eventData.resultsStatus = 'managing';
+        }
         try {
             const newClasses = eventClasses.filter(c => !allCommunityClasses.some(ac => ac.toLowerCase() === c.toLowerCase()));
             if (newClasses.length > 0) {
@@ -367,6 +378,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     creationCutoffDate={creationCutoffDate} setCreationCutoffDate={setCreationCutoffDate}
                     voteType={voteType} setVoteType={setVoteType}
                     voteLimit={voteLimit} setVoteLimit={setVoteLimit}
+                    votingEnabled={votingEnabled} setVotingEnabled={setVotingEnabled}
                 />
                 
                 <EventTimeSettings
@@ -386,6 +398,9 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     voteReminders={voteReminders}
                     handleReminderChange={handleReminderChange}
                     separateVoteTime={separateVoteTime}
+                    votingEnabled={votingEnabled}
+                    reminderChannels={reminderChannels}
+                    setReminderChannels={setReminderChannels}
                     notificationTemplates={notificationTemplates}
                     setNotificationTemplates={setNotificationTemplates}
                     getMessageSuggestions={getMessageSuggestions}

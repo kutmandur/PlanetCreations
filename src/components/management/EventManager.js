@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, onSnapshot, getDoc, collection, query, where, getDocs, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, collection, query, where, getDocs, updateDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Spinner from '../ui/Spinner';
@@ -94,7 +94,7 @@ const SubmissionItem = ({ submission, members, community, eventData, eventId, is
     );
 };
 
-const TABS = ['Submissionlist', 'Groups', 'Stats'];
+const TABS = ['Submissionlist', 'Groups', 'Results'];
 
 const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) => {
     const { eventId } = useParams();
@@ -126,36 +126,66 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
 
     useEffect(() => {
         if (!eventId) return;
-        
+
+        // Nur das Event-Doc live beobachten. Community/Members/Submissions werden in
+        // eigenen Effekten einmalig geladen — sonst würde jeder Manager-Write
+        // (Gruppen/Checkboxen werden jetzt persistiert) alles neu laden.
         const eventRef = doc(db, 'events', eventId);
-        const unsubscribeEvent = onSnapshot(eventRef, async (docSnap) => {
+        const unsubscribeEvent = onSnapshot(eventRef, (docSnap) => {
             if (docSnap.exists()) {
                 const fetchedEventData = { id: docSnap.id, ...docSnap.data() };
                 setEventData(fetchedEventData);
-
-                const communityRef = doc(db, 'communitys', fetchedEventData.communityId);
-                const communitySnap = await getDoc(communityRef);
-                if (communitySnap.exists()) {
-                    setCommunity({ id: communitySnap.id, ...communitySnap.data() });
-                }
-
-                const submissionsQuery = query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId));
-                const submissionsSnap = await getDocs(submissionsQuery);
-                const submissionData = submissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setSubmissions(submissionData);
-
-                const membersQuery = query(collection(db, 'communitys', fetchedEventData.communityId, 'members'));
-                const membersSnap = await getDocs(membersQuery);
-                setMembers(membersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                
-                setLoading(false);
-            } else {
-                setLoading(false);
+                // Manager-Zustand aus dem Doc hydratisieren (persistiert → überlebt
+                // Reloads und synct zwischen Staff-Mitgliedern).
+                setGroups(fetchedEventData.managerGroups || []);
+                setGroupAssignments(fetchedEventData.managerGroupAssignments || {});
+                setDoneSubmissions(fetchedEventData.managerDoneSubmissions || []);
+                setDoneGroups(fetchedEventData.managerDoneGroups || []);
+                setReactionCounts(fetchedEventData.reactionCounts || {});
             }
+            setLoading(false);
         });
 
         return () => unsubscribeEvent();
     }, [eventId]);
+
+    useEffect(() => {
+        if (!eventData?.communityId) return;
+        let mounted = true;
+        (async () => {
+            const communitySnap = await getDoc(doc(db, 'communitys', eventData.communityId));
+            if (mounted && communitySnap.exists()) {
+                setCommunity({ id: communitySnap.id, ...communitySnap.data() });
+            }
+            const membersSnap = await getDocs(query(collection(db, 'communitys', eventData.communityId, 'members')));
+            if (mounted) setMembers(membersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        })();
+        return () => { mounted = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [eventData?.communityId]);
+
+    useEffect(() => {
+        if (!eventId) return;
+        let mounted = true;
+        (async () => {
+            const submissionsSnap = await getDocs(query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId)));
+            if (mounted) setSubmissions(submissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        })();
+        return () => { mounted = false; };
+    }, [eventId]);
+
+    // Manager-Zustand persistieren (B11): jede Änderung wird aufs Event-Doc
+    // geschrieben. resultsStatus wird dabei für Alt-Events nachgezogen.
+    const persistManager = async (fields) => {
+        try {
+            await updateDoc(doc(db, 'events', eventId), {
+                ...fields,
+                ...(eventData?.resultsStatus ? {} : { resultsStatus: 'managing' }),
+            });
+        } catch (error) {
+            setModalMessage(`Error saving: ${error.message}`);
+        }
+    };
 
     const syncReactionCounts = async () => {
         if (submissions.length === 0) return;
@@ -184,6 +214,8 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
             }
         }
         setReactionCounts(newReactionCounts);
+        // Persistieren: öffentliche Ergebnisseite und Bot brauchen die Zahlen auch.
+        persistManager({ reactionCounts: newReactionCounts });
         setIsSyncingReactions(false);
     };
 
@@ -191,7 +223,12 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
         if (submissions.length === 0) return;
 
         const voteUnsubscribers = submissions.map(sub => {
-            const votesQuery = query(collection(db, 'creations', sub.id, 'votes'));
+            // Nur echte Event-Votes zählen (die Subcollection enthält auch Likes).
+            const votesQuery = query(
+                collection(db, 'creations', sub.id, 'votes'),
+                where('type', '==', 'event_vote'),
+                where('eventId', '==', eventId)
+            );
             return onSnapshot(votesQuery, (snapshot) => {
                 setVoteCounts(prev => ({ ...prev, [sub.id]: snapshot.size }));
             });
@@ -200,7 +237,8 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
         return () => {
             voteUnsubscribers.forEach(unsub => unsub());
         };
-    }, [submissions]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [submissions, eventId]);
     
     useEffect(() => {
         if (loading) return;
@@ -252,34 +290,47 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
     }, [submissions, members, rankFilter, searchTerm, doneSubmissions, sortBy, voteCounts, reactionCounts]);
 
     const handleDoneToggle = (submissionId) => {
-        setDoneSubmissions(prev => 
-            prev.includes(submissionId) 
-                ? prev.filter(id => id !== submissionId)
-                : [...prev, submissionId]
-        );
+        const next = doneSubmissions.includes(submissionId)
+            ? doneSubmissions.filter(id => id !== submissionId)
+            : [...doneSubmissions, submissionId];
+        setDoneSubmissions(next);
+        persistManager({ managerDoneSubmissions: next });
     };
-    
+
     const handleDoneGroupToggle = (groupId) => {
-        setDoneGroups(prev => 
-            prev.includes(groupId) 
-                ? prev.filter(id => id !== groupId)
-                : [...prev, groupId]
-        );
+        const next = doneGroups.includes(groupId)
+            ? doneGroups.filter(id => id !== groupId)
+            : [...doneGroups, groupId];
+        setDoneGroups(next);
+        persistManager({ managerDoneGroups: next });
     };
 
     const handleGroupChange = (submissionId, groupId) => {
-        setGroupAssignments(prev => ({ ...prev, [submissionId]: groupId }));
+        const next = { ...groupAssignments, [submissionId]: groupId };
+        setGroupAssignments(next);
+        persistManager({ managerGroupAssignments: next });
     };
 
     const handleAddGroup = () => {
         if (newGroupName.trim() && !groups.some(g => g.name === newGroupName.trim())) {
-            setGroups(prev => [...prev, { id: `group-${Date.now()}`, name: newGroupName.trim() }]);
+            const next = [...groups, { id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: newGroupName.trim() }];
+            setGroups(next);
             setNewGroupName('');
+            persistManager({ managerGroups: next });
         }
     };
-    
+
     const handleRemoveGroup = (groupId) => {
-        setGroups(prev => prev.filter(group => group.id !== groupId));
+        const next = groups.filter(group => group.id !== groupId);
+        setGroups(next);
+        persistManager({ managerGroups: next });
+    };
+
+    // Gruppen-Metadaten für die Ergebnis-Veröffentlichung (Video-URL, Zeitplan …)
+    const updateGroupMeta = (groupId, fields) => {
+        const next = groups.map(g => g.id === groupId ? { ...g, ...fields } : g);
+        setGroups(next);
+        persistManager({ managerGroups: next });
     };
 
     const handleAssignVideoToGroup = async (groupId) => {
@@ -434,13 +485,55 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
             }
         }
     
-        setGroups(prev => [...prev, ...newGroups]);
-        setGroupAssignments(prev => ({ ...prev, ...newAssignments }));
+        const nextGroups = [...groups, ...newGroups];
+        const nextAssignments = { ...groupAssignments, ...newAssignments };
+        setGroups(nextGroups);
+        setGroupAssignments(nextAssignments);
+        persistManager({ managerGroups: nextGroups, managerGroupAssignments: nextAssignments });
         setModalMessage(`${newGroups.length} group(s) created automatically. ${sortedSubs.length} creation(s) remain unassigned.`);
         setIsAutoGroupModalOpen(false);
     };
 
+    // --- Ergebnisse (Results-Tab) ---
+    const winnerMetric = eventData?.winnerMetric || 'votes';
+    const metricValue = (id) => winnerMetric === 'reactions' ? (reactionCounts[id] || 0) : (voteCounts[id] || 0);
+    // Gespeicherte eigene Reihenfolge; neue/unsortierte Einreichungen werden nach
+    // der gewählten Metrik hinten angefügt.
+    const resultsOrder = (() => {
+        const saved = (eventData?.resultsOrder || []).filter(id => submissions.some(s => s.id === id));
+        const missing = submissions.map(s => s.id).filter(id => !saved.includes(id));
+        missing.sort((a, b) => metricValue(b) - metricValue(a));
+        return [...saved, ...missing];
+    })();
+
+    const moveInOrder = (id, dir) => {
+        const idx = resultsOrder.indexOf(id);
+        const swapWith = idx + dir;
+        if (idx < 0 || swapWith < 0 || swapWith >= resultsOrder.length) return;
+        const next = [...resultsOrder];
+        [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+        persistManager({ resultsOrder: next });
+    };
+
+    const handlePublishResults = () => {
+        // Reihenfolge einfrieren + Publish anfordern. Der Bot verschickt die
+        // Teilnehmer-Benachrichtigungen und setzt resultsStatus auf 'published'.
+        persistManager({
+            resultsOrder,
+            resultsPublishRequestedAt: serverTimestamp(),
+        });
+        setModalMessage('Results published! Participants will be notified within a minute.');
+    };
+
+    const handleUnpublishResults = () => {
+        persistManager({ resultsPublishRequestedAt: null, resultsStatus: 'managing' });
+        setModalMessage('Results are hidden again (managing phase). Note: notifications that were already sent cannot be recalled.');
+    };
+
     if (loading || !eventData || !community) return <Spinner />;
+
+    const isResultsPublished = eventData.resultsStatus === 'published' || !!eventData.resultsPublishRequestedAt;
+    const eventEnded = eventData.endDate?.toDate() < new Date();
 
     const color = getGameColor(eventData.game);
 
@@ -582,13 +675,157 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
                         </div>
                     </div>
                 );
-            case 'Stats':
+            case 'Results': {
+                const totalVotes = Object.values(voteCounts).reduce((a, b) => a + b, 0);
+                const participants = new Set(submissions.map(s => s.userId)).size;
+                const votingEnabled = eventData.votingEnabled !== false;
+                const publishMode = eventData.resultsPublishMode || 'all';
+                const notifyOn = eventData.notifyParticipantsOnResults !== false;
+                const fmtLocal = (ts) => {
+                    if (!ts) return '';
+                    const d = ts.toDate ? ts.toDate() : new Date(ts);
+                    const off = d.getTimezoneOffset() * 60000;
+                    return new Date(d.getTime() - off).toISOString().slice(0, 16);
+                };
+                const isGroupLive = (g) => g.published || (g.publishAt && (g.publishAt.toDate ? g.publishAt.toDate() : new Date(g.publishAt)) <= new Date());
+
                 return (
-                    <div className="bg-white p-8 rounded-lg shadow-md text-center">
-                        <h2 className="text-2xl font-bold">Stats</h2>
-                        <p className="mt-4 text-gray-600">Statistics and voting results for the event will be displayed here.</p>
+                    <div className="space-y-6">
+                        {!eventEnded && (
+                            <p className="text-center text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-lg p-3">
+                                The event is still running — you can prepare everything here, but consider publishing only after it ends.
+                            </p>
+                        )}
+
+                        {/* Übersicht */}
+                        <div className="grid grid-cols-3 gap-4 text-center">
+                            <div className="bg-white p-4 rounded-lg shadow"><p className="text-3xl font-bold">{submissions.length}</p><p className="text-sm text-gray-500">Submissions</p></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><p className="text-3xl font-bold">{participants}</p><p className="text-sm text-gray-500">Participants</p></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><p className="text-3xl font-bold">{votingEnabled ? totalVotes : '—'}</p><p className="text-sm text-gray-500">{votingEnabled ? 'Votes cast' : 'Voting disabled'}</p></div>
+                        </div>
+
+                        {/* Ranking */}
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-4">
+                                <h2 className="text-2xl font-bold">Ranking</h2>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-gray-600">Winner metric:</span>
+                                    <select value={winnerMetric} onChange={(e) => persistManager({ winnerMetric: e.target.value })} className="p-2 border rounded-lg bg-white text-sm">
+                                        {votingEnabled && <option value="votes">Site votes</option>}
+                                        <option value="reactions">Discord reactions</option>
+                                        {!votingEnabled && <option value="votes">Site votes (disabled)</option>}
+                                    </select>
+                                    <button onClick={() => persistManager({ resultsOrder: [] })} className="text-sm font-semibold text-blue-600 hover:underline whitespace-nowrap" title="Discard the custom order and sort by the winner metric">
+                                        Reset order
+                                    </button>
+                                    <button onClick={syncReactionCounts} disabled={isSyncingReactions} className="text-sm bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg disabled:opacity-50 whitespace-nowrap">
+                                        {isSyncingReactions ? 'Syncing...' : 'Sync Reactions'}
+                                    </button>
+                                </div>
+                            </div>
+                            {submissions.length === 0 ? (
+                                <p className="text-gray-500 text-center py-6">No submissions yet.</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {resultsOrder.map((id, idx) => {
+                                        const sub = submissions.find(s => s.id === id);
+                                        if (!sub) return null;
+                                        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}.`;
+                                        return (
+                                            <div key={id} className={`flex items-center gap-3 p-3 rounded-lg border ${idx === 0 ? 'bg-yellow-50 border-yellow-300' : 'bg-gray-50'}`}>
+                                                <span className="w-9 text-xl text-center flex-shrink-0">{medal}</span>
+                                                <button onClick={() => setPopoverView({ name: 'detail', id })} className="font-semibold text-gray-800 hover:text-blue-600 truncate text-left flex-grow" title={sub.title}>
+                                                    {sub.title} <span className="font-normal text-gray-500">by {sub.username}</span>
+                                                </button>
+                                                {votingEnabled && <span className="text-sm text-gray-600 whitespace-nowrap" title="Site votes">🗳 {voteCounts[id] || 0}</span>}
+                                                <span className="text-sm text-gray-600 whitespace-nowrap" title="Discord reactions">💬 {reactionCounts[id] || 0}</span>
+                                                <div className="flex flex-col flex-shrink-0">
+                                                    <button onClick={() => moveInOrder(id, -1)} disabled={idx === 0} className="text-gray-400 hover:text-gray-800 disabled:opacity-30 leading-none" title="Move up">▲</button>
+                                                    <button onClick={() => moveInOrder(id, 1)} disabled={idx === resultsOrder.length - 1} className="text-gray-400 hover:text-gray-800 disabled:opacity-30 leading-none" title="Move down">▼</button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Video-Gruppen (Veröffentlichung) */}
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <h2 className="text-2xl font-bold mb-1">Video Groups</h2>
+                            <p className="text-sm text-gray-500 mb-4">Groups from the Groups tab. Add a video link and schedule (or publish) each group — in "per video" mode only creations of live groups are shown publicly.</p>
+                            {groups.length === 0 ? (
+                                <p className="text-gray-500 text-center py-4">No groups yet — create them in the Groups tab.</p>
+                            ) : (
+                                <div className="space-y-3">
+                                    {groups.map(group => {
+                                        const count = submissions.filter(s => groupAssignments[s.id] === group.id).length;
+                                        const live = isGroupLive(group);
+                                        return (
+                                            <div key={group.id} className={`p-4 rounded-lg border ${live ? 'bg-green-50 border-green-300' : 'bg-gray-50'}`}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="font-bold">{group.name} <span className="font-normal text-gray-500">({count} creations)</span></span>
+                                                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${live ? 'bg-green-500 text-white' : 'bg-gray-300 text-gray-700'}`}>{live ? 'LIVE' : 'Pending'}</span>
+                                                </div>
+                                                <div className="flex flex-col sm:flex-row gap-2">
+                                                    <input
+                                                        type="url"
+                                                        defaultValue={group.videoUrl || ''}
+                                                        onBlur={(e) => { if (e.target.value !== (group.videoUrl || '')) updateGroupMeta(group.id, { videoUrl: e.target.value.trim() }); }}
+                                                        placeholder="YouTube video URL for this group..."
+                                                        className="flex-grow p-2 border rounded-lg text-sm"
+                                                    />
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={fmtLocal(group.publishAt)}
+                                                        onChange={(e) => updateGroupMeta(group.id, { publishAt: e.target.value ? Timestamp.fromDate(new Date(e.target.value)) : null, published: false })}
+                                                        className="p-2 border rounded-lg text-sm"
+                                                        title="Schedule when this group goes public"
+                                                    />
+                                                    {!live && (
+                                                        <button onClick={() => updateGroupMeta(group.id, { publishAt: Timestamp.fromDate(new Date()) })} className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg text-sm whitespace-nowrap">
+                                                            Publish now
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Veröffentlichung */}
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <h2 className="text-2xl font-bold mb-1">Publishing</h2>
+                            <p className="text-sm text-gray-500 mb-4">After the event ends it stays in the managing phase — nothing is shown publicly until you publish.</p>
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-gray-700 font-semibold">What should the public see?</span>
+                                    <div className="flex items-center gap-2">
+                                        <button type="button" onClick={() => persistManager({ resultsPublishMode: 'all' })} className={`px-3 py-1 text-sm rounded-full font-semibold ${publishMode === 'all' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}>Everything at once</button>
+                                        <button type="button" onClick={() => persistManager({ resultsPublishMode: 'perVideo' })} className={`px-3 py-1 text-sm rounded-full font-semibold ${publishMode === 'perVideo' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}>Per video group</button>
+                                    </div>
+                                </div>
+                                <label className="flex items-center gap-2 text-gray-700">
+                                    <input type="checkbox" checked={notifyOn} onChange={(e) => persistManager({ notifyParticipantsOnResults: e.target.checked })} className="h-4 w-4 rounded" />
+                                    Notify participants when results (or their group's video) go public
+                                </label>
+                                <div className="pt-3 border-t flex items-center justify-between">
+                                    <span className={`text-sm font-bold ${isResultsPublished ? 'text-green-600' : 'text-gray-500'}`}>
+                                        {isResultsPublished ? '✅ Results are published' : '⏳ Managing phase — results hidden'}
+                                    </span>
+                                    {isResultsPublished ? (
+                                        <button onClick={handleUnpublishResults} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg">Unpublish</button>
+                                    ) : (
+                                        <button onClick={handlePublishResults} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg">Publish results</button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 );
+            }
             default:
                 return null;
         }

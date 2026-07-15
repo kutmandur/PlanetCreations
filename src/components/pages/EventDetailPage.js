@@ -82,7 +82,8 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     useEffect(() => {
         if (connectedCreations.length === 0) return;
         const unsubscribers = connectedCreations.map(creation => {
-            const votesQuery = query(collection(db, 'creations', creation.id, 'votes'));
+            // Nur echte Event-Votes zählen (Subcollection enthält auch Likes)
+            const votesQuery = query(collection(db, 'creations', creation.id, 'votes'), where('type', '==', 'event_vote'), where('eventId', '==', eventId));
             return onSnapshot(votesQuery, (snapshot) => {
                 setVoteCounts(prevCounts => ({
                     ...prevCounts,
@@ -91,7 +92,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
             });
         });
         return () => unsubscribers.forEach(unsub => unsub());
-    }, [connectedCreations]);
+    }, [connectedCreations, eventId]);
 
     useEffect(() => {
         if (!user || !eventId) return;
@@ -159,7 +160,8 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     const endDate = event?.endDate?.toDate();
     const voteStartDate = event?.voteStartDate?.toDate() || startDate;
     const voteEndDate = event?.voteEndDate?.toDate() || endDate;
-    const isVotingOver = voteEndDate && now > voteEndDate;
+    const votingEnabled = event?.votingEnabled !== false;
+    const isVotingOver = votingEnabled && voteEndDate && now > voteEndDate;
 
     const filteredAndSortedCreations = useMemo(() => {
         let creations = [...connectedCreations];
@@ -295,7 +297,38 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     };
     
     const isSubmissionActive = startDate && endDate && now >= startDate && now <= endDate;
-    const isVotingActive = voteStartDate && voteEndDate && now >= voteStartDate && now <= voteEndDate;
+    const isVotingActive = votingEnabled && voteStartDate && voteEndDate && now >= voteStartDate && now <= voteEndDate;
+
+    // --- Ergebnisse (Managing-Phase / Publishing) ---
+    const eventOver = (votingEnabled ? voteEndDate : endDate) && now > (votingEnabled ? voteEndDate : endDate);
+    const hasResultsSystem = !!event.resultsStatus; // Alt-Events ohne Feld: altes Verhalten
+    const resultsLive = event.resultsStatus === 'published' || !!event.resultsPublishRequestedAt;
+    const resultsPublishMode = event.resultsPublishMode || 'all';
+    const managerGroups = event.managerGroups || [];
+    const groupIsLive = (g) => g.published || (g.publishAt && (g.publishAt.toDate ? g.publishAt.toDate() : new Date(g.publishAt)) <= now);
+    const liveGroups = managerGroups.filter(g => groupIsLive(g));
+    const groupAssignments = event.managerGroupAssignments || {};
+    const eventReactionCounts = event.reactionCounts || {};
+    const winnerMetric = event.winnerMetric || 'votes';
+    // Reihenfolge: vom Veranstalter festgelegte resultsOrder, Rest nach Metrik.
+    const resultsOrderedCreations = (() => {
+        const byId = new Map(connectedCreations.map(c => [c.id, c]));
+        const saved = (event.resultsOrder || []).filter(id => byId.has(id));
+        const missing = connectedCreations.map(c => c.id).filter(id => !saved.includes(id));
+        const metric = (id) => winnerMetric === 'reactions' ? (eventReactionCounts[id] || 0) : (voteCounts[id] || 0);
+        missing.sort((a, b) => metric(b) - metric(a));
+        return [...saved, ...missing].map(id => byId.get(id));
+    })();
+    // Sichtbare Ergebnis-Kreationen: alles (publiziert) oder nur live Video-Gruppen.
+    const visibleResultCreations = resultsLive
+        ? resultsOrderedCreations
+        : (resultsPublishMode === 'perVideo'
+            ? resultsOrderedCreations.filter(c => {
+                const gid = groupAssignments[c.id];
+                return gid && liveGroups.some(g => g.id === gid);
+            })
+            : []);
+    const showResultsSection = hasResultsSystem && eventOver;
 
     const mediaItems = [...(event.videoUrls || []), ...(event.imageUrls || [])];
     const activeMedia = mediaItems[activeMediaIndex];
@@ -324,7 +357,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     <h1 className="text-4xl font-bold mb-2">{String(event.title)}</h1>
                     <div className="text-gray-600 mb-6">
                         <p className="text-xl font-semibold">{eventCountdown}</p>
-                        {event.separateVoteTime && voteCountdown && (
+                        {votingEnabled && event.separateVoteTime && voteCountdown && (
                             <p className="text-lg font-medium mt-1">{voteCountdown}</p>
                         )}
                         <p className="text-xs mt-1">({formatDate(event.startDate)} to {formatDate(event.endDate)})</p>
@@ -371,6 +404,59 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                 </div>
             </div>
             
+            {/* --- Ergebnisse: Managing-Phase / veröffentlichte Resultate --- */}
+            {showResultsSection && (
+                <div className="mt-12">
+                    {(!resultsLive && visibleResultCreations.length === 0) ? (
+                        <div className="text-center bg-white p-8 rounded-lg shadow-md">
+                            <h2 className="text-2xl font-bold">🏁 The event has ended</h2>
+                            <p className="mt-2 text-gray-600">The organizers are preparing the results — check back soon!</p>
+                        </div>
+                    ) : (
+                        <div>
+                            <h2 className="text-3xl font-bold text-center mb-2">{resultsLive ? '🏆 Results' : '🏆 Results (so far)'}</h2>
+                            {!resultsLive && (
+                                <p className="text-center text-gray-500 mb-6">More results will be revealed as the organizers publish each video.</p>
+                            )}
+
+                            {/* Video-Gruppen mit Video */}
+                            {liveGroups.filter(g => g.videoUrl).length > 0 && (
+                                <div className="grid gap-6 grid-cols-1 md:grid-cols-2 max-w-4xl mx-auto mb-8 mt-6">
+                                    {liveGroups.filter(g => g.videoUrl).map(g => (
+                                        <div key={g.id} className="bg-white rounded-lg shadow-md overflow-hidden">
+                                            <div className="aspect-video">
+                                                <iframe src={getYoutubeEmbedUrl(g.videoUrl)} title={g.name} frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
+                                            </div>
+                                            <p className="p-3 font-bold text-gray-800">{g.name}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Ranking-Liste */}
+                            <div className="max-w-3xl mx-auto space-y-2 mt-6">
+                                {visibleResultCreations.map((creation) => {
+                                    const globalIdx = resultsOrderedCreations.findIndex(c => c.id === creation.id);
+                                    const medal = globalIdx === 0 ? '🥇' : globalIdx === 1 ? '🥈' : globalIdx === 2 ? '🥉' : `${globalIdx + 1}.`;
+                                    return (
+                                        <div key={creation.id} className={`flex items-center gap-3 p-3 rounded-lg shadow border bg-white ${globalIdx === 0 && resultsLive ? 'ring-2 ring-yellow-400 bg-yellow-50' : ''}`}>
+                                            <span className="w-9 text-xl text-center flex-shrink-0">{medal}</span>
+                                            <button onClick={() => handleCreationClick(creation.id)} className="font-semibold text-gray-800 hover:text-blue-600 truncate text-left flex-grow" title={creation.title}>
+                                                {creation.title} <span className="font-normal text-gray-500">by {creation.username}</span>
+                                            </button>
+                                            {votingEnabled && <span className="text-sm text-gray-600 whitespace-nowrap" title="Votes">🗳 {voteCounts[creation.id] || 0}</span>}
+                                            {Object.keys(eventReactionCounts).length > 0 && (
+                                                <span className="text-sm text-gray-600 whitespace-nowrap" title="Discord reactions">💬 {eventReactionCounts[creation.id] || 0}</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="mt-12">
                 <div className="flex flex-col md:flex-row justify-center items-center mb-8 text-center relative">
                     <h2 className="text-3xl font-bold">Event Submissions</h2>
