@@ -1,17 +1,46 @@
 import React, { useState } from 'react';
-import { db } from '../../firebase/config';
+import { db, auth } from '../../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { getGameColor, SOCIAL_PLATFORMS } from '../../utils/helpers';
+import { transferCommunityOwnership } from '../../firebase/community';
 
-const CommunitySettingsManager = ({ community, setModalMessage }) => {
+const CommunitySettingsManager = ({ community, members = [], setModalMessage, setPasswordConfirm, onTransferComplete }) => {
     const [themeColor, setThemeColor] = useState(community.themeColor || '#F97316');
     const [allowedGames, setAllowedGames] = useState(community.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo']);
     // ✅ 1. Add state for the main game selection
     const [mainGame, setMainGame] = useState(community.mainGame || '');
     const [socialLinks, setSocialLinks] = useState(community.socialLinks || {});
     const [isSaving, setIsSaving] = useState(false);
+    const [transferTarget, setTransferTarget] = useState('');
+
+    // Ownership-Transfer: nur der aktuelle Owner sieht die Danger Zone.
+    const meUid = auth.currentUser?.uid;
+    const isCurrentUserOwner = !!(meUid && community.ownerId === meUid);
+    const transferCandidates = members.filter(m => m.id !== meUid);
+
+    const handleTransferOwnership = () => {
+        if (!isCurrentUserOwner || !setPasswordConfirm || !transferTarget) return;
+        const target = members.find(m => m.id === transferTarget);
+        const targetName = target?.username || 'this member';
+        setPasswordConfirm({
+            message: `Transfer ownership of "${community.name}" to "${targetName}"? You will become a regular member. Confirm with your password.`,
+            onConfirm: async (password) => {
+                try {
+                    const u = auth.currentUser;
+                    const credential = EmailAuthProvider.credential(u.email, password);
+                    await reauthenticateWithCredential(u, credential);
+                    await transferCommunityOwnership(community.id, transferTarget, meUid, community.defaultRankName);
+                    setModalMessage(`Ownership transferred to ${targetName}.`);
+                    if (onTransferComplete) onTransferComplete();
+                } catch (error) {
+                    setModalMessage(`Error transferring ownership: ${error.message}`);
+                }
+            }
+        });
+    };
 
     const handleSocialLinkChange = (platformId, value) => {
         setSocialLinks(prev => ({ ...prev, [platformId]: value }));
@@ -167,6 +196,39 @@ const CommunitySettingsManager = ({ community, setModalMessage }) => {
                         {isSaving ? <Spinner size="small" /> : 'Save Settings'}
                     </button>
                 </div>
+
+                {isCurrentUserOwner && (
+                    <div className="pt-6 border-t border-red-200">
+                        <h4 className="text-lg font-bold text-red-600 mb-2">Danger Zone</h4>
+                        <label className="block text-gray-700 font-bold mb-2">Transfer Ownership</label>
+                        <p className="text-sm text-gray-500 mb-3">
+                            Hand this community over to another member. The new owner gets full control;
+                            you will be demoted to a regular member. This cannot be undone by you.
+                        </p>
+                        <div className="flex items-center gap-3">
+                            <select
+                                value={transferTarget}
+                                onChange={(e) => setTransferTarget(e.target.value)}
+                                className="flex-grow p-2 border rounded-lg bg-white"
+                            >
+                                <option value="">-- Select new owner --</option>
+                                {transferCandidates.map(m => (
+                                    <option key={m.id} value={m.id}>{m.username || m.id}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={handleTransferOwnership}
+                                disabled={!transferTarget}
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50 whitespace-nowrap"
+                            >
+                                Transfer
+                            </button>
+                        </div>
+                        {transferCandidates.length === 0 && (
+                            <p className="text-sm text-gray-400 mt-2">No other members to transfer to yet.</p>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

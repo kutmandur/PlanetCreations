@@ -1,8 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { assignCommunityRole, kickUser, kickAndReportUser, transferCommunityOwnership } from '../../firebase/community';
-import { auth } from '../../firebase/config';
-import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { assignCommunityRole, kickUser, kickAndReportUser } from '../../firebase/community';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
@@ -103,28 +101,7 @@ const RankSelectorPopover = ({ ranks, memberRoles, onRoleChange, onClose, positi
 };
 
 
-const MemberManager = ({ members, ranks, communityId, community, user, userProfile, setModalMessage, setConfirmation, setReportModal, setPasswordConfirm, currentUserRankWeight, currentUserId, onTransferComplete }) => {
-    const meUid = auth.currentUser?.uid;
-    const isCurrentUserOwner = !!(community && meUid && community.ownerId === meUid);
-
-    const handleTransferOwnership = (targetUserId, targetName) => {
-        if (!isCurrentUserOwner || !setPasswordConfirm) return;
-        setPasswordConfirm({
-            message: `Transfer ownership of this community to "${targetName}"? You will become a regular member. Confirm with your password.`,
-            onConfirm: async (password) => {
-                try {
-                    const u = auth.currentUser;
-                    const credential = EmailAuthProvider.credential(u.email, password);
-                    await reauthenticateWithCredential(u, credential);
-                    await transferCommunityOwnership(communityId, targetUserId, meUid, community.defaultRankName);
-                    setModalMessage(`Ownership transferred to ${targetName}.`);
-                    if (onTransferComplete) onTransferComplete();
-                } catch (error) {
-                    setModalMessage(`Error transferring ownership: ${error.message}`);
-                }
-            }
-        });
-    };
+const MemberManager = ({ members, ranks, communityId, user, userProfile, setModalMessage, setConfirmation, setReportModal, currentUserRankWeight, currentUserId }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [rankFilter, setRankFilter] = useState('all');
     const [loadingStates, setLoadingStates] = useState({});
@@ -342,17 +319,12 @@ const MemberManager = ({ members, ranks, communityId, community, user, userProfi
                                         )}
                                     </td>
                                     <td className="p-2">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            {canManageMember && (
-                                                <>
-                                                    <button onClick={() => handleKick(member)} className="text-xs bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-1 px-2 rounded-md">Kick</button>
-                                                    <button onClick={() => handleKickAndReport(member)} className="text-xs bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-md">Kick & Report</button>
-                                                </>
-                                            )}
-                                            {isCurrentUserOwner && member.id !== meUid && (
-                                                <button onClick={() => handleTransferOwnership(member.id, member.username || 'this member')} className="text-xs bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-2 rounded-md" title="Transfer community ownership to this member">Make Owner</button>
-                                            )}
-                                        </div>
+                                        {canManageMember && (
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => handleKick(member)} className="text-xs bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-1 px-2 rounded-md">Kick</button>
+                                                <button onClick={() => handleKickAndReport(member)} className="text-xs bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-md">Kick & Report</button>
+                                            </div>
+                                        )}
                                     </td>
                                 </tr>
                             );
