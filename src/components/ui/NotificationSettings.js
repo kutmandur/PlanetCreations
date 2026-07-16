@@ -8,6 +8,8 @@ const TYPES = [
     { key: 'newCreation', label: 'New creation from a creator you follow' },
     { key: 'creationUpdate', label: 'Updates to a creation you follow' },
     { key: 'communityEvent', label: 'Community events' },
+    { key: 'eventSubmission', label: 'Confirmation when you submit to an event' },
+    { key: 'eventResults', label: 'Results of events you participated in' },
     { key: 'newFollower', label: 'Someone follows you' },
 ];
 

@@ -690,6 +690,12 @@ exports.onCreationWrite = functions
 
         const urlAfter = dataAfter ? dataAfter.backupUrl : null;
         const urlBefore = dataBefore ? dataBefore.backupUrl : null;
+        // Vom Temp-Processing gesetzte finale URL — schützt den Alt-Datei-Cleanup
+        // unten davor, ein gerade verschobenes Backup zu löschen, falls Ziel- und
+        // Altpfad kollidieren (Altbestand: creation-backups/{uid}/{fileName} war
+        // nicht pro Creation/Upload eindeutig → Replace mit gleichem Dateinamen
+        // überschrieb die Alt-Datei und der Cleanup löschte danach die neue).
+        let processedFinalUrl = null;
 
         if (urlAfter && urlAfter.includes('/temp-uploads/') && urlAfter !== urlBefore) {
             const bucketName = getDoBucket();
@@ -767,7 +773,10 @@ exports.onCreationWrite = functions
                 // === VALIDIERUNG BESTANDEN - Datei verschieben ===
                 console.log(`Backup validated successfully for creation ${context.params.creationId}. Moving to permanent storage.`);
 
-                const destinationPath = `creation-backups/${dataAfter.userId}/${fileName}`;
+                // Pro Creation UND Upload eindeutig: verhindert, dass gleichnamige
+                // Dateien (Replace auf derselben Creation oder dieselbe Datei an
+                // zwei Creations) dasselbe Storage-Objekt teilen/überschreiben.
+                const destinationPath = `creation-backups/${dataAfter.userId}/${context.params.creationId}/${Date.now()}-${fileName}`;
 
                 await getS3().copyObject({
                     Bucket: bucketName,
@@ -784,6 +793,7 @@ exports.onCreationWrite = functions
                 console.log(`Successfully deleted temporary file: ${sourcePath}`);
 
                 const newPublicUrl = `${getDoPublicUrl()}/${destinationPath}`;
+                processedFinalUrl = newPublicUrl;
                 await change.after.ref.update({
                     backupUrl: newPublicUrl,
                     backupFileSize: fileSizeBytes,
@@ -812,7 +822,7 @@ exports.onCreationWrite = functions
             }
         }
 
-        if (urlBefore && urlBefore !== urlAfter && !urlBefore.includes('/temp-uploads/')) {
+        if (urlBefore && urlBefore !== urlAfter && urlBefore !== processedFinalUrl && !urlBefore.includes('/temp-uploads/')) {
              try {
                 const oldUrlParts = new URL(urlBefore);
                 const oldFilePath = decodeURIComponent(oldUrlParts.pathname.substring(1));
@@ -1367,6 +1377,30 @@ exports.notifyFollowersOnNewCreation = functions.firestore
         const link = `/creation/${context.params.creationId}`;
         await Promise.all(followers.map(f =>
             notifyUser(f, 'newCreation', { title, message, link })));
+        return null;
+    });
+
+// Eine Creation wurde bei einem Event eingereicht (eventIds gewachsen) →
+// Bestätigung an den Einreicher (Inbox + Push). Läuft serverseitig, damit
+// jede Submission-Route (Modal, künftige Flows) abgedeckt ist.
+exports.notifyOnEventSubmission = functions.firestore
+    .document('creations/{creationId}')
+    .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        const beforeIds = before.eventIds || [];
+        const newIds = (after.eventIds || []).filter(id => !beforeIds.includes(id));
+        if (newIds.length === 0 || !after.userId) return null;
+        await Promise.all(newIds.map(async (eventId) => {
+            const eventSnap = await db.doc(`events/${eventId}`).get();
+            if (!eventSnap.exists) return;
+            const event = eventSnap.data();
+            await notifyUser(after.userId, 'eventSubmission', {
+                title: `Submission accepted: ${event.title}`,
+                message: `Your creation "${after.title}" has been submitted to the event.`,
+                link: `/event/${eventId}`,
+            });
+        }));
         return null;
     });
 
