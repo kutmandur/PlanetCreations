@@ -557,6 +557,15 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 communityAssignments, communitySpecificData: customFieldData,
                 backupUrl: backupUrl || null,
                 backupIsSigned: backupInfo?.signed || false,
+                // Ohne Backup auch die vom Server gesetzten Metadaten leeren —
+                // sonst bleiben Größe/Signer/Dateiname vom entfernten Backup stehen.
+                ...(backupUrl ? {} : {
+                    backupFileSize: null,
+                    backupSignerUid: null,
+                    backupSignerUsername: null,
+                    backupOriginalFileName: null,
+                    backupProcessingError: null,
+                }),
             };
             
             if (creationToEditId) {
