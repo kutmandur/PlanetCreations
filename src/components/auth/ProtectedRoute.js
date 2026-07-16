@@ -5,7 +5,11 @@ import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 
 const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommunityOwnership, setShowRickRoll }) => {
-    const { id: communityId } = useParams();
+    // Die Community kann je nach Route direkt in den Params stehen (:id beim
+    // Community-Manager, :communityId beim Event-Erstellen) oder muss über das
+    // Event-Dokument aufgelöst werden (:eventId bei /event/…/edit|manage).
+    const { id, communityId: communityIdParam, eventId } = useParams();
+    const communityId = communityIdParam || id;
     const [isAuthorized, setIsAuthorized] = useState(null); // null = loading, true = authorized, false = unauthorized
 
     useEffect(() => {
@@ -33,12 +37,21 @@ const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommun
             }
 
             // Check for community-specific staff roles
-            if (checkCommunityOwnership && communityId) {
+            if (checkCommunityOwnership && (communityId || eventId)) {
                 if (userProfile.role === 'admin' || userProfile.role === 'moderator') {
                     setIsAuthorized(true);
                     return;
                 }
-                const memberRef = doc(db, 'communitys', communityId, 'members', user.uid);
+                let effectiveCommunityId = communityId;
+                if (!effectiveCommunityId && eventId) {
+                    const eventSnap = await getDoc(doc(db, 'events', eventId));
+                    effectiveCommunityId = eventSnap.exists() ? eventSnap.data().communityId : null;
+                }
+                if (!effectiveCommunityId) {
+                    setIsAuthorized(false);
+                    return;
+                }
+                const memberRef = doc(db, 'communitys', effectiveCommunityId, 'members', user.uid);
                 const memberSnap = await getDoc(memberRef);
                 if (memberSnap.exists()) {
                     const memberData = memberSnap.data();
@@ -56,7 +69,7 @@ const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommun
         };
 
         checkPermissions();
-    }, [user, userProfile, requiredRole, checkCommunityOwnership, communityId]);
+    }, [user, userProfile, requiredRole, checkCommunityOwnership, communityId, eventId]);
 
     // Handle the user not being logged in at all.
     if (!user) {
