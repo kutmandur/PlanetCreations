@@ -8,6 +8,7 @@ import Icon from '../ui/Icon';
 import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed, isEventHidden } from '../../utils/helpers';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
+import EventSharingQrCode from '../ui/EventSharingQrCode';
 
 const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView, blacklist = [] }) => {
     const { eventId } = useParams();
@@ -418,6 +419,11 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                             {event.rules?.map(rule => (<li key={rule.id}>{rule.text}</li>))}
                         </ul>
                         {(!event.rules || event.rules.length === 0) && (<p className="text-gray-500">No specific rules have been set for this event.</p>)}
+                        {canManageEvent && (
+                            <div className="mt-8 pt-6 border-t max-w-xs mx-auto">
+                                <EventSharingQrCode eventId={eventId} eventName={event.title} />
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
