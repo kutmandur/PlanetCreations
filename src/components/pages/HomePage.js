@@ -7,7 +7,7 @@ import { doc, collection, query, where, onSnapshot, getDoc, getDocs, limit, orde
 import { getGameColor, ICONS } from '../../utils/helpers';
 import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../utils/creationCache';
 import { fetchSearchIndex } from '../../firebase/searchIndexService';
-import { rankCreations, getDayKey, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
+import { rankCreations, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
@@ -555,12 +555,13 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             case 'recommended':
                 // Mit Suchbegriff die Fuse-Relevanz beibehalten (wie bei 'createdAt')
                 if (!term) {
+                    // Seed kommt aus dem Ranking-Modul (neu pro Seitenreload,
+                    // stabil während der SPA-Sitzung)
                     results = rankCreations(results, {
-                        dayKey: getDayKey(),
                         uid: user?.uid || null,
                         interestMap,
                         weights: getLocalFeedWeights() || globalFeedWeights || DEFAULT_WEIGHTS,
-                        // Admin-Debug: Badge auf jeder Karte zeigt Pool + Score
+                        // Admin-Debug: Badge auf jeder Karte zeigt Herkunfts-Pool + Score
                         debug: userProfile?.role === 'admin',
                     });
                 }

@@ -67,11 +67,11 @@ describe('decayActivityScore', () => {
     });
 });
 
-describe('jitter determinism', () => {
-    it('same day/id/uid gives identical values, different day differs', () => {
-        const a = mulberry32(hashStringToSeed('2026-07-17|abc|u1'))();
-        const b = mulberry32(hashStringToSeed('2026-07-17|abc|u1'))();
-        const c = mulberry32(hashStringToSeed('2026-07-18|abc|u1'))();
+describe('seed helpers', () => {
+    it('hash+PRNG are deterministic per seed string', () => {
+        const a = mulberry32(hashStringToSeed('123|abc|u1'))();
+        const b = mulberry32(hashStringToSeed('123|abc|u1'))();
+        const c = mulberry32(hashStringToSeed('456|abc|u1'))();
         expect(a).toBe(b);
         expect(a).not.toBe(c);
         expect(a).toBeGreaterThanOrEqual(0);
@@ -104,77 +104,125 @@ describe('computeTagAffinity', () => {
     });
 });
 
-describe('rankCreations', () => {
-    const ctx = { now: NOW, uid: 'u1', weights: DEFAULT_WEIGHTS };
+describe('rankCreations (pool/slot model)', () => {
+    const ctx = { now: NOW, uid: 'u1', seed: 42, weights: DEFAULT_WEIGHTS };
 
-    it('ranks a brand-new creation above an old inactive unpopular one', () => {
+    it('puts a brand-new creation first (recency pool), old signalless one later', () => {
         const fresh = makeCreation('fresh', { createdAt: ts(NOW - DAY) });
         const stale = makeCreation('stale', { createdAt: ts(NOW - 2 * YEAR) });
-        // Über viele Tage hinweg muss fresh praktisch immer vorne liegen —
-        // einzelne Lotterie-Tage ausgenommen, daher mehrere Seeds prüfen.
-        let freshWins = 0;
-        for (let d = 0; d < 10; d++) {
-            const ranked = rankCreations([stale, fresh], { ...ctx, dayKey: `2026-07-${10 + d}` });
-            if (ranked[0].id === 'fresh') freshWins++;
-        }
-        expect(freshWins).toBeGreaterThanOrEqual(8);
+        // recency hat das höchste Default-Gewicht → erster Slot ist ein
+        // Recency-Pick; stale liegt unter der Pool-Schwelle und kann nur über
+        // Discovery/Rest kommen.
+        const ranked = rankCreations([stale, fresh], ctx);
+        expect(ranked[0].id).toBe('fresh');
+        expect(ranked).toHaveLength(2);
     });
 
-    it('popularity lifts an old creation', () => {
+    it('popularity pool lifts an old hit over an old dud', () => {
         const hit = makeCreation('hit', { createdAt: ts(NOW - YEAR), likes: 500, views: 5000 });
         const dud = makeCreation('dud', { createdAt: ts(NOW - YEAR) });
-        const ranked = rankCreations([dud, hit], { ...ctx, dayKey: '2026-07-17' });
+        // Beide zu alt für den Recency-Pool → erster gefüllter Pool ist popularity
+        const ranked = rankCreations([dud, hit], ctx);
         expect(ranked[0].id).toBe('hit');
     });
 
-    it('activity score lifts a maintained creation over an equal unmaintained one', () => {
-        const active = makeCreation('active', { activityScore: 20, activityAt: ts(NOW - DAY) });
-        const idle = makeCreation('idle');
+    it('activity pool picks the maintained creation first', () => {
+        const active = makeCreation('active', { createdAt: ts(NOW - YEAR), activityScore: 20, activityAt: ts(NOW - DAY) });
+        const idle = makeCreation('idle', { createdAt: ts(NOW - YEAR) });
         const ranked = rankCreations([idle, active], {
             ...ctx,
-            dayKey: '2026-07-17',
             weights: { recency: 0, popularity: 0, activity: 100, affinity: 0, discovery: 0 },
         });
         expect(ranked[0].id).toBe('active');
+        expect(ranked).toHaveLength(2); // idle kommt über den Rest-Fallback
     });
 
-    it('affinity personalizes when an interest map is present', () => {
+    it('affinity pool personalizes when an interest map is present', () => {
         const match = makeCreation('match', { tags: ['coaster'] });
         const other = makeCreation('other', { tags: ['zoo'] });
         const ranked = rankCreations([other, match], {
             ...ctx,
-            dayKey: '2026-07-17',
             interestMap: { coaster: 10 },
             weights: { recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
         });
         expect(ranked[0].id).toBe('match');
     });
 
-    it('handles empty interest map and zero-signal sets without NaN', () => {
-        const a = makeCreation('a');
-        const b = makeCreation('b');
-        const ranked = rankCreations([a, b], { ...ctx, dayKey: '2026-07-17' });
-        expect(ranked).toHaveLength(2);
+    it('honors slider quotas: 50/50 recency+popularity yields half from each pool', () => {
+        const recent = Array.from({ length: 10 }, (_, i) =>
+            makeCreation(`new${i}`, { createdAt: ts(NOW - (i + 1) * DAY) }));
+        const popular = Array.from({ length: 10 }, (_, i) =>
+            makeCreation(`hit${i}`, { createdAt: ts(NOW - 2 * YEAR), likes: 100 + i }));
+        const ranked = rankCreations([...recent, ...popular], {
+            ...ctx,
+            debug: true,
+            weights: { recency: 50, popularity: 50, activity: 0, affinity: 0, discovery: 0 },
+        });
+        expect(ranked).toHaveLength(20);
+        const fromRecency = ranked.filter((c) => c.__feedDebug.pool === 'recency').length;
+        const fromPopularity = ranked.filter((c) => c.__feedDebug.pool === 'popularity').length;
+        expect(fromRecency).toBe(10);
+        expect(fromPopularity).toBe(10);
+        // Anteile verteilen sich über die Liste: schon in den ersten 4 beide Pools
+        const firstPools = new Set(ranked.slice(0, 4).map((c) => c.__feedDebug.pool));
+        expect(firstPools.size).toBe(2);
     });
 
-    it('attaches __feedDebug (pool + parts) only in debug mode', () => {
+    it('never emits duplicates even when an entry qualifies for several pools', () => {
+        const both = makeCreation('both', { createdAt: ts(NOW - DAY), likes: 999 });
+        const others = Array.from({ length: 5 }, (_, i) => makeCreation(`o${i}`));
+        const ranked = rankCreations([both, ...others], { ...ctx, debug: true });
+        expect(ranked).toHaveLength(6);
+        expect(new Set(ranked.map((c) => c.id)).size).toBe(6);
+    });
+
+    it('redistributes a dry pool: affinity-only weights with empty interest map still fill the feed', () => {
+        const set = Array.from({ length: 8 }, (_, i) =>
+            makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * DAY) }));
+        const ranked = rankCreations(set, {
+            ...ctx,
+            interestMap: {},
+            weights: { recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
+        });
+        expect(ranked).toHaveLength(8); // Rest-Fallback nach createdAt
+        expect(ranked[0].id).toBe('c0'); // neueste zuerst
+    });
+
+    it('is deterministic per seed and reshuffles with a new seed', () => {
+        const set = Array.from({ length: 20 }, (_, i) =>
+            makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * DAY) }));
+        const a1 = rankCreations(set, { ...ctx, seed: 1 }).map((c) => c.id);
+        const a2 = rankCreations(set, { ...ctx, seed: 1 }).map((c) => c.id);
+        const b = rankCreations(set, { ...ctx, seed: 2 }).map((c) => c.id);
+        expect(a1).toEqual(a2);
+        expect(b).not.toEqual(a1);
+    });
+
+    it('window draw: recency-only weights pick everything from the recency pool, order varies per seed', () => {
+        const set = Array.from({ length: 20 }, (_, i) =>
+            makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * DAY) }));
+        const weights = { recency: 100, popularity: 0, activity: 0, affinity: 0, discovery: 0 };
+        const a = rankCreations(set, { ...ctx, seed: 1, weights, debug: true });
+        expect(a.every((c) => c.__feedDebug.pool === 'recency')).toBe(true);
+        const b = rankCreations(set, { ...ctx, seed: 9, weights });
+        expect(b.map((c) => c.id)).not.toEqual(a.map((c) => c.id));
+    });
+
+    it('attaches __feedDebug (true origin pool + parts) only in debug mode', () => {
         const hit = makeCreation('hit', { likes: 500 });
-        const debugRanked = rankCreations([hit], { ...ctx, dayKey: '2026-07-17', debug: true });
+        const debugRanked = rankCreations([hit], { ...ctx, debug: true });
         expect(debugRanked[0].__feedDebug).toBeDefined();
-        expect(debugRanked[0].__feedDebug.pool).toBeTruthy();
+        expect(Object.keys(DEFAULT_WEIGHTS)).toContain(debugRanked[0].__feedDebug.pool);
         expect(Object.keys(debugRanked[0].__feedDebug.parts)).toEqual(
             ['recency', 'popularity', 'activity', 'affinity', 'discovery']);
-        const plainRanked = rankCreations([hit], { ...ctx, dayKey: '2026-07-17' });
+        const plainRanked = rankCreations([hit], { ...ctx });
         expect(plainRanked[0].__feedDebug).toBeUndefined();
     });
 
-    it('is deterministic for the same day and reshuffles on another day', () => {
-        const set = Array.from({ length: 20 }, (_, i) =>
-            makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * 30 * DAY) }));
-        const day1a = rankCreations(set, { ...ctx, dayKey: '2026-07-17' }).map((c) => c.id);
-        const day1b = rankCreations(set, { ...ctx, dayKey: '2026-07-17' }).map((c) => c.id);
-        const day2 = rankCreations(set, { ...ctx, dayKey: '2026-07-18' }).map((c) => c.id);
-        expect(day1a).toEqual(day1b);
-        expect(day2).not.toEqual(day1a);
+    it('handles empty input and zero-signal sets without errors', () => {
+        expect(rankCreations([], ctx)).toEqual([]);
+        const a = makeCreation('a');
+        const b = makeCreation('b');
+        expect(rankCreations([a, b], ctx)).toHaveLength(2);
     });
 });
