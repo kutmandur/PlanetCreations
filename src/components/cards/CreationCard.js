@@ -74,13 +74,13 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                     {creation.modStatus === 'UsingMods' && <div className="w-3 h-3 rounded-full ring-2 ring-white bg-purple-500" title="Uses Mods"></div>}
                 </div>
                 {creation.__feedDebug && (
-                    // Admin-Debug: aus welchem "Pool" (dominante Score-Komponente)
-                    // kam dieser Eintrag im Recommended-Feed
+                    // Admin-Debug: aus welchem Pool dieser Eintrag im
+                    // Recommended-Feed gezogen wurde (+ Komponenten-Scores im Tooltip)
                     <div
                         className="absolute top-2 left-2 bg-black bg-opacity-75 text-white text-[10px] font-mono px-2 py-1 rounded-md"
                         title={Object.entries(creation.__feedDebug.parts)
                             .map(([k, v]) => `${k}: ${v.toFixed(3)}`)
-                            .join('\n') + (creation.__feedDebug.lottery ? '\n+ lottery boost' : '')}
+                            .join('\n')}
                     >
                         {POOL_LABELS[creation.__feedDebug.pool] || creation.__feedDebug.pool}
                         {' · '}
