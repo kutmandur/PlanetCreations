@@ -9,6 +9,7 @@ import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
 import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
 import NotificationSettings from '../ui/NotificationSettings';
+import PersonalizationSettings from '../ui/PersonalizationSettings';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);
@@ -390,6 +391,8 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
             </div>
 
             {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
+
+            {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
 
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Influencer Application</h2>

@@ -5,6 +5,8 @@ import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, ar
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
+import { DEFAULT_WEIGHTS, WEIGHT_KEYS } from '../../utils/feedRanking';
+import FeedWeightSliders from '../ui/FeedWeightSliders';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
 
@@ -16,8 +18,11 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500' }) => (
 );
 
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = useRef(['User Management', 'Influencer', 'Data Management', 'Indexes', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
+    const TABS = useRef(['User Management', 'Influencer', 'Data Management', 'Indexes', 'Feed', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
+    const [feedWeights, setFeedWeights] = useState(null);
+    const [feedWeightsDirty, setFeedWeightsDirty] = useState(false);
+    const [savingFeedWeights, setSavingFeedWeights] = useState(false);
     const mainTabRefs = useRef([]);
     const mainGliderRef = useRef(null);
     const location = useLocation();
@@ -379,6 +384,32 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     useEffect(() => {
         if (activeTab === 'Indexes') loadIndexOverview();
     }, [activeTab, loadIndexOverview]);
+
+    // Feed-Tab: globale Feed-Gewichte (meta/feedWeights) laden
+    useEffect(() => {
+        if (activeTab !== 'Feed') return;
+        let mounted = true;
+        getDoc(doc(db, 'meta', 'feedWeights')).then((snap) => {
+            if (mounted) setFeedWeights(snap.exists() ? { ...DEFAULT_WEIGHTS, ...snap.data() } : { ...DEFAULT_WEIGHTS });
+        }).catch((e) => setModalMessage(`Error loading feed weights: ${e.message}`));
+        return () => { mounted = false; };
+    }, [activeTab, setModalMessage]);
+
+    const handleSaveFeedWeights = async (weightsToSave) => {
+        setSavingFeedWeights(true);
+        try {
+            const payload = {};
+            WEIGHT_KEYS.forEach((key) => { payload[key] = Number(weightsToSave[key]) || 0; });
+            await setDoc(doc(db, 'meta', 'feedWeights'), payload);
+            setFeedWeights(payload);
+            setFeedWeightsDirty(false);
+            setModalMessage('Feed weights saved. Clients pick them up within ~30 minutes (cache).');
+        } catch (e) {
+            setModalMessage(`Error saving feed weights: ${e.message}`);
+        } finally {
+            setSavingFeedWeights(false);
+        }
+    };
 
     useEffect(() => {
         if (activeTab !== 'Bug Reports') return;
@@ -793,6 +824,40 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                     </div>
                 );
             }
+            case 'Feed':
+                if (!feedWeights) return <Spinner />;
+                return (
+                    <div className="bg-white p-6 rounded-lg shadow-md max-w-2xl mx-auto">
+                        <h2 className="text-2xl font-bold mb-2">Recommended-Feed Mix</h2>
+                        <p className="text-gray-600 mb-6">
+                            Global default weighting of the "Recommended" home feed. Applies to
+                            logged-out visitors and everyone without personal sliders. Values are
+                            relative shares. "Matches my interests" has no effect for logged-out
+                            users (no interest signal) — the remaining shares fill the gap.
+                        </p>
+                        <FeedWeightSliders
+                            weights={feedWeights}
+                            onChange={(next) => { setFeedWeights(next); setFeedWeightsDirty(true); }}
+                            labelOverrides={{ affinity: 'Personalized (user interests)' }}
+                        />
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => handleSaveFeedWeights(feedWeights)}
+                                disabled={savingFeedWeights || !feedWeightsDirty}
+                                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50"
+                            >
+                                {savingFeedWeights ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                                onClick={() => handleSaveFeedWeights(DEFAULT_WEIGHTS)}
+                                disabled={savingFeedWeights}
+                                className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg disabled:opacity-50"
+                            >
+                                Reset to defaults
+                            </button>
+                        </div>
+                    </div>
+                );
             case 'Email Users':
                 return (
                     <div className="bg-white p-6 rounded-lg shadow-md max-w-2xl mx-auto text-center">

@@ -27,6 +27,8 @@ export function entryToCreation(id, e) {
         dislikes: e.dl || 0,
         views: e.v || 0,
         createdAt: e.ca ? { toMillis: () => e.ca, seconds: Math.floor(e.ca / 1000) } : null,
+        activityScore: e.as || 0,
+        activityAt: e.aa ? { toMillis: () => e.aa, seconds: Math.floor(e.aa / 1000) } : null,
         userId: e.u || '',
         username: e.un || '',
         userProfilePictureUrl: e.up || null,

@@ -29,6 +29,8 @@ import RickRollModal from './components/modals/RickRollModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import CookieConsent from './components/modals/CookieConsent';
 import BugReportModal from './components/modals/BugReportModal';
+import PersonalizationConsentModal from './components/modals/PersonalizationConsentModal';
+import useInterestSync from './hooks/useInterestSync';
 import ClientDashboard from './components/pages/ClientDashboard';
 
 const HomePage = lazyWithReload(() => import('./components/pages/HomePage'));
@@ -90,9 +92,13 @@ const AppContent = () => {
     const [isBugReportOpen, setIsBugReportOpen] = useState(false);
     
     const [homeState, setHomeState] = useState({
-        searchTerm: '', filterTag: '', sortBy: 'createdAt', activeCategory: 'All',
+        searchTerm: '', filterTag: '', sortBy: 'recommended', activeCategory: 'All',
         showModsOnly: false, platformFilter: 'all', dlcFilterMode: 'all', selectedDlcs: []
     });
+
+    // Interessen-Sync (Personalisierung): hydriert bei Login, flusht beim
+    // Verlassen, triggert einmalig das Opt-in-Popover.
+    const { needsConsentPrompt, answerConsent } = useInterestSync(user);
 
     const [communitysState, setCommunitysState] = useState({
         searchTerm: '', sortBy: 'memberCount', activeTab: 'Browser', activeGameFilter: 'all',
@@ -352,6 +358,9 @@ const AppContent = () => {
                     setModalMessage={setModalMessage}
                     blacklist={blacklist}
                 />
+            )}
+            {needsConsentPrompt && user && !isOfflineMode && (
+                <PersonalizationConsentModal onAnswer={answerConsent} />
             )}
             <CookieConsent />
         </div>

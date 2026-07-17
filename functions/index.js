@@ -542,10 +542,14 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
 
         batch.delete(profileRef);
         batch.delete(db.doc(`users/${userId}`));
+        // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
+        // (Personalisierung) und Inbox explizit mitlöschen.
+        batch.delete(db.doc(`users/${userId}/meta/interests`));
+        batch.delete(db.doc(`users/${userId}/meta/inbox`));
         if (username) {
             batch.delete(db.doc(`usernames/${username}`));
         }
-        
+
         await batch.commit();
         await admin.auth().deleteUser(userId);
 
@@ -593,6 +597,10 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
 
         batch.delete(profileRef);
         batch.delete(db.doc(`users/${userIdToDelete}`));
+        // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
+        // (Personalisierung) und Inbox explizit mitlöschen.
+        batch.delete(db.doc(`users/${userIdToDelete}/meta/interests`));
+        batch.delete(db.doc(`users/${userIdToDelete}/meta/inbox`));
         if (username) {
             batch.delete(db.doc(`usernames/${username}`));
         }
@@ -1034,6 +1042,9 @@ const buildIndexEntry = (data) => ({
     un: data.username || '',
     up: data.userProfilePictureUrl || null,
     s: data.status || 'wip',
+    // Activity-Score fürs Feed-Ranking (gepflegt von onCreationActivityScore)
+    as: data.activityScore || 0,
+    aa: data.activityAt?.toMillis?.() || null,
 });
 
 /**
@@ -1377,6 +1388,39 @@ exports.notifyFollowersOnNewCreation = functions.firestore
         const link = `/creation/${context.params.creationId}`;
         await Promise.all(followers.map(f =>
             notifyUser(f, 'newCreation', { title, message, link })));
+        return null;
+    });
+
+// --- Activity-Score fürs Feed-Ranking ---
+// Akkumulierender Score, der regelmäßiges Pflegen belohnt: +1 pro Changelog-
+// Update, max. 1×/Tag (20h-Gate). Abklingen (−30 %/Monat, zusätzlich −80 %/Jahr)
+// ist reine Lese-Mathematik — dieselbe Formel wie in src/utils/feedRanking.js;
+// gespeichert wird nur der Rohwert zum Zeitpunkt des letzten Inkrements.
+// Clients können die Felder nicht schreiben (firestore.rules, isValidCreationUpdate).
+const ACTIVITY_GATE_MS = 20 * 60 * 60 * 1000;
+const decayActivityScore = (score, activityAtMs, nowMs) => {
+    if (!score || score <= 0 || !activityAtMs) return 0;
+    const elapsed = Math.max(0, nowMs - activityAtMs);
+    const months = elapsed / (30 * 24 * 60 * 60 * 1000);
+    const years = elapsed / (365 * 24 * 60 * 60 * 1000);
+    return score * Math.pow(0.7, months) * Math.pow(0.2, years);
+};
+
+exports.onCreationActivityScore = functions.firestore
+    .document('creations/{creationId}')
+    .onUpdate(async (change) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        // Nur echte Updates zählen (neuer Changelog-Eintrag)
+        if ((after.changelog || []).length <= (before.changelog || []).length) return null;
+        const now = Date.now();
+        const lastAt = after.activityAt?.toMillis?.() || 0;
+        if (now - lastAt < ACTIVITY_GATE_MS) return null; // max. 1×/Tag
+        const decayed = decayActivityScore(after.activityScore || 0, lastAt, now);
+        await change.after.ref.update({
+            activityScore: Math.round((decayed + 1) * 100) / 100,
+            activityAt: admin.firestore.Timestamp.fromMillis(now),
+        });
         return null;
     });
 
