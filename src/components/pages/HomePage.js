@@ -3,10 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Fuse from 'fuse.js';
 import { db } from '../../firebase/config';
-import { doc, collection, query, where, onSnapshot, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
+import { doc, collection, query, where, onSnapshot, getDoc, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../utils/creationCache';
 import { fetchSearchIndex } from '../../firebase/searchIndexService';
+import { rankCreations, getDayKey, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
+import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import UserSearchResultCard from '../cards/UserSearchResultCard';
@@ -69,18 +71,38 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         const modsFilterActive = isPlatformGame && homeState.showModsOnly;
         const platformFilterActive = isPlatformGame && homeState.platformFilter === 'console';
         const dlcActive = dlcFilterMode !== 'all';
-        return hasSearchTerm || tagCount > 0 || modsFilterActive || platformFilterActive || dlcActive;
-    }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, dlcFilterMode, activeTab]);
+        // "Recommended" (Default) rankt übers ganze Spiel und läuft daher
+        // ebenfalls über den Index — billiger als der paginierte Pfad (1 Read).
+        const recommendedActive = homeState.sortBy === 'recommended';
+        return hasSearchTerm || tagCount > 0 || modsFilterActive || platformFilterActive || dlcActive || recommendedActive;
+    }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, homeState.sortBy, dlcFilterMode, activeTab]);
 
-    // Suchindex des aktiven Spiels: 1 Firestore-Read, 5 Minuten gecacht,
-    // wird erst geladen wenn tatsächlich gesucht wird.
+    // Suchindex des aktiven Spiels: 1 Firestore-Read, 15 Minuten gecacht,
+    // wird für den Recommended-Feed und im Suchmodus geladen.
     const { data: indexCreations, isLoading: indexLoading } = useQuery({
         queryKey: ['searchIndex', activeTab],
         queryFn: () => fetchSearchIndex(activeTab),
-        staleTime: 5 * 60 * 1000,
+        staleTime: 15 * 60 * 1000,
         gcTime: 30 * 60 * 1000,
         enabled: shouldUseIndexSearch,
     });
+
+    // Globale Feed-Gewichte (Admin-Slider, meta/feedWeights) — 1 günstiger Read,
+    // lange gecacht. User-Slider (localStorage-Spiegel) überschreiben sie.
+    const { data: globalFeedWeights } = useQuery({
+        queryKey: ['feedWeights'],
+        queryFn: async () => {
+            const snap = await getDoc(doc(db, 'meta', 'feedWeights'));
+            return snap.exists() ? snap.data() : null;
+        },
+        staleTime: 30 * 60 * 1000,
+        gcTime: 60 * 60 * 1000,
+        enabled: homeState.sortBy === 'recommended',
+    });
+
+    // Interessen-Map fürs personalisierte Ranking ({} ohne Opt-in) — bewusst nur
+    // pro Tab-Wechsel neu gelesen; der Feed ist ohnehin tagesstabil.
+    const interestMap = useMemo(() => getInterestMap(), [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fuse = useMemo(() => {
         if (!indexCreations || indexCreations.length === 0) return null;
@@ -172,6 +194,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         const trimmedTag = tagToAdd.trim();
         const currentTags = homeState.filterTags || [];
         if (trimmedTag && !currentTags.map(t => t.toLowerCase()).includes(trimmedTag.toLowerCase())) {
+            recordTagClick(trimmedTag); // Interessen-Signal (No-op ohne Opt-in)
             setHomeState(prevState => ({
                 ...prevState,
                 filterTags: [...currentTags, trimmedTag],
@@ -454,10 +477,19 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         return () => clearTimeout(debounceTimer);
     }, [homeState.searchTerm]);
 
-    // Pagination zurücksetzen, wenn sich Suche oder Filter ändern
+    // Interessen-Signal für "gesettelte" Suchen (zählt nur, wenn der Begriff
+    // exakt ein bekannter Tag ist; No-op ohne Opt-in)
+    useEffect(() => {
+        const term = homeState.searchTerm.trim();
+        if (!term) return undefined;
+        const timer = setTimeout(() => recordSearch(term, availableTags), 1500);
+        return () => clearTimeout(timer);
+    }, [homeState.searchTerm, availableTags]);
+
+    // Pagination zurücksetzen, wenn sich Suche, Sortierung oder Filter ändern
     useEffect(() => {
         setVisibleCount(24);
-    }, [shouldUseIndexSearch, activeTab, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, dlcFilterMode, selectedDlcs]);
+    }, [shouldUseIndexSearch, activeTab, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, dlcFilterMode, selectedDlcs]);
 
     // Suche über den Kompakt-Index — komplett client-seitig, kein Server-Roundtrip.
     // Erst strukturelle Filter, dann Fuse.js-Textsuche über die vorgefilterte Menge.
@@ -520,6 +552,17 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             case 'createdAt_asc':
                 results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
                 break;
+            case 'recommended':
+                // Mit Suchbegriff die Fuse-Relevanz beibehalten (wie bei 'createdAt')
+                if (!term) {
+                    results = rankCreations(results, {
+                        dayKey: getDayKey(),
+                        uid: user?.uid || null,
+                        interestMap,
+                        weights: getLocalFeedWeights() || globalFeedWeights || DEFAULT_WEIGHTS,
+                    });
+                }
+                break;
             case 'createdAt':
             default:
                 // Mit Suchbegriff die Fuse-Relevanz beibehalten, sonst neueste zuerst
@@ -530,7 +573,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         return results;
-    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile]);
+    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights]);
 
     const indexHasMore = shouldUseIndexSearch && visibleCount < indexSearchResults.length;
 
@@ -595,6 +638,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             case 'createdAt_asc':
                 filtered.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
                 break;
+            case 'recommended': // läuft über den Index-Pfad; hier nur defensiv
             case 'createdAt':
             default:
                 break;
@@ -739,7 +783,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                                 <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl p-4 z-20">
                                     <h4 className="font-bold mb-2">Sort & Filter</h4>
                                     <label className="block text-sm font-medium text-gray-700">Sort by</label>
-                                    <select value={homeState.sortBy} onChange={handleSortChange} className={`mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}><option value="createdAt">Newest First</option><option value="likes">Most Popular</option><option value="createdAt_asc">Oldest First</option><option value="likes_asc">Least Popular</option></select>
+                                    <select value={homeState.sortBy} onChange={handleSortChange} className={`mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}><option value="recommended">Recommended</option><option value="createdAt">Newest First</option><option value="likes">Most Popular</option><option value="createdAt_asc">Oldest First</option><option value="likes_asc">Least Popular</option></select>
                                     <label className="block text-sm font-medium text-gray-700 mt-4">Filter by Tag</label>
                                     <div className="relative mt-1">
                                         <input type="text" placeholder="Type a tag and press Enter" value={homeState.filterTagInput || ''} onChange={handleTagInputChange} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(homeState.filterTagInput); } }} className={`block w-full p-2 pr-8 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`} />

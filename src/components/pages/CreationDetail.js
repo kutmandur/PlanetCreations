@@ -9,6 +9,7 @@ import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
 import CreationSharingQrCode from '../ui/CreationSharingQrCode';
+import { recordView, recordVote } from '../../utils/interestTracker';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -58,6 +59,17 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         updateDoc(doc(db, 'creations', id), { views: increment(1) })
             .catch(() => sessionStorage.removeItem(viewKey));
     }, [id]);
+
+    // Interessen-Signal (personalisierter Feed): Tags der angesehenen Creation,
+    // 1× pro Session; No-op ohne Personalisierungs-Opt-in. Eigener Effekt,
+    // weil die Tags erst mit dem geladenen Dokument verfügbar sind.
+    useEffect(() => {
+        if (!creation?.id || !creation.tags?.length) return;
+        const trackKey = `tracked-${creation.id}`;
+        if (sessionStorage.getItem(trackKey)) return;
+        sessionStorage.setItem(trackKey, '1');
+        recordView(creation.tags);
+    }, [creation]);
 
     useEffect(() => {
         let isMounted = true;
@@ -227,6 +239,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         const voteOnCreation = httpsCallable(functions, 'voteOnCreation');
         try {
             await voteOnCreation({ creationId: id, voteType: newVoteType });
+            if (newVoteType === 'like') {
+                recordVote(creation?.tags || [], 'like'); // Interessen-Signal (No-op ohne Opt-in)
+            }
         } catch (error) {
             setModalMessage(`An error occurred: ${error.message}`);
         } finally {
