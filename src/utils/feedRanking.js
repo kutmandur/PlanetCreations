@@ -98,6 +98,16 @@ export function computeTagAffinity(tags, interestMap) {
 
 const toMillis = (ts) => (ts && typeof ts.toMillis === 'function' ? ts.toMillis() : null);
 
+// Anzeige-Labels für die Score-Komponenten (Admin-Debug-Badge)
+export const POOL_LABELS = {
+    recency: 'New',
+    popularity: 'Popular',
+    activity: 'Active',
+    affinity: 'For you',
+    discovery: 'Discovery',
+    lottery: 'Lottery',
+};
+
 export function scoreCreation(creation, ctx) {
     const { now, dayKey, uid, interestMap, maxPop, maxActivity, weights } = ctx;
 
@@ -117,17 +127,26 @@ export function scoreCreation(creation, ctx) {
     const affinity = computeTagAffinity(creation.tags, interestMap);
     const j = jitterFor(dayKey, creation.id, uid);
 
-    let score = weights.recency * recency
-        + weights.popularity * popularity
-        + weights.activity * activity
-        + weights.affinity * affinity
-        + weights.discovery * j;
+    const parts = {
+        recency: weights.recency * recency,
+        popularity: weights.popularity * popularity,
+        activity: weights.activity * activity,
+        affinity: weights.affinity * affinity,
+        discovery: weights.discovery * j,
+    };
     // Tägliche "Lotterie": ~3 % des Katalogs bekommen einen kräftigen Boost,
     // jeden Tag eine andere Teilmenge — so tauchen alte Perlen rotierend auf.
-    if (j > 0.97) score += 3 * weights.discovery;
+    const lottery = j > 0.97;
+    let score = parts.recency + parts.popularity + parts.activity + parts.affinity + parts.discovery;
+    if (lottery) score += 3 * weights.discovery;
     if (creation.status === 'finished') score += 0.05;
 
-    return score;
+    if (ctx.debug) {
+        // "Pool" = dominante Score-Komponente (Lotterie schlägt alles)
+        const dominant = Object.entries(parts).sort((a, b) => b[1] - a[1])[0][0];
+        return { score, debug: { pool: lottery ? 'lottery' : dominant, score, parts, lottery } };
+    }
+    return { score };
 }
 
 // Rankt ein Array von Creations (Index-Einträge oder volle Docs) absteigend.
@@ -150,10 +169,12 @@ export function rankCreations(creations, ctx = {}) {
         if (decayed > maxActivity) maxActivity = decayed;
     }
 
-    const fullCtx = { now, dayKey, uid, interestMap, maxPop, maxActivity, weights };
+    const fullCtx = { now, dayKey, uid, interestMap, maxPop, maxActivity, weights, debug: !!ctx.debug };
     return creations
-        .map((c) => ({ c, score: scoreCreation(c, fullCtx) }))
+        .map((c) => ({ c, ...scoreCreation(c, fullCtx) }))
         .sort((a, b) => b.score - a.score
             || (toMillis(b.c.createdAt) || 0) - (toMillis(a.c.createdAt) || 0))
-        .map((entry) => entry.c);
+        // Debug (Admin-Badge): Kopie mit __feedDebug, damit die gecachten
+        // Index-Objekte nicht mutiert werden
+        .map((entry) => (entry.debug ? { ...entry.c, __feedDebug: entry.debug } : entry.c));
 }

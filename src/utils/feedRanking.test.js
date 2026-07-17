@@ -157,6 +157,17 @@ describe('rankCreations', () => {
         expect(ranked).toHaveLength(2);
     });
 
+    it('attaches __feedDebug (pool + parts) only in debug mode', () => {
+        const hit = makeCreation('hit', { likes: 500 });
+        const debugRanked = rankCreations([hit], { ...ctx, dayKey: '2026-07-17', debug: true });
+        expect(debugRanked[0].__feedDebug).toBeDefined();
+        expect(debugRanked[0].__feedDebug.pool).toBeTruthy();
+        expect(Object.keys(debugRanked[0].__feedDebug.parts)).toEqual(
+            ['recency', 'popularity', 'activity', 'affinity', 'discovery']);
+        const plainRanked = rankCreations([hit], { ...ctx, dayKey: '2026-07-17' });
+        expect(plainRanked[0].__feedDebug).toBeUndefined();
+    });
+
     it('is deterministic for the same day and reshuffles on another day', () => {
         const set = Array.from({ length: 20 }, (_, i) =>
             makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * 30 * DAY) }));

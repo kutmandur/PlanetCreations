@@ -5,6 +5,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchCreationById } from '../../firebase/creationsService';
 import { ICONS, getTextColorForBackground } from '../../utils/helpers';
+import { POOL_LABELS } from '../../utils/feedRanking';
 import Icon from '../ui/Icon';
 import { preloadComponent } from '../../utils/preload';
 import useHoverSlideshow from '../../hooks/useHoverSlideshow';
@@ -72,6 +73,20 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                     <div className={`w-3 h-3 rounded-full ring-2 ring-white ${creation.status === 'finished' ? 'bg-green-500' : 'bg-orange-500'}`} title={creation.status === 'finished' ? 'Finished' : 'Work in Progress'}></div>
                     {creation.modStatus === 'UsingMods' && <div className="w-3 h-3 rounded-full ring-2 ring-white bg-purple-500" title="Uses Mods"></div>}
                 </div>
+                {creation.__feedDebug && (
+                    // Admin-Debug: aus welchem "Pool" (dominante Score-Komponente)
+                    // kam dieser Eintrag im Recommended-Feed
+                    <div
+                        className="absolute top-2 left-2 bg-black bg-opacity-75 text-white text-[10px] font-mono px-2 py-1 rounded-md"
+                        title={Object.entries(creation.__feedDebug.parts)
+                            .map(([k, v]) => `${k}: ${v.toFixed(3)}`)
+                            .join('\n') + (creation.__feedDebug.lottery ? '\n+ lottery boost' : '')}
+                    >
+                        {POOL_LABELS[creation.__feedDebug.pool] || creation.__feedDebug.pool}
+                        {' · '}
+                        {creation.__feedDebug.score.toFixed(2)}
+                    </div>
+                )}
                 <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded-md text-xs font-semibold">
                     <div onClick={handleProfileClick} className="hover:underline flex items-center">
                         <img src={creation.userProfilePictureUrl || 'https://placehold.co/24x24/e2e8f0/64748b?text=P'} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-white" />

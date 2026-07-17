@@ -560,6 +560,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                         uid: user?.uid || null,
                         interestMap,
                         weights: getLocalFeedWeights() || globalFeedWeights || DEFAULT_WEIGHTS,
+                        // Admin-Debug: Badge auf jeder Karte zeigt Pool + Score
+                        debug: userProfile?.role === 'admin',
                     });
                 }
                 break;
