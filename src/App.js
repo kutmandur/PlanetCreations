@@ -31,6 +31,7 @@ import CookieConsent from './components/modals/CookieConsent';
 import BugReportModal from './components/modals/BugReportModal';
 import PersonalizationConsentModal from './components/modals/PersonalizationConsentModal';
 import useInterestSync from './hooks/useInterestSync';
+import { loadGamesRegistry } from './utils/gamesRegistry';
 import ClientDashboard from './components/pages/ClientDashboard';
 
 const HomePage = lazyWithReload(() => import('./components/pages/HomePage'));
@@ -117,6 +118,12 @@ const AppContent = () => {
             document.documentElement.style.overflow = 'auto';
         }
     }, [isOfflineMode]);
+
+    // Spiele-Registry (meta/games) einmal beim Boot laden; bis dahin rendert
+    // die App mit dem localStorage-Spiegel bzw. dem eingebauten Fallback.
+    useEffect(() => {
+        if (isConfigured) loadGamesRegistry();
+    }, []);
 
     useEffect(() => {
         if (!isConfigured) { setLoadingAuth(false); return; }
