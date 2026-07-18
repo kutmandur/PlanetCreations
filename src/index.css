@@ -9,8 +9,17 @@ html, body, #root {
 @tailwind utilities;
 
 html {
-  overflow-y: scroll; 
+  overflow-y: scroll;
 }
+
+/* Spiel-Farb-Utilities: Die Farbe kommt aus CSS-Variablen, die getGameColor(id).style
+   am Wrapper setzt (CSS-Variablen vererben an alle Nachfahren). Bewusst NICHT in
+   @layer utilities, damit Tailwind sie nie purged. */
+.game-bg { background-color: var(--game-color, #6B7280); }
+.game-bg-hover:hover { background-color: var(--game-color-hover, #4B5563); }
+.game-text { color: var(--game-color, #6B7280); }
+.game-border { border-color: var(--game-color, #6B7280); }
+.game-ring:focus { --tw-ring-color: var(--game-color, #6B7280); }
 
 @layer utilities {
   @keyframes coaster-spin {

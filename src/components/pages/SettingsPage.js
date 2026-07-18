@@ -285,7 +285,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     };
 
     return (
-        <div className="max-w-4xl mx-auto mt-10 p-4 sm:p-8 space-y-8">
+        <div className="max-w-4xl mx-auto mt-10 p-4 sm:p-8 space-y-8" style={color.style}>
             <h1 className="text-4xl font-bold text-center text-gray-800">Account Settings</h1>
 
             {user && !user.emailVerified && (

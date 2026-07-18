@@ -739,7 +739,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     }, []);
 
     return (
-        <div className="container mx-auto p-4">
+        <div className="container mx-auto p-4" style={color.style}>
             <div className="flex justify-center my-6">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
                     <div ref={gliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />

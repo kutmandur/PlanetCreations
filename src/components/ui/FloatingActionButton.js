@@ -9,7 +9,7 @@ const FloatingActionButton = ({ activeTab }) => {
 
     return (
         <div
-            style={{ bottom }}
+            style={{ bottom, ...color.style }}
             className={`
                 group fixed right-8 h-16
                 ${color.bg} ${color.hoverBg}

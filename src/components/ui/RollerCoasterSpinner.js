@@ -24,7 +24,7 @@ const RollerCoasterSpinner = ({ gameId = 'default', size = 'large' }) => {
     const cart = currentSize.cart;
 
     return (
-        <div className="flex justify-center items-center p-10">
+        <div className="flex justify-center items-center p-10" style={color.style}>
             <div className={`relative flex justify-center items-center ${currentSize.container}`}>
                 {/* 1. The Stationary Track */}
                 <div 
