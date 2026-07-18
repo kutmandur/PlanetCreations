@@ -721,54 +721,47 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </div>
                 {creationToEditId && (<div><label className="block text-gray-700 font-bold mb-2">Changelog (What's new?)</label><textarea value={changelogEntry} onChange={(e) => setChangelogEntry(e.target.value)} rows="3" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} placeholder="e.g., Added new lighting..." ></textarea></div>)}
                 
+                {/* Savegame-Upload nur im Desktop-Client — im Browser komplett ausgeblendet */}
+                {window.electronAPI?.isElectron && (
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Add savegame file</label>
                     <div className={`p-4 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
-                        
-                        {window.electronAPI?.isElectron ? (
-                            <>
-                                {isPreparingUpload && (
-                                    <div className="flex flex-col items-center justify-center text-gray-600 py-4">
-                                        <Spinner />
-                                        <p className="mt-2 font-semibold">Preparing upload...</p>
-                                    </div>
-                                )}
-                    
-                                {!isPreparingUpload && !backupInfo && !isUploading && (
-                                    <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
-                                        <Icon path={ICONS.upload} className="w-5 h-5" />
-                                        Add savegame file
-                                    </button>
-                                )}
-                    
-                                {!isPreparingUpload && isUploading && (
-                                    <div>
-                                        <p className="text-sm font-semibold text-gray-700 mb-1">Uploading {backupInfo.name}...</p>
-                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                            <div className={`${color.bg} h-2.5 rounded-full`} style={{ width: `${uploadProgress}%` }}></div>
-                                        </div>
-                                        <p className="text-center text-sm text-gray-500 mt-1">{Math.round(uploadProgress)}%</p>
-                                    </div>
-                                )}
-                    
-                                {!isPreparingUpload && backupInfo && !isUploading && (
-                                    <div className="flex items-center justify-between p-2 bg-green-100 border border-green-300 rounded-lg">
-                                        <div className="flex items-center gap-2">
-                                            <Icon path={ICONS.checkCircle} className="w-6 h-6 text-green-600" />
-                                            <div>
-                                                <p className="font-semibold text-green-800">{backupInfo.name}</p>
-                                                <p className={`text-xs ${backupInfo.signed ? 'text-blue-600' : 'text-gray-500'}`}>{backupInfo.signed ? 'Official signed backup' : 'Local save file'}</p>
-                                            </div>
-                                        </div>
-                                        <button type="button" onClick={handleRemoveBackup} className="text-red-500 hover:text-red-700 font-bold">&times;</button>
-                                    </div>
-                                )}
-                            </>
-                        ) : (
+
+                        {isPreparingUpload && (
+                            <div className="flex flex-col items-center justify-center text-gray-600 py-4">
+                                <Spinner />
+                                <p className="mt-2 font-semibold">Preparing upload...</p>
+                            </div>
+                        )}
+
+                        {!isPreparingUpload && !backupInfo && !isUploading && (
                             <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
-                                <Icon path={ICONS.download} className="w-5 h-5" />
-                                Add File with the Client
+                                <Icon path={ICONS.upload} className="w-5 h-5" />
+                                Add savegame file
                             </button>
+                        )}
+
+                        {!isPreparingUpload && isUploading && (
+                            <div>
+                                <p className="text-sm font-semibold text-gray-700 mb-1">Uploading {backupInfo.name}...</p>
+                                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                    <div className={`${color.bg} h-2.5 rounded-full`} style={{ width: `${uploadProgress}%` }}></div>
+                                </div>
+                                <p className="text-center text-sm text-gray-500 mt-1">{Math.round(uploadProgress)}%</p>
+                            </div>
+                        )}
+
+                        {!isPreparingUpload && backupInfo && !isUploading && (
+                            <div className="flex items-center justify-between p-2 bg-green-100 border border-green-300 rounded-lg">
+                                <div className="flex items-center gap-2">
+                                    <Icon path={ICONS.checkCircle} className="w-6 h-6 text-green-600" />
+                                    <div>
+                                        <p className="font-semibold text-green-800">{backupInfo.name}</p>
+                                        <p className={`text-xs ${backupInfo.signed ? 'text-blue-600' : 'text-gray-500'}`}>{backupInfo.signed ? 'Official signed backup' : 'Local save file'}</p>
+                                    </div>
+                                </div>
+                                <button type="button" onClick={handleRemoveBackup} className="text-red-500 hover:text-red-700 font-bold">&times;</button>
+                            </div>
                         )}
 
                         <div className="mt-3 text-xs text-gray-500 bg-gray-100 p-3 rounded-lg">
@@ -776,11 +769,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                             <ul className="list-disc list-inside space-y-1">
                                 <li>Client Users can one click import your creation to their game.</li>
                                 <li>If you connected custom media to the creation in the client and provide a download link for the custom media backup, the media can be one click installed by others.</li>
-                                {!window.electronAPI?.isElectron && <li className="font-bold">Requires the PlanetCreations Client for Windows.</li>}
                             </ul>
                         </div>
                     </div>
                 </div>
+                )}
 
 
                 <div>
