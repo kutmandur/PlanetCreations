@@ -31,7 +31,7 @@ import CookieConsent from './components/modals/CookieConsent';
 import BugReportModal from './components/modals/BugReportModal';
 import PersonalizationConsentModal from './components/modals/PersonalizationConsentModal';
 import useInterestSync from './hooks/useInterestSync';
-import { loadGamesRegistry } from './utils/gamesRegistry';
+import { loadGamesRegistry, getDefaultGameId, getGame } from './utils/gamesRegistry';
 import ClientDashboard from './components/pages/ClientDashboard';
 
 const HomePage = lazyWithReload(() => import('./components/pages/HomePage'));
@@ -87,7 +87,7 @@ const AppContent = () => {
     const [strikeModal, setStrikeModal] = useState(null);
     const [externalLink, setExternalLink] = useState(null);
     const [popoverView, setPopoverView] = useState(null);
-    const [activeTab, setActiveTab] = useState('planet-coaster-2');
+    const [activeTab, setActiveTab] = useState(getDefaultGameId());
     const [blacklist, setBlacklist] = useState([]);
     const [showRickRoll, setShowRickRoll] = useState(false);
     const [isBugReportOpen, setIsBugReportOpen] = useState(false);
@@ -131,7 +131,7 @@ const AppContent = () => {
         const authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             if (currentUser && currentUser.isAnonymous) {
                 await signOut(auth);
-                setUser(null); setUserProfile(null); setNotifications([]); setActiveTab('planet-coaster-2'); setLoadingAuth(false);
+                setUser(null); setUserProfile(null); setNotifications([]); setActiveTab(getDefaultGameId()); setLoadingAuth(false);
                 return;
             }
             setShowVerificationBanner(currentUser && !currentUser.emailVerified);
@@ -159,14 +159,15 @@ const AppContent = () => {
                                 await currentUser.getIdToken(true);
                             }
                         } catch (e) { /* ignore token refresh errors */ }
-                        if (combinedProfile.favoriteGame) {
+                        // favoriteGame eines entfernten/deaktivierten Spiels fällt aufs Default zurück
+                        if (combinedProfile.favoriteGame && getGame(combinedProfile.favoriteGame)?.enabled !== false && getGame(combinedProfile.favoriteGame)) {
                             setActiveTab(combinedProfile.favoriteGame);
                             const savedPreference = combinedProfile.platformPreferences?.[combinedProfile.favoriteGame];
                             if (savedPreference) { setHomeState(prev => ({ ...prev, platformFilter: savedPreference })); }
-                        } else { setActiveTab('planet-coaster-2'); }
+                        } else { setActiveTab(getDefaultGameId()); }
                     } else {
                         setUserProfile({ uid: currentUser.uid, role: 'user' });
-                        setActiveTab('planet-coaster-2');
+                        setActiveTab(getDefaultGameId());
                     }
                     // Single capped inbox doc: 1 read loads the whole bell, and
                     // items are already stored newest-first (server prepends).
@@ -180,7 +181,7 @@ const AppContent = () => {
                     setUserProfile(null);
                 }
             } else {
-                setUserProfile(null); setNotifications([]); setActiveTab('planet-coaster-2');
+                setUserProfile(null); setNotifications([]); setActiveTab(getDefaultGameId());
             }
             setLoadingAuth(false);
         });

@@ -5,25 +5,22 @@ import { collection, addDoc, doc, writeBatch, query, where, getDocs } from 'fire
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { containsBlacklistedWord, ICONS } from '../../utils/helpers';
+import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import InfoBox from '../ui/InfoBox';
 
 const API_BASE_URL = "https://us-central1-planetcreationsdotnet.cloudfunctions.net/api";
 
-const CREATE_GAMES = [
-  { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-  { id: 'planet-zoo', name: 'Planet Zoo' },
-  { id: 'planet-coaster', name: 'Planet Coaster' },
-];
-
 const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
+  const CREATE_GAMES = useGames();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [bannerImageUrl, setBannerImageUrl] = useState('');
   const [profileImageUrl, setProfileImageUrl] = useState('');
   const [themeColor, setThemeColor] = useState('#A855F7');
   const [discordServerId, setDiscordServerId] = useState('');
-  const [allowedGames, setAllowedGames] = useState(CREATE_GAMES.map(g => g.id));
-  const [mainGame, setMainGame] = useState('planet-coaster-2');
+  const [allowedGames, setAllowedGames] = useState(() => getGames().map(g => g.id));
+  const [mainGame, setMainGame] = useState(getDefaultGameId());
   const [suggestedRanks, setSuggestedRanks] = useState([]);
   const [isFetchingRanks, setIsFetchingRanks] = useState(false);
   const [isServerIdInputVisible, setIsServerIdInputVisible] = useState(false);

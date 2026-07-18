@@ -6,6 +6,8 @@ import {
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
+import { getDefaultGameId, getGame } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import HighlightableTextarea from '../ui/HighlightableTextarea';
@@ -142,7 +144,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const { id: creationToEditId } = useParams(); 
     const navigate = useNavigate();
     
-    const [game, setGame] = useState(creationToEditId ? '' : initialGame || 'planet-coaster-2');
+    const [game, setGame] = useState(creationToEditId ? '' : initialGame || getDefaultGameId());
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [shareCode, setShareCode] = useState('');
@@ -185,12 +187,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [categoryGliderStyle, setCategoryGliderStyle] = useState({});
     const color = getGameColor(game);
 
-    const TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
-    
+    const TABS = useGames();
+
     const [CATEGORIES, setCATEGORIES] = useState({});
 
     useEffect(() => {
@@ -533,7 +531,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             const finalImageUrls = imageItems.map(item => item.url);
             const finalVideoUrls = videoItems.map(item => item.url);
             const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag && !containsBlacklistedWord(tag, blacklist)).slice(0, TAG_LIMIT);
-            const finalMods = (usesMods && game !== 'planet-coaster-2') ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
+            const finalMods = (usesMods && getGame(game)?.modsSupported) ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
             const communityAssignments = userCommunities.filter(c => selectedCommunities.includes(c.id)).map(c => ({ communityId: c.id, communityName: c.name }));
             
             const existingTagIds = allTags.map(t => t.id);
@@ -708,7 +706,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     <label className="block text-gray-700 font-bold mb-2 text-center">Options</label>
                     <div className="flex justify-center flex-wrap gap-4">
                         <div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Status</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setStatus(status === 'wip' ? 'finished' : 'wip')}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${status === 'wip' ? 'bg-orange-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${status === 'wip' ? 'text-white' : 'text-gray-700'}`}>WIP</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${status === 'finished' ? 'text-white' : 'text-gray-700'}`}>Finished</span></div></div>
-                        {(game === 'planet-coaster' || game === 'planet-zoo') && (<><div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Platform</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setPlatform(platform === 'pc' ? 'console' : 'pc')}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${platform === 'pc' ? 'bg-blue-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'pc' ? 'text-white' : 'text-gray-700'}`}>PC</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'console' ? 'text-white' : 'text-gray-700'}`}>Console</span></div></div><div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Mods</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setUsesMods(!usesMods)}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${!usesMods ? 'bg-red-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${!usesMods ? 'text-white' : 'text-gray-700'}`}>No Mods</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${usesMods ? 'text-white' : 'text-gray-700'}`}>Using Mods</span></div></div></>)}
+                        {getGame(game)?.platforms?.includes('console') && (<div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Platform</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setPlatform(platform === 'pc' ? 'console' : 'pc')}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${platform === 'pc' ? 'bg-blue-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'pc' ? 'text-white' : 'text-gray-700'}`}>PC</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'console' ? 'text-white' : 'text-gray-700'}`}>Console</span></div></div>)}
+                        {getGame(game)?.modsSupported && (<div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Mods</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setUsesMods(!usesMods)}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${!usesMods ? 'bg-red-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${!usesMods ? 'text-white' : 'text-gray-700'}`}>No Mods</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${usesMods ? 'text-white' : 'text-gray-700'}`}>Using Mods</span></div></div>)}
                     </div>
                 </div>
                 <DlcSelector gameDlcs={gameDlcs} selectedDlcs={requiredDlcs} onDlcChange={handleDlcChange} color={color} />

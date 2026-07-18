@@ -9,6 +9,8 @@ import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../
 import { fetchSearchIndex } from '../../firebase/searchIndexService';
 import { rankCreations, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
+import { getGame } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import UserSearchResultCard from '../cards/UserSearchResultCard';
@@ -17,11 +19,10 @@ import Icon from '../ui/Icon';
 const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHomeState }) => {
     const queryClient = useQueryClient();
 
-    const TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
+    const TABS = useGames();
+    // Fähigkeiten des aktiven Spiels aus der Registry (Console-Plattform, Mods)
+    const supportsConsole = !!getGame(activeTab)?.platforms?.includes('console');
+    const supportsMods = !!getGame(activeTab)?.modsSupported;
 
     const [categories, setCategories] = useState(['All']);
     const [creations, setCreations] = useState([]);
@@ -67,15 +68,14 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         // Sonst werden sie nur auf die ersten 24 nach Datum geladenen Creations
         // angewendet und zeigen falsche/leere Ergebnisse (der paginierte Firestore-
         // Pfad kann diese Felder nicht serverseitig filtern).
-        const isPlatformGame = activeTab === 'planet-coaster' || activeTab === 'planet-zoo';
-        const modsFilterActive = isPlatformGame && homeState.showModsOnly;
-        const platformFilterActive = isPlatformGame && homeState.platformFilter === 'console';
+        const modsFilterActive = supportsMods && homeState.showModsOnly;
+        const platformFilterActive = supportsConsole && homeState.platformFilter === 'console';
         const dlcActive = dlcFilterMode !== 'all';
         // "Recommended" (Default) rankt übers ganze Spiel und läuft daher
         // ebenfalls über den Index — billiger als der paginierte Pfad (1 Read).
         const recommendedActive = homeState.sortBy === 'recommended';
         return hasSearchTerm || tagCount > 0 || modsFilterActive || platformFilterActive || dlcActive || recommendedActive;
-    }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, homeState.sortBy, dlcFilterMode, activeTab]);
+    }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, homeState.sortBy, dlcFilterMode, supportsMods, supportsConsole]);
 
     // Suchindex des aktiven Spiels: 1 Firestore-Read, 15 Minuten gecacht,
     // wird für den Recommended-Feed und im Suchmodus geladen.
@@ -131,7 +131,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     const getFromBroaderCache = useCallback(() => {
         if (homeState.activeCategory === 'All') return null;
 
-        const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
+        const platform = supportsConsole
             ? homeState.platformFilter
             : 'all';
 
@@ -146,7 +146,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
         // Only use if we have enough results (at least 6)
         return filteredCreations.length >= 6 ? filteredCreations : null;
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter, queryClient, getCreationsFromCacheByIds]);
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter, queryClient, getCreationsFromCacheByIds, supportsConsole]);
 
     const handleTabClick = (tabId) => {
         startTransition(() => {
@@ -160,8 +160,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         const tagFromUrl = searchParams.get('tag');
         let shouldUpdateParams = false;
 
-        // Game-Tab wechseln wenn in URL angegeben
-        if (gameFromUrl && ['planet-coaster', 'planet-coaster-2', 'planet-zoo'].includes(gameFromUrl)) {
+        // Game-Tab wechseln wenn in URL angegeben (nur registrierte, aktive Spiele)
+        if (gameFromUrl && getGame(gameFromUrl) && getGame(gameFromUrl).enabled !== false) {
             if (activeTab !== gameFromUrl) {
                 setActiveTab(gameFromUrl);
             }
@@ -211,9 +211,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     };
 
     const isFilterActive = useMemo(() => {
-        const isPlatformGame = activeTab === 'planet-coaster' || activeTab === 'planet-zoo';
-        const platformFilterActive = isPlatformGame && homeState.platformFilter === 'console';
-        const modsFilterActive = isPlatformGame && homeState.showModsOnly;
+        const platformFilterActive = supportsConsole && homeState.platformFilter === 'console';
+        const modsFilterActive = supportsMods && homeState.showModsOnly;
 
         return (
             (homeState.filterTags && homeState.filterTags.length > 0) ||
@@ -221,7 +220,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             modsFilterActive ||
             platformFilterActive
         );
-    }, [homeState, dlcFilterMode, activeTab]);
+    }, [homeState, dlcFilterMode, supportsConsole, supportsMods]);
 
     // Build optimized Firestore query using available indexes
     const buildFirestoreQuery = useCallback((isLoadMore = false, lastTs = null) => {
@@ -235,8 +234,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             constraints.push(where('category', '==', homeState.activeCategory));
         }
 
-        // Platform filter for PC1/PZ - Index: game + platform + createdAt
-        if (activeTab === 'planet-coaster' || activeTab === 'planet-zoo') {
+        // Platform filter (Console-fähige Spiele) - Index: game + platform + createdAt
+        if (supportsConsole) {
             constraints.push(where('platform', '==', homeState.platformFilter));
         }
 
@@ -251,15 +250,15 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         constraints.push(limit(24));
 
         return query(...constraints);
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter]);
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter, supportsConsole]);
 
     // Cache key that includes filters
     const cacheKey = useMemo(() => {
-        const platform = (activeTab === 'planet-coaster' || activeTab === 'planet-zoo')
+        const platform = supportsConsole
             ? homeState.platformFilter
             : 'all';
         return `${activeTab}_${homeState.activeCategory}_${platform}_`;
-    }, [activeTab, homeState.activeCategory, homeState.platformFilter]);
+    }, [activeTab, homeState.activeCategory, homeState.platformFilter, supportsConsole]);
 
     useEffect(() => {
         // Skip Firestore fetch when using the search index
@@ -502,7 +501,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             filtered = filtered.filter(c => c.category === homeState.activeCategory);
         }
 
-        if (activeTab === 'planet-coaster' || activeTab === 'planet-zoo') {
+        if (supportsConsole) {
             filtered = filtered.filter(c => (c.platform || 'pc') === homeState.platformFilter);
         }
 
@@ -576,7 +575,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         return results;
-    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights]);
+    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights, supportsConsole]);
 
     const indexHasMore = shouldUseIndexSearch && visibleCount < indexSearchResults.length;
 
@@ -824,10 +823,10 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                             )}
                         </div>
                     </div>
-                    {(activeTab === 'planet-coaster' || activeTab === 'planet-zoo') && (
+                    {(supportsConsole || supportsMods) && (
                         <div className="flex items-center justify-center gap-4 md:mt-0">
-                            <div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'console' ? 'text-gray-400' : 'text-blue-600'}`}>PC</span><div onClick={handlePlatformToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.platformFilter === 'pc' ? 'bg-blue-500' : 'bg-green-500'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.platformFilter === 'pc' ? 'translate-x-0' : 'translate-x-6'}`}></div></div><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'pc' ? 'text-gray-400' : 'text-green-600'}`}>Console</span></div>
-                            <div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.showModsOnly ? 'text-green-600' : 'text-gray-500'}`}>Show Modded</span><div onClick={handleModsToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.showModsOnly ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.showModsOnly ? 'translate-x-6' : 'translate-x-0'}`}></div></div></div>
+                            {supportsConsole && (<div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'console' ? 'text-gray-400' : 'text-blue-600'}`}>PC</span><div onClick={handlePlatformToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.platformFilter === 'pc' ? 'bg-blue-500' : 'bg-green-500'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.platformFilter === 'pc' ? 'translate-x-0' : 'translate-x-6'}`}></div></div><span className={`text-sm font-medium transition-colors ${homeState.platformFilter === 'pc' ? 'text-gray-400' : 'text-green-600'}`}>Console</span></div>)}
+                            {supportsMods && (<div className="flex items-center space-x-2"><span className={`text-sm font-medium transition-colors ${homeState.showModsOnly ? 'text-green-600' : 'text-gray-500'}`}>Show Modded</span><div onClick={handleModsToggle} className={`relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 ${homeState.showModsOnly ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${homeState.showModsOnly ? 'translate-x-6' : 'translate-x-0'}`}></div></div></div>)}
                         </div>
                     )}
                 </div>

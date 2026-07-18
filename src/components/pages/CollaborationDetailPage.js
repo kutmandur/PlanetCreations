@@ -14,6 +14,7 @@ import {
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
+import { getGame } from '../../utils/gamesRegistry';
 import CollaborationMemberList from '../collaboration/CollaborationMemberList';
 import InviteMemberModal from '../modals/InviteMemberModal';
 import CheckOutModal from '../modals/CheckOutModal';
@@ -778,7 +779,7 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
                         <div className="flex items-center gap-3 mb-2">
                             <h1 className="text-2xl sm:text-3xl font-bold">{collaboration.title}</h1>
                             <span className="px-3 py-1 text-xs font-bold rounded-full bg-white/20">
-                                {collaboration.game === 'planet-coaster-2' ? 'PC2' : 'PZ'}
+                                {getGame(collaboration.game)?.shortName || collaboration.game}
                             </span>
                         </div>
 

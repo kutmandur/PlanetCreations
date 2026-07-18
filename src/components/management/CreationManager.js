@@ -3,6 +3,8 @@ import { db, auth } from '../../firebase/config';
 import { doc, getDoc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, increment, onSnapshot } from 'firebase/firestore';
 import ManagedCreationCard from './ManagedCreationCard';
 import { getGameColor } from '../../utils/helpers';
+import { getDefaultGameId } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import ShowcaseNoteModal from '../modals/ShowcaseNoteModal';
 import CommunityFilterBar from './CommunityFilterBar';
 
@@ -14,18 +16,14 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
         filterTag: '',
         dlcFilter: 'all',
         sortBy: 'pinned_first',
-        activeGame: 'planet-coaster-2',
+        activeGame: getDefaultGameId(),
         activeCategory: 'All',
     });
 
     const [showcaseModal, setShowcaseModal] = useState(null);
 
     const [categories, setCategories] = useState(['All']);
-    const TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
+    const TABS = useGames();
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
     const categoryTabRefs = useRef([]);

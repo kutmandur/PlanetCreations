@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
+import useGames from '../../hooks/useGames';
 
 // Import der ausgelagerten Komponenten
 import GlobalLoader from '../ui/GlobalLoader';
@@ -634,7 +635,14 @@ const ClientDashboard = ({ user }) => {
     const [globalLoader, setGlobalLoader] = useState({ isLoading: false, message: '' });
     const settingsRef = useRef(null);
     
-    const GAME_TABS = useMemo(() => [ { id: 'Planet Coaster 2', name: 'Planet Coaster 2' }, { id: 'Planet Zoo', name: 'Planet Zoo' }, ], []);
+    // Desktop-Client indexiert lokale Dateien nach Anzeigenamen; nur Spiele mit
+    // Datei-Endungen (= vom Desktop-Client scannbar) anbieten.
+    const registryGames = useGames();
+    const GAME_TABS = useMemo(() =>
+        registryGames
+            .filter(g => g.fileExtensions?.length > 0)
+            .map(g => ({ id: g.name, name: g.name })),
+    [registryGames]);
     const FILE_TYPE_TABS = useMemo(() => {
         const baseTabs = [ { id: 'parks', name: 'Parks' }, { id: 'blueprints', name: 'Blueprints' }, { id: 'autosaves', name: 'Autosaves' }, ];
         if (activeView === 'restore') {
@@ -645,7 +653,7 @@ const ClientDashboard = ({ user }) => {
         }
         return baseTabs;
     }, [activeView]);
-    const [activeGame, setActiveGame] = useState(GAME_TABS[0].id);
+    const [activeGame, setActiveGame] = useState(GAME_TABS[0]?.id || 'Planet Coaster 2');
     const [activeTab, setActiveTab] = useState(FILE_TYPE_TABS[0].id);
     
     useEffect(() => {
@@ -659,7 +667,7 @@ const ClientDashboard = ({ user }) => {
     const gameGliderRef = useRef(null);
     const fileTypeTabRefs = useRef([]);
     const fileTypeGliderRef = useRef(null);
-    const activeGameColor = getGameColor(activeGame === 'Planet Zoo' ? 'planet-zoo' : 'planet-coaster-2');
+    const activeGameColor = getGameColor(registryGames.find(g => g.name === activeGame)?.id);
     
     const handleScan = useCallback(async (basePath) => {
         if (!basePath) return;

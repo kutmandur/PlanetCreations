@@ -4,6 +4,7 @@ import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersiste
 import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
+import { getDefaultGameId } from '../../utils/gamesRegistry';
 import Spinner from '../ui/Spinner';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
@@ -120,7 +121,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     username: finalUsername, // Original case for display
                     username_lowercase: usernameLower, // Lowercase for searching
                     role: 'user', // Add initial role for correct display in search
-                    bio: '', country: '', profilePictureUrl: '', favoriteGame: 'planet-coaster-2', ownedDlcs: {}
+                    bio: '', country: '', profilePictureUrl: '', favoriteGame: getDefaultGameId(), ownedDlcs: {}
                 });
 
                 batch.set(usernameRef, { email: email.toLowerCase() });

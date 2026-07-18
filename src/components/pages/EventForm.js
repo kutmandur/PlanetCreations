@@ -4,6 +4,8 @@ import { db } from '../../firebase/config';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, updateDoc, arrayUnion, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
+import { getDefaultGameId } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 
 // Import all sub-components from their new location
 import EventGameSelector from '../eventform/EventGameSelector';
@@ -27,7 +29,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     // --- ALL STATE LIVES IN THE PARENT COMPONENT ---
     const [loading, setLoading] = useState(true);
     const [communityName, setCommunityName] = useState('');
-    const [game, setGame] = useState('planet-coaster-2');
+    const [game, setGame] = useState(getDefaultGameId());
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [bannerImageUrl, setBannerImageUrl] = useState('');
@@ -73,11 +75,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     const color = getGameColor(game);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
-    const TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
+    const TABS = useGames();
 
     // --- ALL LOGIC & HANDLERS LIVE IN THE PARENT COMPONENT ---
     const parseReminderString = useCallback((str) => {
@@ -137,7 +135,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     setAllowMultipleSubmissions(data.allowMultipleSubmissions || false);
                     setSubmissionLimit(data.submissionLimit || 1);
                     setBlockOldCreations(data.blockOldCreations || false);
-                    setGame(data.game || 'planet-coaster-2');
+                    setGame(data.game || getDefaultGameId());
                     setEventClasses(data.classes || []);
                     setVoteType(data.voteType || 'single');
                     setVoteLimit(data.voteLimit || 1);

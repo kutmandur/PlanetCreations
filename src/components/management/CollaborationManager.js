@@ -5,6 +5,7 @@ import { db } from '../../firebase/config';
 import { deleteCollaboration } from '../../firebase/collaboration';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
+import { getGame } from '../../utils/gamesRegistry';
 import Spinner from '../ui/Spinner';
 
 const CollaborationManager = ({ setModalMessage, setConfirmation }) => {
@@ -193,7 +194,7 @@ const CollaborationManager = ({ setModalMessage, setConfirmation }) => {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span style={gameColor.style} className={`px-2 py-1 text-xs font-medium rounded-full ${gameColor.bg} text-white`}>
-                                                    {collab.game === 'planet-coaster-2' ? 'PC2' : 'PZ'}
+                                                    {getGame(collab.game)?.shortName || collab.game}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3">

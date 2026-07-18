@@ -5,11 +5,13 @@ import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { getGameColor, SOCIAL_PLATFORMS } from '../../utils/helpers';
+import { getEnabledGameIds } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import { transferCommunityOwnership } from '../../firebase/community';
 
 const CommunitySettingsManager = ({ community, members = [], setModalMessage, setPasswordConfirm, onTransferComplete }) => {
     const [themeColor, setThemeColor] = useState(community.themeColor || '#F97316');
-    const [allowedGames, setAllowedGames] = useState(community.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo']);
+    const [allowedGames, setAllowedGames] = useState(community.allowedGames || getEnabledGameIds());
     // ✅ 1. Add state for the main game selection
     const [mainGame, setMainGame] = useState(community.mainGame || '');
     const [socialLinks, setSocialLinks] = useState(community.socialLinks || {});
@@ -46,11 +48,7 @@ const CommunitySettingsManager = ({ community, members = [], setModalMessage, se
         setSocialLinks(prev => ({ ...prev, [platformId]: value }));
     };
 
-    const ALL_GAMES = [
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ];
+    const ALL_GAMES = useGames();
 
     const handleGameToggle = (gameId) => {
         setAllowedGames(prev => {
