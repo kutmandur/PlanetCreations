@@ -25,11 +25,17 @@ service cloud.firestore {
 
     // --- Data Validation Functions ---
 
-    // Validiert Creation-Daten bei Create
+    // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
+    // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
+    // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
     function isValidCreationCreate(data) {
       return data.keys().hasAll(['title', 'game', 'category', 'userId']) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
-             data.game in ['planet-coaster', 'planet-coaster-2', 'planet-zoo'] &&
+             (
+               exists(/databases/$(database)/documents/meta/games)
+                 ? data.game in get(/databases/$(database)/documents/meta/games).data.gameIds
+                 : data.game in ['planet-coaster', 'planet-coaster-2', 'planet-zoo']
+             ) &&
              data.category is string && data.category.size() <= 50 &&
              data.userId == request.auth.uid &&
              (!('likes' in data.keys()) || data.likes == 0) &&

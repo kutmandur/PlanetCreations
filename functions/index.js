@@ -191,16 +191,52 @@ exports.api = functions
 
 // --- Konstanten für Backup-Validierung ---
 const MAX_BACKUP_SIZE_BYTES = 300 * 1024 * 1024; // 300 MB
+// Fallback, wenn die Games-Registry (meta/games) fehlt oder leer ist
 const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
+
+// --- Games-Registry (meta/games): Spiele als Laufzeit-Konfiguration ---
+// Instanz-Cache mit TTL, damit Trigger nicht bei jedem Write das Doc lesen.
+const FALLBACK_REGISTRY_GAMES = [
+    { id: 'planet-coaster', fileExtensions: [] },
+    { id: 'planet-coaster-2', fileExtensions: ['.park2', '.blpr2', '.prkauto2'] },
+    { id: 'planet-zoo', fileExtensions: ['.zoo', '.pzblueprint', '.zooauto'] },
+];
+let gamesRegistryCache = { at: 0, games: FALLBACK_REGISTRY_GAMES };
+async function getRegistryGames() {
+    if (Date.now() - gamesRegistryCache.at < 5 * 60 * 1000) return gamesRegistryCache.games;
+    try {
+        const snap = await db.doc('meta/games').get();
+        const games = (snap.exists && Array.isArray(snap.data().games) && snap.data().games.length > 0)
+            ? snap.data().games
+            : FALLBACK_REGISTRY_GAMES;
+        gamesRegistryCache = { at: Date.now(), games };
+    } catch (e) {
+        console.warn('Games registry read failed, using cached/fallback:', e.message);
+        gamesRegistryCache.at = Date.now();
+    }
+    return gamesRegistryCache.games;
+}
+
+async function getRegistryGameIds() {
+    return (await getRegistryGames()).map((g) => g.id);
+}
+
+// Union aller Datei-Endungen der Registry (Backup-Validierung); Fallback alt.
+async function getAllowedGameExtensions() {
+    const games = await getRegistryGames();
+    const exts = [...new Set(games.flatMap((g) => g.fileExtensions || []))];
+    return exts.length > 0 ? exts : ALLOWED_GAME_EXTENSIONS;
+}
 
 /**
  * Serverseitige Validierung eines Backup-Files aus S3
  * Prüft: Archiv-Integrität, metadata.json, Game-File-Typ, Signatur
  * @param {Buffer} fileBuffer - Das Backup als Buffer
  * @param {string} publicKey - Der öffentliche Schlüssel zur Signaturprüfung
+ * @param {string[]} [allowedExtensions] - erlaubte Spieldatei-Endungen (Registry)
  * @returns {Object} { valid: boolean, error?: string, metadata?: object, verificationStatus: string }
  */
-function validateBackupBuffer(fileBuffer, publicKey) {
+function validateBackupBuffer(fileBuffer, publicKey, allowedExtensions = ALLOWED_GAME_EXTENSIONS) {
     try {
         // 1. Prüfe ob es ein gültiges ZIP-Archiv ist
         let zip;
@@ -230,10 +266,10 @@ function validateBackupBuffer(fileBuffer, publicKey) {
         }
 
         const originalExt = path.extname(metadata.originalFileName).toLowerCase();
-        if (!ALLOWED_GAME_EXTENSIONS.includes(originalExt)) {
+        if (!allowedExtensions.includes(originalExt)) {
             return {
                 valid: false,
-                error: `Invalid backup content. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) are allowed.`,
+                error: `Invalid backup content. Only game files (${allowedExtensions.join(', ')}) are allowed.`,
                 verificationStatus: 'invalid'
             };
         }
@@ -764,7 +800,8 @@ exports.onCreationWrite = functions
                 }
 
                 // Validiere das Backup vollständig (Archiv, Metadata, Game-File-Typ, Signatur)
-                const validation = validateBackupBuffer(fileBuffer, publicKey);
+                // Erlaubte Endungen kommen aus der Games-Registry (meta/games)
+                const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
                 console.log(`Validation result for creation ${context.params.creationId}:`, validation.verificationStatus);
 
                 if (!validation.valid) {
@@ -1020,7 +1057,9 @@ exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUp
 // Sollte ein Spiel dem Limit nahekommen (count als Frühwarnung beobachten), auf
 // Shards umstellen: searchIndex/{game}-0, -1, ... per hash(creationId) % shardCount.
 
-const INDEX_GAMES = ['planet-coaster', 'planet-coaster-2', 'planet-zoo'];
+// Welche Spiele indexiert werden, bestimmt jetzt die Games-Registry
+// (getRegistryGameIds, meta/games) — inkl. deaktivierter Spiele, da
+// Deaktivieren nur die UI ausblendet und keine Daten zerstört.
 
 // Kurze Feldnamen halten das Index-Dokument klein. Muss zu
 // src/firebase/searchIndexService.js (entryToCreation) passen.
@@ -1062,9 +1101,10 @@ exports.syncCreationToSearchIndex = functions.firestore
 
         const gameBefore = before?.game;
         const gameAfter = after?.game;
+        const indexGames = await getRegistryGameIds();
 
         // Aus dem alten Index entfernen bei Löschung oder Spiel-Wechsel
-        if (gameBefore && INDEX_GAMES.includes(gameBefore) && gameBefore !== gameAfter) {
+        if (gameBefore && indexGames.includes(gameBefore) && gameBefore !== gameAfter) {
             await db.doc(`searchIndex/${gameBefore}`)
                 .update(entryField, admin.firestore.FieldValue.delete(),
                     'count', admin.firestore.FieldValue.increment(-1))
@@ -1072,7 +1112,7 @@ exports.syncCreationToSearchIndex = functions.firestore
         }
 
         if (!after) return null;
-        if (!INDEX_GAMES.includes(gameAfter)) {
+        if (!indexGames.includes(gameAfter)) {
             console.warn(`Creation ${creationId} has unknown game "${gameAfter}", not indexed.`);
             return null;
         }
@@ -1796,8 +1836,9 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
 
         const snapshot = await db.collection('creations').get();
 
+        const registryGameIds = await getRegistryGameIds();
         const perGame = {};
-        INDEX_GAMES.forEach(game => { perGame[game] = {}; });
+        registryGameIds.forEach(game => { perGame[game] = {}; });
         let skipped = 0;
         snapshot.docs.forEach(doc => {
             const data = doc.data();
@@ -1817,6 +1858,14 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
         }
+        // Verwaiste Index-Docs entfernter Spiele abräumen
+        const existingIndexes = await db.collection('searchIndex').get();
+        existingIndexes.docs.forEach(indexDoc => {
+            if (!registryGameIds.includes(indexDoc.id)) {
+                console.log(`Deleting orphaned search index for removed game: ${indexDoc.id}`);
+                batch.delete(indexDoc.ref);
+            }
+        });
         await batch.commit();
 
         const counts = Object.fromEntries(
