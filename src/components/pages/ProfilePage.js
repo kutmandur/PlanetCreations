@@ -4,6 +4,7 @@ import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getD
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import { getGameColor, ICONS, SOCIAL_PLATFORMS, getYoutubeThumbnailUrl } from '../../utils/helpers';
+import useGames from '../../hooks/useGames';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
@@ -61,12 +62,8 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const themeHex = color.hex;
     const navigate = useNavigate();
 
-    const TABS_WITH_ALL = useRef([
-        { id: 'all', name: 'All' },
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
+    const games = useGames();
+    const TABS_WITH_ALL = useMemo(() => [{ id: 'all', name: 'All' }, ...games], [games]);
 
     const fetchMoreCreations = useCallback(async () => {
         if (loadingMoreCreations || !hasMoreCreations || !lastVisibleCreation) return;

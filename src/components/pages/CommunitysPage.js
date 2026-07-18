@@ -10,6 +10,8 @@ import AllEventsPage from './AllEventsPage';
 import CommunitySuggestions from '../ui/CommunitySuggestions';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
+import { getEnabledGameIds } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import { useCommunities } from '../../hooks/useCommunities';
 
 const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState, setModalMessage }) => {
@@ -34,12 +36,11 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const [cooldownTime, setCooldownTime] = useState('');
     const cooldownIntervalRef = useRef();
 
+    const games = useGames();
     const GAME_TABS = useMemo(() => [
         { id: 'all', name: 'All Games' },
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ], []);
+        ...games,
+    ], [games]);
     const gameTabRefs = useRef([]);
     const gameGliderRef = useRef(null);
     const activeGameColor = getGameColor(communitysState.activeGameFilter);
@@ -170,7 +171,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
 
         if (communitysState.activeTab === 'Browser' && communitysState.activeGameFilter !== 'all') {
             communitys = communitys.filter(c => 
-                (c.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo']).includes(communitysState.activeGameFilter)
+                (c.allowedGames || getEnabledGameIds()).includes(communitysState.activeGameFilter)
             );
         }
 

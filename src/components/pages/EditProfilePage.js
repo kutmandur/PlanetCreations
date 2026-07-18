@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
+import { getDefaultGameId, getGame } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';
@@ -13,17 +15,13 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
     const navigate = useNavigate();
 
     const [allDlcs, setAllDlcs] = useState({});
-    const [selectedGameForDlc, setSelectedGameForDlc] = useState('planet-coaster-2');
+    const [selectedGameForDlc, setSelectedGameForDlc] = useState(getDefaultGameId());
 
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
 
-    const TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
-    
+    const TABS = useGames();
+
     const color = getGameColor(profileData?.favoriteGame);
 
     useEffect(() => {
@@ -38,9 +36,9 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
             if (profileSnap.exists()) {
                 const data = profileSnap.data();
                 setProfileData(data);
-                setSelectedGameForDlc(data.favoriteGame || 'planet-coaster-2');
+                setSelectedGameForDlc(getGame(data.favoriteGame) ? data.favoriteGame : getDefaultGameId());
             } else {
-                setProfileData({ username: 'New User', favoriteGame: 'planet-coaster-2', ownedDlcs: {}, platformPreferences: {} });
+                setProfileData({ username: 'New User', favoriteGame: getDefaultGameId(), ownedDlcs: {}, platformPreferences: {} });
             }
 
             const dlcCollectionRef = collection(db, 'dlcs');
@@ -195,7 +193,7 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                     </div>
                     
                     {/* ✅ ADDED: Platform preference toggle */}
-                    {(selectedGameForDlc === 'planet-coaster' || selectedGameForDlc === 'planet-zoo') && (
+                    {getGame(selectedGameForDlc)?.platforms?.includes('console') && (
                         <div className="flex items-center justify-center gap-4 mt-4">
                             <span className="text-sm font-medium text-gray-600">Default Platform:</span>
                             <div className="flex items-center space-x-2">

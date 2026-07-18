@@ -1,13 +1,9 @@
 import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { getGameColor } from '../../utils/helpers';
+import { getGame } from '../../utils/gamesRegistry';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
-
-const GAME_LABELS = {
-    'planet-coaster-2': 'PC2',
-    'planet-zoo': 'PZ'
-};
 
 const STATUS_STYLES = {
     active: { bg: 'bg-green-100', text: 'text-green-700', label: 'Active' },
@@ -68,7 +64,7 @@ const CollaborationCard = memo(({ collaboration, memberCount = 0 }) => {
                             </p>
                         </div>
                         <span className={`ml-2 px-2 py-1 text-xs font-bold rounded-full ${gameColor.bg} text-white flex-shrink-0`}>
-                            {GAME_LABELS[collaboration.game] || collaboration.game}
+                            {getGame(collaboration.game)?.shortName || collaboration.game}
                         </span>
                     </div>
 

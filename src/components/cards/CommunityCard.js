@@ -1,6 +1,7 @@
 import React, { useCallback, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { getGameColor } from '../../utils/helpers';
+import { getEnabledGameIds, getGame } from '../../utils/gamesRegistry';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchCommunityBySlug } from '../../firebase/communitiesService';
 import { preloadComponent } from '../../utils/preload';
@@ -16,17 +17,11 @@ const hexToRgba = (hex, alpha = 0.1) => {
     }
 };
 
-const GAME_PILLS = {
-    'planet-coaster': 'PC1',
-    'planet-coaster-2': 'PC2',
-    'planet-zoo': 'PZ'
-};
-
 const CommunityCard = memo(({ community }) => {
     const queryClient = useQueryClient();
 
     const themeColor = community.themeColor || '#6B7280';
-    const allowedGames = community.allowedGames || ['planet-coaster', 'planet-coaster-2', 'planet-zoo'];
+    const allowedGames = community.allowedGames || getEnabledGameIds();
 
     const handlePrefetch = useCallback(() => {
         if (community.slug) {
@@ -76,7 +71,7 @@ const CommunityCard = memo(({ community }) => {
                              const color = getGameColor(gameId);
                              return (
                                 <span key={gameId} style={color.style} className={`px-2 py-1 text-xs font-bold text-white rounded-full ${color.bg}`}>
-                                    {GAME_PILLS[gameId] || gameId}
+                                    {getGame(gameId)?.shortName || gameId}
                                 </span>
                              );
                         })}

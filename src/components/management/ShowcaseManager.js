@@ -3,6 +3,8 @@ import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor, getYoutubeThumbnailUrl, SOCIAL_PLATFORMS } from '../../utils/helpers';
+import { getEnabledGameIds } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import SharingQrCode from '../ui/SharingQrCode';
 import CreationCard from '../cards/CreationCard';
@@ -12,11 +14,6 @@ import CommunityFilterBar, { creationMatchesFilters } from './CommunityFilterBar
 const SUB_TABS = ['Applications', 'Waitlist', 'Groups', 'Showcased'];
 const PUBLIC_ORIGIN = 'https://planetcreations.net';
 
-const ALL_GAMES = [
-    { id: 'planet-coaster', name: 'Planet Coaster' },
-    { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-    { id: 'planet-zoo', name: 'Planet Zoo' },
-];
 
 // Seiteninternes Modal zum Fertigstellen/Bearbeiten eines Showcases
 // (ersetzt die früheren Browser-prompt()-Dialoge): Name + Video-URL.
@@ -74,13 +71,14 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
     // Game-Selector: nur die in der Community aktivierten Spiele,
     // Selector wird nur bei mehr als einem Spiel angezeigt
+    const allGames = useGames();
     const communityGames = useMemo(() => {
-        const allowed = community.allowedGames || ALL_GAMES.map(g => g.id);
-        return ALL_GAMES.filter(g => allowed.includes(g.id));
-    }, [community.allowedGames]);
+        const allowed = community.allowedGames || allGames.map(g => g.id);
+        return allGames.filter(g => allowed.includes(g.id));
+    }, [community.allowedGames, allGames]);
 
     const [activeGame, setActiveGame] = useState(() => {
-        const allowed = community.allowedGames || ALL_GAMES.map(g => g.id);
+        const allowed = community.allowedGames || getEnabledGameIds();
         return (community.mainGame && allowed.includes(community.mainGame)) ? community.mainGame : allowed[0];
     });
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 import { getGameColor, ICONS } from '../../utils/helpers';
+import { getGameDisplayName } from '../../utils/gamesRegistry';
 
 const SelectBackupModal = ({ isOpen, onClose, onFileSelect, game }) => {
     const [localFiles, setLocalFiles] = useState(null);
@@ -32,12 +33,8 @@ const SelectBackupModal = ({ isOpen, onClose, onFileSelect, game }) => {
     const gameFiles = useMemo(() => {
         if (!localFiles || !game) return { parks: [], blueprints: [], autosaves: [], backups: [] };
         
-        const gameNameMapping = {
-            'planet-coaster-2': 'Planet Coaster 2',
-            'planet-zoo': 'Planet Zoo',
-            'planet-coaster': 'Planet Coaster', // Add if you have this game
-        };
-        const mappedGameName = gameNameMapping[game] || game;
+        // Der Desktop-Client indexiert lokale Dateien nach Anzeigenamen
+        const mappedGameName = getGameDisplayName(game);
         return localFiles[mappedGameName] || { parks: [], blueprints: [], autosaves: [], backups: [] };
     }, [localFiles, game]);
 

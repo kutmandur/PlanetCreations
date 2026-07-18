@@ -5,6 +5,8 @@ import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, ar
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor } from '../../utils/helpers';
+import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
+import useGames from '../../hooks/useGames';
 import { DEFAULT_WEIGHTS, WEIGHT_KEYS } from '../../utils/feedRanking';
 import FeedWeightSliders from '../ui/FeedWeightSliders';
 import Spinner from '../ui/Spinner';
@@ -35,7 +37,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         if (match) setActiveTab(match);
     }, [location.search, TABS]);
 
-    const [selectedGame, setSelectedGame] = useState('planet-coaster');
+    const [selectedGame, setSelectedGame] = useState(() => getGames({ includeDisabled: true })[0]?.id || getDefaultGameId());
     const [newCategory, setNewCategory] = useState('');
     const [categories, setCategories] = useState([]);
     const [loadingCategories, setLoadingCategories] = useState(false);
@@ -77,11 +79,8 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [isGenerating, setIsGenerating] = useState(false);
     const [isPending, startTransition] = useTransition();
 
-    const GAME_TABS = useRef([
-        { id: 'planet-coaster', name: 'Planet Coaster' },
-        { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
-        { id: 'planet-zoo', name: 'Planet Zoo' },
-    ]).current;
+    // Datenpflege auch für deaktivierte Spiele möglich
+    const GAME_TABS = useGames({ includeDisabled: true });
 
     useEffect(() => {
         const activeTabIndex = TABS.findIndex(tab => tab === activeTab);
@@ -174,22 +173,19 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                 const usersCol = collection(db, 'users');
                 const creationsCol = collection(db, 'creations');
                 const communitiesCol = collection(db, 'communitys');
-                const [usersSnapshot, creationsSnapshot, communitiesSnapshot, pcCreationsSnapshot, pzCreationsSnapshot, pc2CreationsSnapshot] = await Promise.all([
+                const statGames = getGames({ includeDisabled: true });
+                const [usersSnapshot, creationsSnapshot, communitiesSnapshot, ...gameSnapshots] = await Promise.all([
                     getCountFromServer(usersCol), getCountFromServer(creationsCol), getCountFromServer(communitiesCol),
-                    getCountFromServer(query(creationsCol, where('game', '==', 'planet-coaster'))),
-                    getCountFromServer(query(creationsCol, where('game', '==', 'planet-zoo'))),
-                    getCountFromServer(query(creationsCol, where('game', '==', 'planet-coaster-2'))),
+                    ...statGames.map(g => getCountFromServer(query(creationsCol, where('game', '==', g.id)))),
                 ]);
                 if (isMounted) {
+                    const creationsByGame = {};
+                    statGames.forEach((g, i) => { creationsByGame[g.id] = gameSnapshots[i].data().count; });
                     setStats({
                         totalUsers: usersSnapshot.data().count,
                         totalCreations: creationsSnapshot.data().count,
                         totalCommunities: communitiesSnapshot.data().count,
-                        creationsByGame: {
-                            'planet-coaster': pcCreationsSnapshot.data().count,
-                            'planet-zoo': pzCreationsSnapshot.data().count,
-                            'planet-coaster-2': pc2CreationsSnapshot.data().count,
-                        }
+                        creationsByGame,
                     });
                 }
             } catch (error) {
@@ -884,9 +880,9 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
                             <h3 className="text-2xl font-bold mb-4 text-gray-800">Creations by Game</h3>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <StatCard title="Planet Coaster" value={stats.creationsByGame['planet-coaster']} colorClass={getGameColor('planet-coaster').bg} style={getGameColor('planet-coaster').style} />
-                                <StatCard title="Planet Zoo" value={stats.creationsByGame['planet-zoo']} colorClass={getGameColor('planet-zoo').bg} style={getGameColor('planet-zoo').style} />
-                                <StatCard title="Planet Coaster 2" value={stats.creationsByGame['planet-coaster-2']} colorClass={getGameColor('planet-coaster-2').bg} style={getGameColor('planet-coaster-2').style} />
+                                {getGames({ includeDisabled: true }).map(g => (
+                                    <StatCard key={g.id} title={g.name} value={stats.creationsByGame[g.id] ?? 0} colorClass={getGameColor(g.id).bg} style={getGameColor(g.id).style} />
+                                ))}
                             </div>
                         </div>
                     </div>
