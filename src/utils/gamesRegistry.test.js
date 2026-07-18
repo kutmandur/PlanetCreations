@@ -1,10 +1,12 @@
 jest.mock('firebase/firestore', () => ({
     doc: jest.fn((...args) => ({ __path: args.slice(1).join('/') })),
     getDoc: jest.fn(),
+    setDoc: jest.fn(() => Promise.resolve()),
+    serverTimestamp: jest.fn(() => 'SERVER_TS'),
 }));
 jest.mock('../firebase/config', () => ({ db: {} }));
 
-import { getDoc } from 'firebase/firestore';
+import { getDoc, setDoc } from 'firebase/firestore';
 import {
     FALLBACK_GAMES,
     FALLBACK_DEFAULT_GAME_ID,
@@ -15,6 +17,7 @@ import {
     getEnabledGameIds,
     getDefaultGameId,
     getGameDisplayName,
+    saveGamesRegistry,
     __testing,
 } from './gamesRegistry';
 
@@ -30,6 +33,8 @@ const REMOTE = {
 beforeEach(() => {
     window.localStorage.clear();
     jest.clearAllMocks();
+    // CRA-Jest nutzt resetMocks:true — Implementierungen pro Test neu setzen
+    setDoc.mockImplementation(() => Promise.resolve());
     __testing.reset();
 });
 
@@ -110,5 +115,23 @@ describe('accessors', () => {
     it('getGameDisplayName uses the registry name and slug-fallback for unknown ids', () => {
         expect(getGameDisplayName('planet-zoo-2')).toBe('Planet Zoo 2');
         expect(getGameDisplayName('jurassic-world-evolution-3')).toBe('jurassic world evolution 3');
+    });
+});
+
+describe('saveGamesRegistry', () => {
+    it('writes games + enabled-only gameIds and updates the local snapshot', async () => {
+        const listener = jest.fn();
+        subscribeGames(listener);
+        await saveGamesRegistry({ games: REMOTE.games, defaultGameId: 'planet-zoo-2' });
+        expect(setDoc).toHaveBeenCalledTimes(1);
+        const payload = setDoc.mock.calls[0][1];
+        expect(payload.gameIds).toEqual(['planet-zoo-2']); // PC1 disabled → nicht in gameIds
+        expect(payload.games).toHaveLength(2);
+        expect(getGames().map((g) => g.id)).toEqual(['planet-zoo-2']);
+        expect(listener).toHaveBeenCalled();
+    });
+
+    it('rejects an empty games list', async () => {
+        await expect(saveGamesRegistry({ games: [], defaultGameId: 'x' })).rejects.toThrow();
     });
 });

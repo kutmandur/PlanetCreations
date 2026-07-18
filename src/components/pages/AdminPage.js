@@ -9,6 +9,7 @@ import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import { DEFAULT_WEIGHTS, WEIGHT_KEYS } from '../../utils/feedRanking';
 import FeedWeightSliders from '../ui/FeedWeightSliders';
+import GamesManager from '../management/GamesManager';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
 
@@ -20,7 +21,7 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500', style }) => (
 );
 
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = useRef(['User Management', 'Influencer', 'Data Management', 'Indexes', 'Feed', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
+    const TABS = useRef(['User Management', 'Influencer', 'Games', 'Data Management', 'Indexes', 'Feed', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const [feedWeights, setFeedWeights] = useState(null);
     const [feedWeightsDirty, setFeedWeightsDirty] = useState(false);
@@ -637,6 +638,8 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         )}
                     </div>
                 );
+            case 'Games':
+                return <GamesManager setModalMessage={setModalMessage} />;
             case 'Data Management':
                 return (
                     <div style={color.style}>
