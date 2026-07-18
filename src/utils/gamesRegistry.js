@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
 // Spiele-Registry: die unterstützten Spiele als Laufzeit-Konfiguration
@@ -103,6 +103,27 @@ export function getDefaultGameId() {
 /** Anzeigename; für unbekannte ids Slug → Titel ("planet-zoo-2" → "planet zoo 2"). */
 export function getGameDisplayName(id) {
     return getGame(id)?.name || String(id || '').replace(/-/g, ' ');
+}
+
+/**
+ * Registry speichern (Admin-Games-Tab): schreibt meta/games inkl. der flachen
+ * gameIds-Liste (nur enabled — wird von den Firestore-Rules für die
+ * creation.game-Validierung gelesen) und aktualisiert den lokalen Snapshot
+ * sofort, damit die UI ohne Reload nachzieht.
+ */
+export async function saveGamesRegistry({ games, defaultGameId }) {
+    const sanitized = sanitize({ games, defaultGameId });
+    if (!sanitized) throw new Error('Games list must contain at least one valid game.');
+    const gameIds = sanitized.games.filter((g) => g.enabled !== false).map((g) => g.id);
+    await setDoc(doc(db, 'meta', 'games'), {
+        games: sanitized.games,
+        gameIds,
+        defaultGameId: sanitized.defaultGameId,
+        updatedAt: serverTimestamp(),
+    });
+    registry = sanitized;
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized)); } catch (e) { /* egal */ }
+    notify();
 }
 
 export const __testing = {
