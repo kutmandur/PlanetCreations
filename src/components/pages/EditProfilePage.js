@@ -128,7 +128,7 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
     const platformPreference = profileData.platformPreferences?.[selectedGameForDlc] || 'pc';
 
     return (
-        <div className="max-w-2xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg">
+        <div className="max-w-2xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg" style={color.style}>
             <h1 className="text-3xl font-bold text-center mb-6">Edit Your Profile</h1>
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
@@ -159,7 +159,7 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                     </div>
                 </div>
 
-                <div>
+                <div style={dlcSelectorColor.style}>
                     <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">My Game Preferences</h3>
                     <p className="text-sm text-gray-500 mb-4">Select a game to manage your preferences and owned DLCs.</p>
                     <div className="flex justify-center">

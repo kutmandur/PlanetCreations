@@ -28,7 +28,7 @@ const SubmissionItem = ({ submission, members, community, eventData, eventId, is
     };
 
     return (
-        <div className={`bg-white p-4 rounded-lg shadow-md border-l-4 transition-opacity ${isDone ? 'opacity-50' : 'opacity-100'}`} style={{borderColor: isDone ? '#9CA3AF' : color.bg.replace('bg-', '')}}>
+        <div className={`bg-white p-4 rounded-lg shadow-md border-l-4 transition-opacity ${isDone ? 'opacity-50' : 'opacity-100'}`} style={{borderColor: isDone ? '#9CA3AF' : color.hex}}>
             <div className="flex items-center gap-4">
                 <div className="flex-grow">
                     <div className="flex items-center gap-2">
@@ -832,7 +832,7 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
     };
 
     return (
-        <div className="container mx-auto p-4 sm:p-8">
+        <div className="container mx-auto p-4 sm:p-8" style={color.style}>
             <div className="flex justify-between items-center mb-6">
                 <button onClick={() => navigate(`/event/${eventId}`)} className={`${color.bg} ${color.hoverBg} text-white font-bold py-2 px-4 rounded-lg flex items-center`}>
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />

@@ -678,8 +678,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     if (loading && !creationToEditId) return <Spinner />;
 
     return (
-        <div className="max-w-4xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg">
-            <SelectBackupModal 
+        <div className="max-w-4xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg" style={color.style}>
+            <SelectBackupModal
                 isOpen={isBackupModalOpen}
                 onClose={() => setIsBackupModalOpen(false)}
                 onFileSelect={handleFileSelectedForUpload}

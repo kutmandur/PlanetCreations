@@ -64,7 +64,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
     const selectedGameColor = getGameColor(formData.game);
 
     return (
-        <div className="container mx-auto p-4 sm:p-8 max-w-2xl">
+        <div className="container mx-auto p-4 sm:p-8 max-w-2xl" style={selectedGameColor.style}>
             <button
                 onClick={() => navigate(-1)}
                 className="flex items-center text-gray-600 hover:text-gray-800 mb-6 transition-colors"
@@ -99,6 +99,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                                         key={game.id}
                                         type="button"
                                         onClick={() => setFormData(prev => ({ ...prev, game: game.id }))}
+                                        style={gameColor.style}
                                         className={`p-4 rounded-lg border-2 transition-all ${
                                             isSelected
                                                 ? `${gameColor.border} ${gameColor.bg} text-white`

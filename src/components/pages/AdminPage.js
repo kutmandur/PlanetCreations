@@ -10,8 +10,8 @@ import FeedWeightSliders from '../ui/FeedWeightSliders';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
 
-const StatCard = ({ title, value, colorClass = 'bg-blue-500' }) => (
-    <div className={`p-6 rounded-lg shadow-lg text-white ${colorClass}`}>
+const StatCard = ({ title, value, colorClass = 'bg-blue-500', style }) => (
+    <div className={`p-6 rounded-lg shadow-lg text-white ${colorClass}`} style={style}>
         <h4 className="text-lg font-semibold text-blue-100">{title}</h4>
         <p className="text-4xl font-bold mt-2">{value}</p>
     </div>
@@ -643,7 +643,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                 );
             case 'Data Management':
                 return (
-                    <div>
+                    <div style={color.style}>
                         <div className="relative flex justify-center my-6">
                             <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                                 <div ref={gameGliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
@@ -884,9 +884,9 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
                             <h3 className="text-2xl font-bold mb-4 text-gray-800">Creations by Game</h3>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <StatCard title="Planet Coaster" value={stats.creationsByGame['planet-coaster']} colorClass={getGameColor('planet-coaster').bg} />
-                                <StatCard title="Planet Zoo" value={stats.creationsByGame['planet-zoo']} colorClass={getGameColor('planet-zoo').bg} />
-                                <StatCard title="Planet Coaster 2" value={stats.creationsByGame['planet-coaster-2']} colorClass={getGameColor('planet-coaster-2').bg} />
+                                <StatCard title="Planet Coaster" value={stats.creationsByGame['planet-coaster']} colorClass={getGameColor('planet-coaster').bg} style={getGameColor('planet-coaster').style} />
+                                <StatCard title="Planet Zoo" value={stats.creationsByGame['planet-zoo']} colorClass={getGameColor('planet-zoo').bg} style={getGameColor('planet-zoo').style} />
+                                <StatCard title="Planet Coaster 2" value={stats.creationsByGame['planet-coaster-2']} colorClass={getGameColor('planet-coaster-2').bg} style={getGameColor('planet-coaster-2').style} />
                             </div>
                         </div>
                     </div>

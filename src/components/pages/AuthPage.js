@@ -160,7 +160,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
     }
 
     return (
-        <div className="flex justify-center items-center mt-10">
+        <div className="flex justify-center items-center mt-10" style={color.style}>
             <div className="w-full max-w-md bg-white p-8 rounded-lg shadow-lg">
                 <h2 className="text-3xl font-bold text-center mb-6">{authAction === 'login' ? 'Login' : 'Register'}</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">

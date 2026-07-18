@@ -291,7 +291,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const isBrowsingCommunities = communitysState.activeTab === 'Browser' || communitysState.activeTab === 'My Communitys';
 
     return (
-        <div className="container mx-auto p-4 sm:p-8">
+        <div className="container mx-auto p-4 sm:p-8" style={activeGameColor.style}>
             <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">Community Hub</h1>
             
             <div className="relative flex justify-center my-6">

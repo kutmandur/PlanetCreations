@@ -1,21 +1,50 @@
-// Tailwind CSS Safelist:
-/*
-  text-blue-500 bg-blue-500 hover:bg-blue-600 border-blue-500 focus:ring-blue-500
-  text-blue-800 bg-blue-800 hover:bg-blue-900 border-blue-800 focus:ring-blue-800
-  text-green-500 bg-green-500 hover:bg-green-600 border-green-500 focus:ring-green-500
-  text-orange-500 bg-orange-500 hover:bg-orange-600 border-orange-500 focus:ring-orange-500
-  text-gray-500 bg-gray-500 hover:bg-gray-600 border-gray-500 focus:ring-gray-500
-*/
+import { getGame } from './gamesRegistry';
 
-const GAME_COLORS = {
-    'planet-coaster': { text: 'text-blue-500', bg: 'bg-blue-500', hoverBg: 'hover:bg-blue-600', border: 'border-blue-500', ring: 'focus:ring-blue-500' },
-    'planet-coaster-2': { text: 'text-blue-800', bg: 'bg-blue-800', hoverBg: 'hover:bg-blue-900', border: 'border-blue-800', ring: 'focus:ring-blue-800' },
-    'planet-zoo': { text: 'text-green-500', bg: 'bg-green-500', hoverBg: 'hover:bg-green-600', border: 'border-green-500', ring: 'focus:ring-green-500' },
-    'all': { text: 'text-orange-500', bg: 'bg-orange-500', hoverBg: 'hover:bg-orange-600', border: 'border-orange-500', ring: 'focus:ring-orange-500' },
-    'default': { text: 'text-gray-500', bg: 'bg-gray-500', hoverBg: 'hover:bg-gray-600', border: 'border-gray-500', ring: 'focus:ring-gray-500' }
+// Spielfarben kommen aus der Games-Registry (freie Hex-Werte, Admin-Panel).
+// Da Tailwind-Klassen nicht zur Laufzeit erzeugt werden können, liefern die
+// Properties (.bg/.text/…) feste Utility-Klassen aus index.css, deren Farbe
+// über CSS-Variablen gesteuert wird. Die Variablen setzt `style` — einmal am
+// Wrapper der Seite/Komponente anbringen (CSS-Variablen vererben):
+//   const color = getGameColor(game);
+//   <div style={color.style} className={...}>… className={color.bg} …</div>
+const SPECIAL_HEX = {
+    all: '#F97316',
+    default: '#6B7280',
 };
 
-export const getGameColor = (gameId) => GAME_COLORS[gameId] || GAME_COLORS['default'];
+// Hex abdunkeln (für Hover-Zustände), factor 0..1
+export const darkenHex = (hex, factor = 0.82) => {
+    try {
+        const r = Math.round(parseInt(hex.substr(1, 2), 16) * factor);
+        const g = Math.round(parseInt(hex.substr(3, 2), 16) * factor);
+        const b = Math.round(parseInt(hex.substr(5, 2), 16) * factor);
+        return `#${[r, g, b].map((v) => Math.min(255, v).toString(16).padStart(2, '0')).join('')}`;
+    } catch (e) {
+        return hex;
+    }
+};
+
+const colorCache = new Map();
+
+export const getGameColor = (gameId) => {
+    const hex = SPECIAL_HEX[gameId] || getGame(gameId)?.color || SPECIAL_HEX.default;
+    let cached = colorCache.get(hex);
+    if (!cached) {
+        const hexHover = darkenHex(hex);
+        cached = {
+            hex,
+            hexHover,
+            style: { '--game-color': hex, '--game-color-hover': hexHover },
+            text: 'game-text',
+            bg: 'game-bg',
+            hoverBg: 'game-bg-hover',
+            border: 'game-border',
+            ring: 'game-ring',
+        };
+        colorCache.set(hex, cached);
+    }
+    return cached;
+};
 
 // Black or white text for readability on a given hex background (YIQ contrast).
 // Shared by the community rank pills across cards.

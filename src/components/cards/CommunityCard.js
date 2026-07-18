@@ -75,7 +75,7 @@ const CommunityCard = memo(({ community }) => {
                         {allowedGames.map(gameId => {
                              const color = getGameColor(gameId);
                              return (
-                                <span key={gameId} className={`px-2 py-1 text-xs font-bold text-white rounded-full ${color.bg}`}>
+                                <span key={gameId} style={color.style} className={`px-2 py-1 text-xs font-bold text-white rounded-full ${color.bg}`}>
                                     {GAME_PILLS[gameId] || gameId}
                                 </span>
                              );

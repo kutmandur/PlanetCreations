@@ -53,6 +53,7 @@ const CollaborationCard = memo(({ collaboration, memberCount = 0 }) => {
     return (
         <Link to={`/collaboration/${collaboration.id}`}>
             <article
+                style={gameColor.style}
                 className={`bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col h-full border-l-4 ${gameColor.border}`}
             >
                 <div className="p-4 flex flex-col flex-grow">

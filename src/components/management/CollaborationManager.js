@@ -192,7 +192,7 @@ const CollaborationManager = ({ setModalMessage, setConfirmation }) => {
                                                 )}
                                             </td>
                                             <td className="px-4 py-3">
-                                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${gameColor.bg} text-white`}>
+                                                <span style={gameColor.style} className={`px-2 py-1 text-xs font-medium rounded-full ${gameColor.bg} text-white`}>
                                                     {collab.game === 'planet-coaster-2' ? 'PC2' : 'PZ'}
                                                 </span>
                                             </td>

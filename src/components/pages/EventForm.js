@@ -363,7 +363,7 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     if (loading) return <div className="h-screen flex justify-center items-center"><Spinner /></div>;
 
     return (
-        <div className="max-w-2xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg">
+        <div className="max-w-2xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg" style={color.style}>
             <h1 className="text-3xl font-bold text-center">{isEditing ? 'Edit Event' : 'Create New Event'}</h1>
             {communityName && (<div className="text-center mb-6 text-gray-500">for <span className="font-bold" style={{ color: color.text }}>{communityName}</span></div>)}
             

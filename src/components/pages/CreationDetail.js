@@ -391,7 +391,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
 
     return (
-        <div className="container mx-auto mt-8 p-4">
+        <div className="container mx-auto mt-8 p-4" style={color.style}>
             <div className="flex justify-between items-center mb-4">
                 <button onClick={() => navigate(-1)} className={`flex items-center justify-center ${color.bg} ${color.hoverBg} text-white px-4 py-2 rounded-md transition-colors font-semibold`}>
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back

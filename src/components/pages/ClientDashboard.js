@@ -852,7 +852,7 @@ const ClientDashboard = ({ user }) => {
     };
     
     return (
-        <div className="h-full flex flex-col bg-gray-800 text-white overflow-hidden">
+        <div className="h-full flex flex-col bg-gray-800 text-white overflow-hidden" style={activeGameColor.style}>
             {globalLoader.isLoading && <GlobalLoader message={globalLoader.message} />}
             
             <div className="p-4 flex justify-between items-center flex-shrink-0">

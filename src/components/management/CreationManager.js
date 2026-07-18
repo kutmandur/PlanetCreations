@@ -201,7 +201,7 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
     }, [creations, managerState]);
 
     return (
-        <div>
+        <div style={color.style}>
             {showcaseModal && (
                 <ShowcaseNoteModal
                     onConfirm={handleConfirmShowcase}

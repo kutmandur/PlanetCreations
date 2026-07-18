@@ -674,6 +674,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                 <button
                                     key={game.id}
                                     onClick={() => setActiveGame(game.id)}
+                                    style={gameColor.style}
                                     className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm font-medium ${activeGame === game.id ? `${gameColor.bg} text-white` : 'text-gray-600 hover:text-black'}`}
                                 >
                                     {game.name}

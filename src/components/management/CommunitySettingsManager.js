@@ -135,6 +135,7 @@ const CommunitySettingsManager = ({ community, members = [], setModalMessage, se
                                     key={game.id}
                                     type="button"
                                     onClick={() => handleGameToggle(game.id)}
+                                    style={color.style}
                                     className={`flex-1 py-2 px-2 text-center rounded-full transition-all duration-300 font-semibold text-sm
                                         ${isActive ? `${color.bg} text-white shadow` : 'bg-transparent text-gray-500 hover:bg-gray-300'}
                                     `}
