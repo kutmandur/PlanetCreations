@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- NEUE FUNKTIONEN FÜR DAS MODAL ---
   listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),
   prepareBackupForUpload: (filePath, idToken) => ipcRenderer.invoke('prepare-backup-for-upload', filePath, idToken),
+  uploadBackupFile: (filePath, uploadUrl, contentType) => ipcRenderer.invoke('upload-backup-file', filePath, uploadUrl, contentType),
 
 
   // --- Kern-Funktionen ---
@@ -41,7 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanAllMediaFiles: () => ipcRenderer.invoke('scan-all-media-files'),
   createMediaSnapshot: (savePath, mediaPaths) => ipcRenderer.invoke('create-media-snapshot', savePath, mediaPaths),
   getMediaSnapshot: (savePath) => ipcRenderer.invoke('get-media-snapshot', savePath),
-  installMedia: (savePath) => ipcRenderer.invoke('install-media', savePath),
+  installMedia: (savePath, options) => ipcRenderer.invoke('install-media', savePath, options),
   uninstallMedia: (savePath) => ipcRenderer.invoke('uninstall-media', savePath),
   getMediaStatus: (savePath) => ipcRenderer.invoke('get-media-status', savePath),
 });

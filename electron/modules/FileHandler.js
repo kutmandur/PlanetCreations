@@ -24,11 +24,11 @@ const GAME_CONFIG = {
 // NEU: Eine Liste der erlaubten Dateiendungen für Medien
 const ALLOWED_MEDIA_EXTENSIONS = new Set([
     // Bilder
-    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg',
+    '.jpg', '.jpeg', '.png', '.gif', '.webp',
     // Videos
-    '.mp4', '.webm', '.mov', '.avi', '.mkv',
+    '.mp4', '.webm', '.mov',
     // Audio
-    '.mp3', '.ogg', '.wav', '.flac'
+    '.mp3', '.ogg'
 ]);
 
 function getDocumentsPath() {

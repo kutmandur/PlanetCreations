@@ -1,317 +1,276 @@
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
-const { getManifestPath, getSnapshot } = require('./MediaManager');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
+const {
+    createPortableManifest,
+    savePortableManifestForCreation,
+    getSnapshot,
+    getObjectPath,
+    storeAssetBuffer,
+    findManifestPathsByMediaSetId,
+} = require('./MediaManager');
+const {
+    FORMAT_NAME,
+    FORMAT_VERSION,
+    MAX_BACKUP_SIZE_BYTES,
+    sha256,
+    inspectCreationPackage,
+    inspectMediaPackage,
+} = require('./BackupFormat');
 
-const backupCategoryMap = {
-    '.park2': 'Parks',
-    '.zoo': 'Parks',
-    '.blpr2': 'Blueprints',
-    '.pzblueprint': 'Blueprints',
-    '.prkauto2': 'Auto Save',
-    '.zooauto': 'Auto Save'
-};
-
-// Erlaubte Dateiendungen für Game-Files
+const API_BASE_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
+const MAX_UPLOAD_SIZE_BYTES = MAX_BACKUP_SIZE_BYTES;
+const backupCategoryMap = {
+    '.park2': 'Parks', '.zoo': 'Parks',
+    '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints',
+    '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save',
+};
+const gameByExtension = {
+    '.park2': 'planet-coaster-2', '.blpr2': 'planet-coaster-2', '.prkauto2': 'planet-coaster-2',
+    '.zoo': 'planet-zoo', '.pzblueprint': 'planet-zoo', '.zooauto': 'planet-zoo',
+};
+const kindByExtension = {
+    '.park2': 'park', '.zoo': 'park',
+    '.blpr2': 'blueprint', '.pzblueprint': 'blueprint',
+    '.prkauto2': 'autosave', '.zooauto': 'autosave',
+};
+let cachedPublicKey = null;
+let publicKeyFetchedAt = 0;
 
-// Maximale Dateigröße für Uploads (300 MB)
-const MAX_UPLOAD_SIZE_BYTES = 300 * 1024 * 1024;
-
-/**
- * Prüft ob eine Datei ein gültiges Game-File ist
- */
 function isValidGameFile(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    return ALLOWED_GAME_EXTENSIONS.includes(ext);
-}
-
-/**
- * Validiert eine Backup-Datei für den Upload
- * Prüft: Dateiendung, Größe (max 300MB), Signatur
- * @returns {Object} { valid: boolean, error?: string, isSigned: boolean, fileSize: number }
- */
-async function validateBackupForUpload(backupFilePath) {
-    try {
-        // 1. Prüfe ob Datei existiert
-        if (!fs.existsSync(backupFilePath)) {
-            return { valid: false, error: 'File not found.' };
-        }
-
-        // 2. Prüfe Dateiendung
-        const ext = path.extname(backupFilePath).toLowerCase();
-        if (ext !== '.planetcreations') {
-            return { valid: false, error: 'Invalid file type. Only .PlanetCreations backup files are allowed.' };
-        }
-
-        // 3. Prüfe Dateigröße
-        const stats = fs.statSync(backupFilePath);
-        const fileSizeBytes = stats.size;
-        if (fileSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
-            const sizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
-            return {
-                valid: false,
-                error: `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`,
-                fileSize: fileSizeBytes
-            };
-        }
-
-        // 4. Prüfe ob es ein gültiges Backup-Archiv ist
-        let zip;
-        try {
-            zip = new AdmZip(backupFilePath);
-        } catch (e) {
-            return { valid: false, error: 'Invalid or corrupted backup file.' };
-        }
-
-        const metaEntry = zip.getEntry('metadata.json');
-        if (!metaEntry) {
-            return { valid: false, error: 'Invalid backup file: metadata.json is missing.' };
-        }
-
-        let metadata;
-        try {
-            metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-        } catch (e) {
-            return { valid: false, error: 'Invalid backup file: metadata.json is corrupted.' };
-        }
-
-        // 5. Prüfe ob das Original-File ein gültiges Game-File war
-        if (metadata.originalFileName) {
-            const originalExt = path.extname(metadata.originalFileName).toLowerCase();
-            if (!ALLOWED_GAME_EXTENSIONS.includes(originalExt)) {
-                return {
-                    valid: false,
-                    error: `Invalid backup content. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) are allowed.`
-                };
-            }
-        }
-
-        // 6. Prüfe Signatur (Client-seitig nur zur Info - die echte Validierung erfolgt serverseitig)
-        // Der Server validiert die Signatur erneut und ist die einzige vertrauenswürdige Quelle
-        const isSigned = metadata.isSigned === true && !!metadata.signature;
-
-        // Warnung für unsignierte Backups (aber kein harter Fehler - Server entscheidet)
-        if (!isSigned) {
-            return {
-                valid: true, // Client erlaubt Upload, Server wird ablehnen
-                isSigned: false,
-                fileSize: fileSizeBytes,
-                warning: 'This backup is not signed. The server will reject unsigned backups.',
-                metadata: {
-                    originalFileName: metadata.originalFileName,
-                    backupDate: metadata.backupDate
-                }
-            };
-        }
-
-        return {
-            valid: true,
-            isSigned: true,
-            fileSize: fileSizeBytes,
-            metadata: {
-                originalFileName: metadata.originalFileName,
-                backupDate: metadata.backupDate,
-                signerUsername: metadata.signerUsername
-            }
-        };
-
-    } catch (error) {
-        console.error('[BackupManager] Validation error:', error);
-        return { valid: false, error: `Validation failed: ${error.message}` };
-    }
+    return ALLOWED_GAME_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
 }
 
 function getBackupBaseDir(app) {
     return path.join(app.getPath('documents'), 'PlanetCreations');
 }
 
+function isPathInside(root, candidate) {
+    const relative = path.relative(path.resolve(root), path.resolve(candidate));
+    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function readJson(filePath, fallback = {}) {
+    try {
+        if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (error) {
+        console.error(`Could not read ${filePath}:`, error);
+    }
+    return fallback;
+}
+
+function writeJsonAtomic(filePath, value) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const temporaryPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2));
+    fs.renameSync(temporaryPath, filePath);
+}
+
+function getTargetRegistryPath(app) {
+    return path.join(app.getPath('userData'), 'backup_targets.json');
+}
+
+function registerLocalTarget(app, packageId, targetPath) {
+    if (!packageId || !targetPath) return;
+    const registryPath = getTargetRegistryPath(app);
+    const registry = readJson(registryPath, {});
+    registry[packageId] = { targetPath, updatedAt: new Date().toISOString() };
+    writeJsonAtomic(registryPath, registry);
+}
+
+function getRegisteredTarget(app, packageId) {
+    if (!packageId) return null;
+    const registered = readJson(getTargetRegistryPath(app), {})[packageId]?.targetPath;
+    return typeof registered === 'string' ? registered : null;
+}
+
+async function fetchPublicKey() {
+    if (cachedPublicKey && Date.now() - publicKeyFetchedAt < 60 * 60 * 1000) return cachedPublicKey;
+    const response = await fetch(`${API_BASE_URL}/getPublicKey`);
+    if (!response.ok) throw new Error('Could not fetch the PlanetCreations verification key.');
+    cachedPublicKey = await response.text();
+    publicKeyFetchedAt = Date.now();
+    return cachedPublicKey;
+}
+
+async function signMetadata(metadata, idToken) {
+    const response = await fetch(`${API_BASE_URL}/signBackup`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ metadata }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.metadata) throw new Error(data.error || 'The server could not sign this package.');
+    return data.metadata;
+}
+
+function readBasicMetadata(packagePath) {
+    const zip = new AdmZip(packagePath);
+    const entry = zip.getEntry('metadata.json');
+    if (!entry || entry.header.size > 64 * 1024) throw new Error('metadata.json is missing or too large.');
+    return JSON.parse(entry.getData().toString('utf8'));
+}
+
+async function inspectWithVerification(packagePath) {
+    const metadata = readBasicMetadata(packagePath);
+    if (metadata.format !== FORMAT_NAME || metadata.formatVersion !== FORMAT_VERSION) {
+        return { legacy: true, metadata, signatureStatus: 'unsigned' };
+    }
+    let publicKey = null;
+    if (metadata.isSigned) {
+        try {
+            publicKey = await fetchPublicKey();
+        } catch (error) {
+            const inspector = metadata.packageType === 'media' ? inspectMediaPackage : inspectCreationPackage;
+            const result = inspector(packagePath, ALLOWED_GAME_EXTENSIONS, null);
+            return { ...result, signatureStatus: 'unverified', verificationError: error.message };
+        }
+    }
+    return metadata.packageType === 'media' ?
+        inspectMediaPackage(packagePath, ALLOWED_GAME_EXTENSIONS, publicKey) :
+        inspectCreationPackage(packagePath, ALLOWED_GAME_EXTENSIONS, publicKey);
+}
+
 async function verifyBackup(backupZipPath) {
     try {
-        const zip = new AdmZip(backupZipPath);
-        const metaEntry = zip.getEntry('metadata.json');
-        if (!metaEntry) {
-            throw new Error('Invalid backup file: metadata.json is missing.');
-        }
-        const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-
-        if (!metadata.isSigned) {
-            return { status: 'unsigned' };
-        }
-
-        try {
-            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/getPublicKey');
-            if (!response.ok) {
-                // throw new Error('Could not fetch public key for verification.');
-                 // Fallback, wenn der Server nicht erreichbar ist, um die App nicht zu blockieren
-                console.warn('Could not fetch public key, verification skipped.');
-                return { status: 'unsigned' };
-            }
-            const publicKey = await response.text();
-
-            const { signature, ...metadataWithoutSignature } = metadata;
-            const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
-            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
-
-            // Verifiziere die Signatur des Hashes (nicht des Hashes erneut hashen)
-            const verifier = crypto.createVerify('RSA-SHA256');
-            verifier.update(hash);
-            verifier.end();
-
-            const isVerified = verifier.verify(publicKey, signature, 'hex');
-
-            return { status: isVerified ? 'verified' : 'invalid' };
-
-        } catch (error) {
-            console.error("Verification failed:", error);
-            return { status: 'invalid', error: error.message };
-        }
-    } catch(err) {
-        console.error("Could not read backup for verification:", err);
-        return { status: 'invalid', error: err.message };
+        const inspection = await inspectWithVerification(backupZipPath);
+        return { status: inspection.signatureStatus, metadata: inspection.metadata, inspection };
+    } catch (error) {
+        console.error('Backup verification failed:', error);
+        return { status: 'invalid', error: error.message };
     }
 }
 
+async function validateBackupForUpload(backupFilePath) {
+    try {
+        if (!fs.existsSync(backupFilePath) || path.extname(backupFilePath).toLowerCase() !== '.planetcreations') {
+            return { valid: false, error: 'Only existing .PlanetCreations packages can be uploaded.' };
+        }
+        const fileSize = fs.statSync(backupFilePath).size;
+        if (fileSize <= 0 || fileSize > MAX_UPLOAD_SIZE_BYTES) {
+            return { valid: false, error: 'The creation package must be between 1 byte and 300 MB.', fileSize };
+        }
+        const result = await verifyBackup(backupFilePath);
+        if (result.status !== 'verified' || result.metadata?.packageType !== 'creation') {
+            const reason = result.status === 'unverified' ?
+                'The signing service is currently unreachable, so this package cannot be safely uploaded.' :
+                (result.error || 'Only verified version-2 creation packages can be uploaded.');
+            return { valid: false, error: reason, fileSize };
+        }
+        return { valid: true, isSigned: true, fileSize, metadata: result.metadata };
+    } catch (error) {
+        return { valid: false, error: `Validation failed: ${error.message}` };
+    }
+}
 
 async function backupAllCreations(app, files, note, isSigned, idToken) {
     let successCount = 0;
     for (const file of files) {
-        const backupPath = await createBackup(app, file.path, note, isSigned, idToken);
-        if (backupPath) {
-            successCount++;
-        }
+        if (await createBackup(app, file.path, note, isSigned, idToken)) successCount++;
     }
     return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.` };
 }
 
 function deleteBackup(app, backupFilePath) {
     try {
-        const baseDir = getBackupBaseDir(app);
-        if (!backupFilePath.startsWith(baseDir) && !backupFilePath.startsWith(app.getPath('temp'))) {
+        if (!isPathInside(getBackupBaseDir(app), backupFilePath) && !isPathInside(app.getPath('temp'), backupFilePath)) {
             return { success: false, message: 'Error: Invalid backup path.' };
         }
-
-        if (fs.existsSync(backupFilePath)) {
-            fs.unlinkSync(backupFilePath);
-            return { success: true, message: 'Backup deleted successfully.' };
-        } else {
-            return { success: false, message: 'Error: Backup file not found.' };
-        }
+        if (!fs.existsSync(backupFilePath)) return { success: false, message: 'Error: Backup file not found.' };
+        fs.unlinkSync(backupFilePath);
+        return { success: true, message: 'Backup deleted successfully.' };
     } catch (error) {
-        console.error(`[BackupManager] Failed to delete backup:`, error);
         return { success: false, message: `An error occurred: ${error.message}` };
     }
 }
 
 async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null, targetDir = null) {
-    if (!fs.existsSync(sourceFilePath)) return null;
-
-    // Prüfe ob es ein gültiges Game-File ist
-    if (!isValidGameFile(sourceFilePath)) {
-        const ext = path.extname(sourceFilePath).toLowerCase();
-        throw new Error(`Invalid file type "${ext}". Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be backed up.`);
+    if (!fs.existsSync(sourceFilePath) || !isValidGameFile(sourceFilePath)) {
+        throw new Error(`Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be backed up.`);
+    }
+    const extension = path.extname(sourceFilePath).toLowerCase();
+    const fileName = path.basename(sourceFilePath);
+    const payloadBuffer = fs.readFileSync(sourceFilePath);
+    if (payloadBuffer.length <= 0 || payloadBuffer.length > MAX_BACKUP_SIZE_BYTES) {
+        throw new Error('The game file must be between 1 byte and 300 MB.');
+    }
+    const packageId = crypto.randomUUID();
+    const portableManifest = createPortableManifest(sourceFilePath);
+    const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
+    let metadata = {
+        format: FORMAT_NAME,
+        formatVersion: FORMAT_VERSION,
+        packageType: 'creation',
+        packageId,
+        mediaSetId: portableManifest.mediaSetId,
+        gameId: gameByExtension[extension],
+        fileKind: kindByExtension[extension],
+        originalFileName: fileName,
+        payloadPath: `payload/${fileName}`,
+        payloadSize: payloadBuffer.length,
+        payloadSha256: sha256(payloadBuffer),
+        mediaManifestSha256: sha256(manifestBuffer),
+        note: String(note || '').slice(0, 1000),
+        createdAt: new Date().toISOString(),
+        isSigned: false,
+    };
+    if (isSigned) {
+        if (!idToken) throw new Error('Login is required for signed packages.');
+        metadata = await signMetadata(metadata, idToken);
     }
 
-    try {
-        const fileExtension = path.extname(sourceFilePath).toLowerCase();
-        const category = backupCategoryMap[fileExtension] || 'Misc';
-        const backupDir = targetDir || path.join(getBackupBaseDir(app), category);
-        fs.mkdirSync(backupDir, { recursive: true });
-
-        const fileName = path.basename(sourceFilePath);
-        const baseName = fileName.replace(/\.[^/.]+$/, "");
-        
-        const timestamp = new Date();
-        const dateString = timestamp.toISOString().split('T')[0];
-        // Wenn es ein temporäres Verzeichnis ist, brauchen wir keine Versionierung
-        const versionString = targetDir ? 'temp' : `v${fs.readdirSync(backupDir).filter(f => f.startsWith(baseName) && f.endsWith('.PlanetCreations')).length + 1}`;
-        
-        const zipFileName = `${baseName}_${dateString}_${versionString}.PlanetCreations`;
-        const destZipPath = path.join(backupDir, zipFileName);
-
-        const metadata = { note, originalFileName: fileName, originalFilePath: sourceFilePath, backupDate: timestamp.toISOString(), filePath: destZipPath, backupType: 'creation', isSigned: false };
-        
-        const zip = new AdmZip();
-        zip.addLocalFile(sourceFilePath);
-        
-        const mediaManifestPath = getManifestPath(sourceFilePath);
-        if (fs.existsSync(mediaManifestPath)) {
-            zip.addLocalFile(mediaManifestPath, '', 'media_manifest.json');
-        }
-
-        if (isSigned && idToken) {
-            // Kopiere Metadaten ohne Signatur-relevante Felder für den Hash
-            const signableMeta = { ...metadata };
-            delete signableMeta.filePath; // Der Pfad kann sich ändern, sollte nicht Teil der Signatur sein
-
-            const metadataString = JSON.stringify(signableMeta, null, 2);
-            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
-
-            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${idToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ hash: hash }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to get signature from server.');
-            }
-
-            const { signature, signerUid, signerUsername } = await response.json();
-            
-            metadata.isSigned = true;
-            metadata.signature = signature;
-            metadata.signerUid = signerUid;
-            metadata.signerUsername = signerUsername;
-        }
-
-        zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
-        zip.writeZip(destZipPath);
-        return destZipPath; // GIB DEN PFAD ZURÜCK
-    } catch (error) {
-        console.error(`[BackupManager] Failed to create backup:`, error);
-        throw error;
-    }
+    const category = backupCategoryMap[extension] || 'Misc';
+    const backupDir = targetDir || path.join(getBackupBaseDir(app), category);
+    fs.mkdirSync(backupDir, { recursive: true });
+    const baseName = path.basename(fileName, extension).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const version = targetDir ? `upload-${packageId}` : `v${Date.now()}`;
+    const destinationPath = path.join(backupDir, `${baseName}_${version}.PlanetCreations`);
+    const zip = new AdmZip();
+    zip.addFile(metadata.payloadPath, payloadBuffer);
+    zip.addFile('media_manifest.json', manifestBuffer);
+    zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
+    zip.writeZip(destinationPath);
+    registerLocalTarget(app, packageId, sourceFilePath);
+    return destinationPath;
 }
-
 
 function listAllBackups(app) {
     const allBackups = {};
     const baseDir = getBackupBaseDir(app);
-    const categories = ['Parks', 'Blueprints', 'Auto Save', 'Custom Media', 'Workshop', 'Misc'];
-
-    for (const category of categories) {
+    for (const category of ['Parks', 'Blueprints', 'Auto Save', 'Custom Media', 'Workshop', 'Misc']) {
         const categoryDir = path.join(baseDir, category);
         if (!fs.existsSync(categoryDir)) continue;
-
-        const backupFiles = fs.readdirSync(categoryDir).filter(f => f.endsWith('.PlanetCreations'));
-        for (const file of backupFiles) {
+        for (const fileName of fs.readdirSync(categoryDir).filter(file => file.toLowerCase().endsWith('.planetcreations'))) {
             try {
-                const zipPath = path.join(categoryDir, file);
-                const zip = new AdmZip(zipPath);
-                const metaEntry = zip.getEntry('metadata.json');
-                if (metaEntry) {
-                    const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-                    const backupData = { ...metadata, category: category };
-
-                    const saveName = path.basename(metadata.originalFileName).replace(/\.[^/.]+$/, "");
-                    if (!allBackups[saveName]) {
-                        allBackups[saveName] = [];
-                    }
-                    allBackups[saveName].push(backupData);
-                }
-            } catch (e) { console.error(`[BackupManager] Could not read metadata from ${file}:`, e); }
+                const archivePath = path.join(categoryDir, fileName);
+                const metadata = readBasicMetadata(archivePath);
+                const originalFileName = path.basename(metadata.originalFileName || 'unknown');
+                const saveName = path.basename(originalFileName, path.extname(originalFileName));
+                const packageType = metadata.packageType || metadata.backupType || 'creation';
+                const backupData = {
+                    ...metadata,
+                    backupType: packageType,
+                    backupDate: metadata.createdAt || metadata.backupDate,
+                    category,
+                    filePath: archivePath,
+                    originalFilePath: getRegisteredTarget(app, metadata.packageId) || metadata.originalFilePath || null,
+                    gameId: metadata.gameId || gameByExtension[path.extname(originalFileName).toLowerCase()] || null,
+                };
+                if (!allBackups[saveName]) allBackups[saveName] = [];
+                allBackups[saveName].push(backupData);
+            } catch (error) {
+                console.error(`Could not read backup ${fileName}:`, error);
+            }
         }
     }
-
-    for (const saveName in allBackups) {
-        allBackups[saveName].sort((a, b) => new Date(b.backupDate) - new Date(a.backupDate));
+    for (const backups of Object.values(allBackups)) {
+        backups.sort((a, b) => new Date(b.backupDate) - new Date(a.backupDate));
     }
     return allBackups;
 }
@@ -319,179 +278,126 @@ function listAllBackups(app) {
 async function backupCreationMedia(app, sourceFilePath, note, isSigned = false, idToken = null) {
     try {
         const snapshot = getSnapshot(sourceFilePath);
-        if (!snapshot || !snapshot.files || snapshot.files.length === 0) {
-            return { success: false, message: 'No media associated with this creation.' };
-        }
-        
-        const MASTER_MEDIA_LIBRARY = path.join(app.getPath('userData'), 'MasterMediaLibrary');
-        const destDir = path.join(getBackupBaseDir(app), 'Custom Media');
-        fs.mkdirSync(destDir, { recursive: true });
-
-        const fileName = path.basename(sourceFilePath);
-        const baseName = fileName.replace(/\.[^/.]+$/, "");
-        const timestamp = new Date();
-        const dateString = timestamp.toISOString().split('T')[0];
-        const existingBackups = fs.readdirSync(destDir).filter(f => f.startsWith(`CustomMediaBackup-${baseName}`) && f.endsWith('.PlanetCreations'));
-        const newVersion = existingBackups.length + 1;
-        
-        const zipFileName = `CustomMediaBackup-${baseName}_${dateString}_v${newVersion}.PlanetCreations`;
-        const destZipPath = path.join(destDir, zipFileName);
-
-        const zip = new AdmZip();
-        for (const mediaFile of snapshot.files) {
-            const mediaFilePath = path.join(MASTER_MEDIA_LIBRARY, mediaFile);
-            if (fs.existsSync(mediaFilePath)) {
-                zip.addLocalFile(mediaFilePath);
-            }
-        }
-        
-        const mediaManifestPath = getManifestPath(sourceFilePath);
-        if (fs.existsSync(mediaManifestPath)) {
-            zip.addLocalFile(mediaManifestPath, '', 'media_manifest.json');
-        }
-
-        const metadata = {
-            note: note || `Media backup for ${baseName}`,
-            originalFileName: fileName,
-            originalFilePath: sourceFilePath,
-            backupDate: timestamp.toISOString(),
-            version: newVersion,
-            filePath: destZipPath,
-            backupType: 'media',
-            isSigned: false
+        if (!snapshot?.assets?.length) return { success: false, message: 'No media is associated with this creation.' };
+        const portableManifest = createPortableManifest(sourceFilePath, snapshot.mediaSetId);
+        const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
+        const packageId = crypto.randomUUID();
+        let metadata = {
+            format: FORMAT_NAME,
+            formatVersion: FORMAT_VERSION,
+            packageType: 'media',
+            packageId,
+            mediaSetId: portableManifest.mediaSetId,
+            gameId: snapshot.gameId || gameByExtension[path.extname(sourceFilePath).toLowerCase()],
+            originalFileName: path.basename(sourceFilePath),
+            mediaManifestSha256: sha256(manifestBuffer),
+            assetCount: portableManifest.assets.length,
+            assetsTotalSize: portableManifest.assets.reduce((total, asset) => total + asset.size, 0),
+            note: String(note || '').slice(0, 1000),
+            createdAt: new Date().toISOString(),
+            isSigned: false,
         };
-        
-        if (zip.getEntries().length <= 2) {
-            return { success: false, message: 'Associated media files could not be found.' };
+        if (isSigned) {
+            if (!idToken) throw new Error('Login is required for signed media packages.');
+            metadata = await signMetadata(metadata, idToken);
         }
-        
-        if (isSigned && idToken) {
-            const signableMeta = { ...metadata };
-            delete signableMeta.filePath;
-
-            const metadataString = JSON.stringify(signableMeta, null, 2);
-            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
-
-            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/signBackup', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${idToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ hash: hash }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to get signature from server.');
-            }
-
-            const { signature, signerUid, signerUsername } = await response.json();
-            
-            metadata.isSigned = true;
-            metadata.signature = signature;
-            metadata.signerUid = signerUid;
-            metadata.signerUsername = signerUsername;
+        const destinationDirectory = path.join(getBackupBaseDir(app), 'Custom Media');
+        fs.mkdirSync(destinationDirectory, { recursive: true });
+        const destinationPath = path.join(destinationDirectory, `CustomMedia-${packageId}.PlanetCreations`);
+        const zip = new AdmZip();
+        zip.addFile('media_manifest.json', manifestBuffer);
+        for (const asset of portableManifest.assets) {
+            const extension = path.extname(asset.logicalName).toLowerCase();
+            zip.addLocalFile(getObjectPath(asset), 'assets', `${asset.sha256}${extension}`);
         }
-
         zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
-        zip.writeZip(destZipPath);
-
-        return { success: true, message: `Media backup for '${baseName}' created successfully!` };
+        zip.writeZip(destinationPath);
+        return { success: true, message: `Checked media package created for '${path.basename(sourceFilePath)}'.` };
     } catch (error) {
-        console.error(`[BackupManager] Failed to create creation media backup:`, error);
-        throw error;
+        console.error('Failed to create media package:', error);
+        return { success: false, message: error.message };
     }
 }
 
 async function importMediaBackup(app, dialog) {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-        title: 'Select Media Backup File',
+        title: 'Select checked media package',
         defaultPath: app.getPath('downloads'),
-        filters: [{ name: 'PlanetCreations Media Backup', extensions: ['PlanetCreations'] }],
-        properties: ['openFile']
+        filters: [{ name: 'PlanetCreations Media Package', extensions: ['PlanetCreations'] }],
+        properties: ['openFile'],
     });
-
-    if (canceled || filePaths.length === 0) {
-        return { success: false, message: 'No file selected.' };
-    }
-
-    const filePath = filePaths[0];
+    if (canceled || filePaths.length === 0) return { success: false, status: 'canceled', message: 'No file selected.' };
     try {
-        const zip = new AdmZip(filePath);
-        const manifestEntry = zip.getEntry('media_manifest.json');
-        if (!manifestEntry) {
-            return { success: false, message: 'Invalid media backup: media_manifest.json is missing.' };
+        const packageSize = fs.statSync(filePaths[0]).size;
+        if (packageSize <= 0 || packageSize > 2 * 1024 * 1024 * 1024) {
+            throw new Error('The media package must be between 1 byte and 2 GB.');
         }
-        
-        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
-        const MASTER_MEDIA_LIBRARY = path.join(app.getPath('userData'), 'MasterMediaLibrary');
-        
-        zip.getEntries().forEach(entry => {
-            if (entry.entryName !== 'media_manifest.json' && entry.entryName !== 'metadata.json') {
-                const destPath = path.join(MASTER_MEDIA_LIBRARY, entry.entryName);
-                if (!fs.existsSync(destPath)) {
-                    fs.writeFileSync(destPath, entry.getData());
-                }
-            }
-        });
-
-        if (fs.existsSync(manifest.originalSavePath)) {
-            const destManifestPath = getManifestPath(manifest.originalSavePath);
-            fs.mkdirSync(path.dirname(destManifestPath), { recursive: true });
-            fs.writeFileSync(destManifestPath, manifestEntry.getData());
-            return { success: true, message: 'Media backup imported and successfully linked to existing creation!' };
-        } else {
-            return { success: true, message: 'Media files imported, but original creation was not found. The link could not be restored.' };
+        const result = await verifyBackup(filePaths[0]);
+        if (result.status !== 'verified' || result.metadata?.packageType !== 'media') {
+            return {
+                success: false,
+                status: result.status,
+                message: result.error || 'Only signed and verified version-2 media packages can be imported.',
+            };
         }
+        for (const { asset, buffer } of result.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+        const linkedCount = findManifestPathsByMediaSetId(result.metadata.mediaSetId).length;
+        return {
+            success: true,
+            status: 'verified',
+            mediaSetId: result.metadata.mediaSetId,
+            message: linkedCount > 0 ?
+                `Checked media imported and matched to ${linkedCount} local creation(s). You can activate it separately.` :
+                'Checked media imported. Its matching creation has not been restored on this PC yet.',
+        };
     } catch (error) {
-        console.error('Failed to import media backup:', error);
-        return { success: false, message: `An error occurred: ${error.message}` };
+        return { success: false, status: 'invalid', message: error.message };
     }
 }
 
 async function restoreBackup(app, backupZipPath, originalFilePath) {
     try {
-        const verificationResult = await verifyBackup(backupZipPath);
-        
         if (!fs.existsSync(backupZipPath)) return { success: false, status: 'error', message: 'Backup file not found.' };
-
-        if (verificationResult.status === 'unsigned') {
-            // Wir erlauben die Wiederherstellung unsignierter Backups, aber der Benutzer wird gewarnt.
-            // Die Warnung muss im Frontend passieren, hier geben wir nur den Status zurück.
+        const verification = await verifyBackup(backupZipPath);
+        if (verification.status === 'invalid' || verification.status === 'unverified') {
+            return { success: false, status: verification.status, message: verification.error || 'Package verification failed.' };
         }
-        if (verificationResult.status === 'invalid') {
-            return { success: false, status: 'invalid', message: 'This backup has an invalid signature and cannot be restored.' };
+        if (!originalFilePath || !isValidGameFile(originalFilePath)) {
+            return { success: false, status: 'needs-target', originalFileName: verification.metadata?.originalFileName };
         }
-        
-        const zip = new AdmZip(backupZipPath);
-        const metaEntry = zip.getEntry('metadata.json');
-        if (!metaEntry) throw new Error("metadata.json not found.");
-        const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-        
-        // Backup des aktuellen "live" Spielstands vor der Wiederherstellung
+        if (path.extname(originalFilePath).toLowerCase() !==
+            path.extname(verification.metadata?.originalFileName || '').toLowerCase()) {
+            return { success: false, status: 'error', message: 'The restore target must use the original game-file extension.' };
+        }
+        let payloadBuffer;
+        let manifest = null;
+        if (verification.inspection?.legacy) {
+            const zip = new AdmZip(backupZipPath);
+            const originalName = path.basename(verification.metadata.originalFileName || '');
+            const entry = zip.getEntry(originalName);
+            if (!entry || !isValidGameFile(originalName)) throw new Error('Legacy backup payload is missing or unsafe.');
+            payloadBuffer = entry.getData();
+        } else if (verification.metadata.packageType === 'creation') {
+            payloadBuffer = verification.inspection.payloadBuffer;
+            manifest = verification.inspection.mediaManifest;
+        } else {
+            throw new Error('A media package cannot be restored as a game file.');
+        }
         if (fs.existsSync(originalFilePath)) {
-            const preRestoreBackupDir = path.join(path.dirname(originalFilePath), 'Pre-Restore Backups');
-            fs.mkdirSync(preRestoreBackupDir, { recursive: true });
-            const backupFileName = `${path.basename(originalFilePath)}.${Date.now()}.pre-restore`;
-            fs.copyFileSync(originalFilePath, path.join(preRestoreBackupDir, backupFileName));
+            const preRestoreDirectory = path.join(path.dirname(originalFilePath), 'Pre-Restore Backups');
+            fs.mkdirSync(preRestoreDirectory, { recursive: true });
+            fs.copyFileSync(originalFilePath, path.join(preRestoreDirectory, `${path.basename(originalFilePath)}.${Date.now()}.pre-restore`));
+        } else {
+            fs.mkdirSync(path.dirname(originalFilePath), { recursive: true });
         }
-
-        zip.extractEntryTo(metadata.originalFileName, path.dirname(originalFilePath), false, true);
-        
-        const mediaManifestEntry = zip.getEntry('media_manifest.json');
-        if (mediaManifestEntry) {
-            const destManifestPath = getManifestPath(originalFilePath);
-            fs.mkdirSync(path.dirname(destManifestPath), { recursive: true });
-            fs.writeFileSync(destManifestPath, mediaManifestEntry.getData());
-        }
-        return { success: true, status: verificationResult.status };
+        fs.writeFileSync(originalFilePath, payloadBuffer);
+        if (manifest) savePortableManifestForCreation(originalFilePath, manifest);
+        registerLocalTarget(app, verification.metadata?.packageId, originalFilePath);
+        return { success: true, status: verification.status };
     } catch (error) {
-        console.error(`[BackupManager] Failed to restore backup:`, error);
         return { success: false, status: 'error', message: error.message };
     }
 }
-
 
 module.exports = {
     createBackup,

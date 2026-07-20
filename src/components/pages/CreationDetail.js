@@ -27,6 +27,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [isTogglingCreationFollow, setIsTogglingCreationFollow] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
+    const [isStartingInstall, setIsStartingInstall] = useState(false);
 
     // Versuche Profil aus Cache zu laden
     const cachedProfile = cachedCreation?.userId
@@ -387,7 +388,27 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     const isElectron = window.electronAPI?.isElectron;
     const originBackupUrl = creation.backupUrl;
-    const directImportUrl = originBackupUrl ? `planetcreations://import?url=${encodeURIComponent(originBackupUrl)}` : null;
+    const hasDownloadableBackup = Boolean(creation.backupObjectKey || originBackupUrl);
+
+    const handleDirectInstall = async () => {
+        if (!isElectron || isStartingInstall) return;
+        setIsStartingInstall(true);
+        try {
+            let downloadUrl = originBackupUrl;
+            if (creation.backupObjectKey) {
+                const getBackupDownloadUrl = httpsCallable(functions, 'getBackupDownloadUrl');
+                const response = await getBackupDownloadUrl({ creationId: id });
+                downloadUrl = response.data.downloadUrl;
+            }
+            if (!downloadUrl) throw new Error('No downloadable backup is available.');
+            window.location.href = `planetcreations://import?url=${encodeURIComponent(downloadUrl)}`;
+        } catch (error) {
+            console.error('Could not start direct install:', error);
+            setModalMessage(`Download could not be started: ${error.message}`);
+        } finally {
+            setIsStartingInstall(false);
+        }
+    };
 
 
     return (
@@ -527,14 +548,14 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </div>
                             )}
 
-                            {originBackupUrl && (
+                            {hasDownloadableBackup && (
                                 <div>
                                     <p className="text-sm font-bold text-gray-600 mb-1">Direct Install</p>
                                     {isElectron ? (
-                                        <a href={directImportUrl} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
+                                        <button type="button" onClick={handleDirectInstall} disabled={isStartingInstall} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors disabled:opacity-60 ${color.bg} ${color.hoverBg}`}>
                                             <Icon path={ICONS.download} className="w-5 h-5" />
-                                            Direct Install
-                                        </a>
+                                            {isStartingInstall ? 'Preparing Download...' : 'Direct Install'}
+                                        </button>
                                     ) : (
                                         <Link to="/client-info" className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
                                             <Icon path={ICONS.download} className="w-5 h-5" />

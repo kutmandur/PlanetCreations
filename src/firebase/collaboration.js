@@ -14,14 +14,12 @@ import {
     orderBy,
     arrayUnion,
     arrayRemove,
-    increment,
-    collectionGroup
+    increment
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./config";
 
 const STORAGE_LIMIT = 500 * 1024 * 1024; // 500 MB
-const MAX_VERSIONS_PER_USER_NORMAL = 2;
 const MAX_VERSIONS_PER_USER_LIMITED = 1;
 
 // ============================================
@@ -1086,10 +1084,10 @@ export const calculateStorageUsage = async (collaborationId) => {
             collection(db, 'collaborations', collaborationId, 'files', fileDoc.id, 'versions')
         );
 
-        versionsSnap.docs.forEach(doc => {
-            totalBytes += doc.data().sizeBytes || 0;
+        for (const versionDoc of versionsSnap.docs) {
+            totalBytes += versionDoc.data().sizeBytes || 0;
             versionCount++;
-        });
+        }
     }
 
     return {

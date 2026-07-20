@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { sendInvitation, searchUsersForInvite } from '../../firebase/collaboration';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';

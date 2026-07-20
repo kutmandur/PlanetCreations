@@ -3,6 +3,7 @@
   "description": "Cloud Functions for Firebase",
   "scripts": {
     "lint": "eslint .",
+    "test": "node --test backupFormat.test.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
@@ -14,8 +15,9 @@
   },
   "main": "index.js",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "@aws-sdk/s3-request-presigner": "^3.1090.0",
     "adm-zip": "^0.5.16",
-    "aws-sdk": "^2.1692.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "firebase-admin": "^12.1.1",

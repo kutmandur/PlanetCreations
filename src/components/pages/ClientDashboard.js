@@ -332,8 +332,9 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
             if (activeView === 'restore' && isWorkshopItem) return false;
 
             // 2. Filter by Game
-            const pathLower = firstBackup.originalFilePath.toLowerCase();
-            const gameMatches = (activeGame === 'Planet Coaster 2' && pathLower.includes('planet coaster 2')) || (activeGame === 'Planet Zoo' && pathLower.includes('planet zoo'));
+            const pathLower = (firstBackup.originalFilePath || '').toLowerCase();
+            const gameMatches = (activeGame === 'Planet Coaster 2' && (firstBackup.gameId === 'planet-coaster-2' || pathLower.includes('planet coaster 2'))) ||
+                (activeGame === 'Planet Zoo' && (firstBackup.gameId === 'planet-zoo' || pathLower.includes('planet zoo')));
             if (!gameMatches) return false;
 
             // 3. Filter by File Type (Sub-Tab)
@@ -394,6 +395,8 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         for (const backup of selectedToRestore) {
             // Erste Verifizierung - prüft nur den Status
             const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
+
+            if (verifyResult.status === 'canceled') continue;
 
             if (verifyResult.status === 'invalid') {
                 alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
@@ -591,9 +594,21 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         }
     };
 
-    const handleSaveSnapshot = async (savePath, mediaPaths) => { const fileToInstall = snapshotModalState.file; if (!fileToInstall) { alert('Error: Could not identify the target file.'); return; } const snapshotSuccess = await window.electronAPI.createMediaSnapshot(savePath, mediaPaths); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if (snapshotSuccess) { const installSuccess = await window.electronAPI.installMedia(fileToInstall.path); alert(installSuccess ? 'Snapshot saved and media activated!' : 'Snapshot saved, but activation failed.'); if (currentFiles) { checkStatuses(currentFiles); } } else { alert('Failed to save snapshot.'); } setSnapshotModalState({ isOpen: false, file: null, gameName: null }); };
-    const handleInstall = async (file) => { const success = await window.electronAPI.installMedia(file.path); if(success) alert('Media installed!'); else alert('Failed to install media.'); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
-    const handleUninstall = async (file) => { const success = await window.electronAPI.uninstallMedia(file.path); if(success) alert('Media uninstalled!'); else alert('Failed to uninstall media.'); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
+    const activateMediaWithConflictHandling = async (filePath) => {
+        let result = await window.electronAPI.installMedia(filePath);
+        if (result?.status === 'conflict') {
+            const names = result.conflicts.map(conflict => conflict.logicalName).join(', ');
+            const confirmed = window.confirm(
+                `Different files with the same target name already exist: ${names}.\n\n` +
+                'Activation has been stopped without changing anything. Temporarily park the existing files and activate this media set?'
+            );
+            if (confirmed) result = await window.electronAPI.installMedia(filePath, { parkConflicts: true });
+        }
+        return result;
+    };
+    const handleSaveSnapshot = async (savePath, mediaPaths) => { const fileToInstall = snapshotModalState.file; if (!fileToInstall) { alert('Error: Could not identify the target file.'); return; } const snapshotSuccess = await window.electronAPI.createMediaSnapshot(savePath, mediaPaths); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if (snapshotSuccess) { const installResult = await activateMediaWithConflictHandling(fileToInstall.path); alert(installResult?.success ? 'Snapshot saved and media activated!' : `Snapshot saved, but activation failed: ${installResult?.message || installResult?.status || 'unknown error'}`); if (currentFiles) { checkStatuses(currentFiles); } } else { alert('Failed to save snapshot. Only supported image/video files and MP3/OGG audio may be selected.'); } setSnapshotModalState({ isOpen: false, file: null, gameName: null }); };
+    const handleInstall = async (file) => { const result = await activateMediaWithConflictHandling(file.path); if(result?.success) alert('Media installed!'); else if (result?.status !== 'conflict') alert(`Failed to install media: ${result?.message || result?.status || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
+    const handleUninstall = async (file) => { const result = await window.electronAPI.uninstallMedia(file.path); if(result?.success) alert('Media uninstalled!'); else alert(`Failed to uninstall media: ${result?.message || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
     const handleDeleteMediaClick = (file) => { setDeleteMediaModalState({ isOpen: true, file: file }); };
     const handleDeletionModeSelected = (mode) => { setFinalDeleteState({ isOpen: true, file: deleteMediaModalState.file, mode: mode }); setDeleteMediaModalState({ isOpen: false, file: null }); };
     const handleConfirmMediaDelete = async () => { const { file, mode } = finalDeleteState; if (!file || !mode) return; setGlobalLoader({ isLoading: true, message: `Deleting media for ${file.name}...` }); try { const result = await window.electronAPI.deleteCreationMedia(file.path, mode); alert(result.message); if (result.success) { const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); } } catch (error) { alert(`An error occurred: ${error.message}`); } finally { setGlobalLoader({ isLoading: false, message: '' }); setFinalDeleteState({ isOpen: false, file: null, mode: null }); } };
