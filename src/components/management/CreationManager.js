@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/config';
-import { doc, getDoc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, increment, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import ManagedCreationCard from './ManagedCreationCard';
 import { getGameColor } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';

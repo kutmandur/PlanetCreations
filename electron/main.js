@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const mime = require('mime-types');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
@@ -14,6 +15,12 @@ const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMe
 const isDev = !app.isPackaged;
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
 let mainWindow;
+
+function isPathInside(root, candidate) {
+    if (!root || !candidate) return false;
+    const relative = path.relative(path.resolve(root), path.resolve(candidate));
+    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
 
 // Protokoll-Handler registrieren
 if (process.defaultApp) {
@@ -64,8 +71,8 @@ async function checkForUpdatesViaAPI() {
 async function importBackupFromFile(filePath, overrideCategory = null) {
     try {
         const verificationResult = await verifyBackup(filePath);
-        if (verificationResult.status === 'invalid') {
-            return { success: false, status: 'invalid', message: 'This backup has an invalid signature and cannot be imported.' };
+        if (verificationResult.status === 'invalid' || verificationResult.status === 'unverified') {
+            return { success: false, status: verificationResult.status, message: verificationResult.error || 'This package could not be securely verified and cannot be imported.' };
         }
         
         const zip = new AdmZip(filePath);
@@ -78,7 +85,7 @@ async function importBackupFromFile(filePath, overrideCategory = null) {
 
         if (overrideCategory) {
             category = overrideCategory;
-        } else if (metadata.backupType === 'media') {
+        } else if (metadata.packageType === 'media' || metadata.backupType === 'media') {
             category = 'Custom Media';
         } else {
             const fileExtension = path.extname(metadata.originalFileName).toLowerCase();
@@ -129,14 +136,24 @@ async function handleUrlImport(urlToHandle) {
         if (downloadParsed.protocol !== 'https:') {
             throw new Error('Only HTTPS downloads are allowed for security reasons.');
         }
+        if (!downloadParsed.hostname.endsWith('.r2.cloudflarestorage.com')) {
+            throw new Error('Direct creation installs are only accepted from PlanetCreations R2 downloads.');
+        }
 
         const response = await fetch(downloadUrl);
         if (!response.ok) {
             throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
         }
 
+        const declaredSize = Number(response.headers.get('content-length'));
+        if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
+            throw new Error('The download exceeds the 300 MB package limit.');
+        }
         const buffer = await response.buffer();
-        const fileName = path.basename(downloadParsed.pathname);
+        if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
+            throw new Error('The downloaded package has an invalid size.');
+        }
+        const fileName = `${crypto.randomUUID()}.PlanetCreations`;
         tempPath = path.join(app.getPath('temp'), fileName);
 
         fs.writeFileSync(tempPath, buffer);
@@ -298,7 +315,7 @@ ipcMain.handle('read-file-as-data-url', (event, filePath) => {
             path.join(app.getPath('home'), 'Saved Games')
         ];
 
-        const isAllowed = allowedPaths.some(allowed => normalizedPath.startsWith(allowed));
+        const isAllowed = allowedPaths.some(allowed => isPathInside(allowed, normalizedPath));
         if (!isAllowed) {
             console.warn(`[Security] Blocked file read attempt: ${filePath}`);
             return null;
@@ -390,6 +407,16 @@ ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => 
     const fileExt = path.extname(filePath).toLowerCase();
 
     try {
+        const storedPath = getStoredPath();
+        const allowedSourceRoots = [
+            storedPath,
+            path.join(app.getPath('documents'), 'Frontier Developments'),
+            path.join(app.getPath('documents'), 'PlanetCreations'),
+            app.getPath('temp'),
+        ].filter(Boolean);
+        if (!allowedSourceRoots.some(root => isPathInside(root, filePath))) {
+            return { success: false, message: 'The selected file is outside the configured game and backup folders.' };
+        }
         if (fileExt === '.planetcreations') {
             // Existierendes Backup: Vollständige Validierung durchführen
             const validation = await validateBackupForUpload(filePath);
@@ -450,6 +477,43 @@ ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => 
     }
 });
 
+ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentType) => {
+    try {
+        if (!filePath || path.extname(filePath).toLowerCase() !== '.planetcreations' || !fs.existsSync(filePath)) {
+            return { success: false, message: 'The prepared backup file is missing or invalid.' };
+        }
+        const resolvedPath = path.resolve(filePath);
+        const allowedRoots = [app.getPath('temp'), app.getPath('documents')].map(root => path.resolve(root));
+        const isAllowedPath = allowedRoots.some(root => isPathInside(root, resolvedPath));
+        if (!isAllowedPath) {
+            return { success: false, message: 'The prepared file is outside an allowed local folder.' };
+        }
+        const parsedUrl = new URL(uploadUrl);
+        if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.r2.cloudflarestorage.com')) {
+            return { success: false, message: 'The upload target is not a Cloudflare R2 endpoint.' };
+        }
+        const stats = fs.statSync(resolvedPath);
+        if (!stats.isFile() || stats.size <= 0 || stats.size > 300 * 1024 * 1024) {
+            return { success: false, message: 'The backup must be between 1 byte and 300 MB.' };
+        }
+        const response = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': contentType || 'application/zip',
+                'Content-Length': String(stats.size),
+            },
+            body: fs.createReadStream(resolvedPath),
+        });
+        if (!response.ok) {
+            return { success: false, status: response.status, message: `Cloudflare R2 returned HTTP ${response.status}.` };
+        }
+        return { success: true, status: response.status };
+    } catch (error) {
+        console.error('R2 backup upload failed:', error);
+        return { success: false, message: error.message };
+    }
+});
+
 // --- Andere Kern-Funktionen ---
 ipcMain.handle('import-media-backup', () => importMediaBackup(app, dialog));
 ipcMain.handle('has-media-snapshot', (event, filePath) => hasMediaSnapshot(filePath));
@@ -458,13 +522,32 @@ ipcMain.handle('delete-creation-media', (event, filePath, mode) => deleteCreatio
 ipcMain.handle('scan-games', (event, basePath) => scanGamesFromPath(basePath));
 ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken) => createBackup(app, filePath, note, isSigned, idToken));
 ipcMain.handle('list-all-backups', () => listAllBackups(app));
-ipcMain.handle('restore-backup', (event, backupFilePath, originalFilePath) => restoreBackup(app, backupFilePath, originalFilePath)); 
+ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath) => {
+    let targetPath = originalFilePath;
+    if (!targetPath || !fs.existsSync(path.dirname(targetPath))) {
+        try {
+            const zip = new AdmZip(backupFilePath);
+            const metadata = JSON.parse(zip.getEntry('metadata.json').getData().toString('utf8'));
+            const suggestedName = path.basename(metadata.originalFileName || 'creation.park2');
+            const result = await dialog.showSaveDialog({
+                title: 'Choose where to restore the game file',
+                defaultPath: path.join(app.getPath('documents'), suggestedName),
+                filters: [{ name: 'Supported game file', extensions: [path.extname(suggestedName).slice(1)] }],
+            });
+            if (result.canceled || !result.filePath) return { success: false, status: 'canceled' };
+            targetPath = result.filePath;
+        } catch (error) {
+            return { success: false, status: 'error', message: `Could not read package metadata: ${error.message}` };
+        }
+    }
+    return restoreBackup(app, backupFilePath, targetPath);
+});
 ipcMain.handle('delete-backup', (event, filePath) => deleteBackup(app, filePath));
 ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken) => backupAllCreations(app, files, note, isSigned, idToken));
 ipcMain.handle('scan-all-media-files', () => scanAllMediaFiles(app));
 ipcMain.handle('create-media-snapshot', (event, savePath, mediaPaths) => createOrUpdateSnapshot(savePath, mediaPaths));
 ipcMain.handle('get-media-snapshot', (event, savePath) => getSnapshot(savePath));
-ipcMain.handle('install-media', (event, savePath) => installMedia(savePath));
+ipcMain.handle('install-media', (event, savePath, options) => installMedia(savePath, options));
 ipcMain.handle('uninstall-media', (event, savePath) => uninstallMedia(savePath));
 ipcMain.handle('get-media-status', (event, savePath) => getMediaSetStatus(savePath));
 

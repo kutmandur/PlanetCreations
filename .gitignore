@@ -28,6 +28,7 @@ yarn-error.log*
 .claude/
 CLAUDE.md
 conversation.txt
+AGENTS.md
 
 # Firebase (lokale Deploy-Caches, Debug-Logs)
 .firebase/

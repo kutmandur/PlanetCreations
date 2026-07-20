@@ -6,7 +6,7 @@ import { ICONS } from '../../utils/helpers';
 const MEDIA_TYPES = {
     images: ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
     videos: ['.mp4', '.webm', '.mov'],
-    audio: ['.mp3', '.wav', '.ogg'],
+    audio: ['.mp3', '.ogg'],
 };
 
 const MediaPreviewModal = ({ file, onClose }) => {

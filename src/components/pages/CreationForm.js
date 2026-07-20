@@ -172,7 +172,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [backupInfo, setBackupInfo] = useState(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
-    const [backupUrl, setBackupUrl] = useState('');
+    const [backupUploadId, setBackupUploadId] = useState(null);
+    const [hadExistingBackup, setHadExistingBackup] = useState(false);
+    const [removeExistingBackup, setRemoveExistingBackup] = useState(false);
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
     const [isPreparingUpload, setIsPreparingUpload] = useState(false);
 
@@ -235,8 +237,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     setRequiredDlcs(data.requiredDlcs || []);
                     setSelectedCommunities(data.communityIds || []);
                     setCustomFieldData(data.communitySpecificData || {});
-                    setBackupUrl(data.backupUrl || '');
-                    if (data.backupUrl) {
+                    const hasBackup = Boolean(data.backupObjectKey || data.backupUrl);
+                    setHadExistingBackup(hasBackup);
+                    if (hasBackup) {
                         setBackupInfo({ name: 'Existing Backup Attached', path: null, signed: data.backupIsSigned || false });
                     }
                 } else {
@@ -418,6 +421,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         setIsPreparingUpload(true);
     
         try {
+            if (backupUploadId) {
+                const abortPreviousUpload = httpsCallable(getFunctions(), 'abortBackupUpload');
+                await abortPreviousUpload({ uploadId: backupUploadId }).catch(() => null);
+                setBackupUploadId(null);
+            }
             const idToken = await auth.currentUser.getIdToken(true);
             const result = await window.electronAPI.prepareBackupForUpload(file.path, idToken);
     
@@ -428,73 +436,53 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             }
     
             setBackupInfo({ name: result.fileName, path: result.filePath, signed: result.isSigned });
-            
-            const fileDataUrl = await window.electronAPI.readFileAsDataURL(result.filePath);
-            const fileBlob = await (await fetch(fileDataUrl)).blob();
-    
+
             const functions = getFunctions();
             const getUploadUrl = httpsCallable(functions, 'getUploadUrl');
             const { data } = await getUploadUrl({
                 fileName: result.fileName,
-                contentType: fileBlob.type || 'application/zip',
-                fileSize: result.fileSize || fileBlob.size, // Dateigröße für serverseitige Validierung
+                fileSize: result.fileSize,
             });
-            
-            const { uploadUrl, finalFileUrl } = data;
-    
+
+            const { uploadId, uploadUrl, contentType } = data;
+
             setIsPreparingUpload(false);
             setIsUploading(true);
             setUploadProgress(0);
-    
-            const xhr = new XMLHttpRequest();
-            xhr.open("PUT", uploadUrl, true);
-            xhr.setRequestHeader("Content-Type", fileBlob.type || 'application/zip');
-            
-            xhr.upload.onprogress = (event) => {
-                if (event.lengthComputable) {
-                    const progress = (event.loaded / event.total) * 100;
-                    setUploadProgress(progress);
-                }
-            };
-            
-            xhr.onload = () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    setBackupUrl(finalFileUrl);
-                    setIsUploading(false);
-                    setModalMessage("Backup file successfully attached!");
-                } else {
-                    console.error("Upload failed with status:", xhr.status, xhr.responseText);
-                    setModalMessage(`Upload failed: Server responded with status ${xhr.status}.`);
-                    setIsUploading(false);
-                    setBackupInfo(null);
-                }
-            };
-    
-            xhr.onerror = () => {
-                console.error("Upload failed due to a network error.");
-                setModalMessage("Upload failed. Please check your network connection.");
-                setIsUploading(false);
-                setBackupInfo(null);
-            };
-    
-            xhr.send(fileBlob);
-    
+            const uploadResult = await window.electronAPI.uploadBackupFile(
+                result.filePath,
+                uploadUrl,
+                contentType,
+            );
+            if (!uploadResult?.success) {
+                const abortBackupUpload = httpsCallable(functions, 'abortBackupUpload');
+                await abortBackupUpload({ uploadId }).catch(() => null);
+                throw new Error(uploadResult?.message || `R2 upload failed (${uploadResult?.status || 'network error'}).`);
+            }
+            setBackupUploadId(uploadId);
+            setRemoveExistingBackup(false);
+            setUploadProgress(100);
+            setIsUploading(false);
+            setModalMessage("Backup uploaded securely. It will be verified when you save the creation.");
         } catch (error) {
             console.error("Error during backup attachment:", error);
             setModalMessage(`An error occurred: ${error.message}`);
             setIsPreparingUpload(false);
+            setIsUploading(false);
             setBackupInfo(null);
         }
     };
 
-    const handleRemoveBackup = () => {
-        if (backupUrl && backupUrl.includes('/temp-uploads/')) {
+    const handleRemoveBackup = async () => {
+        if (backupUploadId) {
             const functions = getFunctions();
-            const deleteTempFile = httpsCallable(functions, 'deleteTempFile');
-            deleteTempFile({ tempUrl: backupUrl }).catch(err => console.error("Failed to delete temp file:", err));
+            const abortBackupUpload = httpsCallable(functions, 'abortBackupUpload');
+            await abortBackupUpload({ uploadId: backupUploadId })
+                .catch(err => console.error("Failed to abort temporary upload:", err));
         }
+        if (hadExistingBackup) setRemoveExistingBackup(true);
+        setBackupUploadId(null);
         setBackupInfo(null);
-        setBackupUrl('');
     };
 
     const handleAttachFileClick = () => {
@@ -553,19 +541,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 category, status, platform,
                 requiredDlcs, communityIds: selectedCommunities,
                 communityAssignments, communitySpecificData: customFieldData,
-                backupUrl: backupUrl || null,
-                backupIsSigned: backupInfo?.signed || false,
-                // Ohne Backup auch die vom Server gesetzten Metadaten leeren —
-                // sonst bleiben Größe/Signer/Dateiname vom entfernten Backup stehen.
-                ...(backupUrl ? {} : {
-                    backupFileSize: null,
-                    backupSignerUid: null,
-                    backupSignerUsername: null,
-                    backupOriginalFileName: null,
-                    backupProcessingError: null,
-                }),
             };
-            
+            let savedCreationId;
+
             if (creationToEditId) {
                 const docRef = doc(db, 'creations', creationToEditId);
                 const originalDoc = await getDoc(docRef);
@@ -599,7 +577,17 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 });
                 
                 await batch.commit();
-                
+                savedCreationId = creationToEditId;
+
+                if (backupUploadId) {
+                    setModalMessage("Verifying and attaching the R2 backup...");
+                    const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
+                    await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
+                } else if (removeExistingBackup && hadExistingBackup) {
+                    const removeCreationBackup = httpsCallable(getFunctions(), 'removeCreationBackup');
+                    await removeCreationBackup({ creationId: savedCreationId });
+                }
+
                 setModalMessage("Creation updated successfully!");
                 navigate(`/creation/${creationToEditId}`);
 
@@ -617,7 +605,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 };
                 
                 const newDocRef = await addDoc(collection(db, 'creations'), newCreationData);
-                
+                savedCreationId = newDocRef.id;
+
                 if (selectedCommunities.length > 0) {
                     const linkBatch = writeBatch(db);
                     selectedCommunities.forEach(communityId => {
@@ -629,6 +618,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                         });
                     });
                     await linkBatch.commit();
+                }
+                if (backupUploadId) {
+                    setModalMessage("Verifying and attaching the R2 backup...");
+                    const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
+                    await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
                 }
                 setModalMessage("Creation submitted successfully!");
                 navigate('/');

@@ -25,6 +25,37 @@ service cloud.firestore {
 
     // --- Data Validation Functions ---
 
+    function hasNoServerBackupFields(data) {
+      return !data.keys().hasAny([
+        'backupObjectKey', 'backupStorageProvider', 'backupUrl',
+        'backupFileSize', 'backupIsSigned', 'backupSignerUid',
+        'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
+        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt'
+      ]) || (
+        data.get('backupObjectKey', null) == null &&
+        data.get('backupStorageProvider', null) == null &&
+        data.get('backupUrl', null) == null &&
+        data.get('backupFileSize', null) == null &&
+        data.get('backupIsSigned', false) == false &&
+        data.get('backupSignerUid', null) == null &&
+        data.get('backupSignerUsername', null) == null &&
+        data.get('backupOriginalFileName', null) == null &&
+        data.get('backupPackageId', null) == null &&
+        data.get('backupMediaSetId', null) == null &&
+        data.get('backupProcessingError', null) == null &&
+        data.get('backupUpdatedAt', null) == null
+      );
+    }
+
+    function serverBackupFieldsAreUnchanged(data, existing) {
+      return !data.diff(existing).affectedKeys().hasAny([
+        'backupObjectKey', 'backupStorageProvider', 'backupUrl',
+        'backupFileSize', 'backupIsSigned', 'backupSignerUid',
+        'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
+        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt'
+      ]);
+    }
+
     // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
@@ -38,6 +69,7 @@ service cloud.firestore {
              ) &&
              data.category is string && data.category.size() <= 50 &&
              data.userId == request.auth.uid &&
+             hasNoServerBackupFields(data) &&
              (!('likes' in data.keys()) || data.likes == 0) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              (!('tags' in data.keys()) || (data.tags is list && data.tags.size() <= 20));
@@ -154,9 +186,10 @@ service cloud.firestore {
           request.resource.data.views is int &&
           request.resource.data.views == resource.data.get('views', 0) + 1
       ) || (isLoggedIn() && (
-          (isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
-          isModerator()
-      ));
+          serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
+          ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
+          isModerator())
+       ));
       allow delete: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
 
       match /votes/{userId} {

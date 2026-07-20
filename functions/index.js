@@ -6,8 +6,22 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const path = require("path");
 const crypto = require("crypto");
-const S3 = require("aws-sdk/clients/s3");
-const AdmZip = require("adm-zip");
+const {
+    S3Client,
+    PutObjectCommand,
+    GetObjectCommand,
+    HeadObjectCommand,
+    CopyObjectCommand,
+    DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const {
+    MAX_BACKUP_SIZE_BYTES,
+    buildSignedMetadata,
+    validateUnsignedMetadata,
+    validateUnsignedMediaMetadata,
+    validateCreationArchive,
+} = require("./backupFormat");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -15,27 +29,39 @@ const db = admin.firestore();
 // Shared notification fan-out (inbox doc + web push)
 const { notifyUser } = require("./notify");
 
-// --- Konfiguration für DigitalOcean Spaces ---
+// --- Cloudflare R2 (S3-kompatibel) ---
 // Lazy-Initialisierung: fehlende Konfiguration darf den Modul-Load nicht crashen,
 // sonst sterben ALLE Functions in dieser Datei beim Cold Start.
 let s3Instance = null;
 function getS3() {
     if (!s3Instance) {
-        if (!process.env.DO_ENDPOINT || !process.env.DO_KEY_ID || !process.env.DO_SECRET) {
-            throw new Error("DigitalOcean Spaces is not configured.");
+        const accountId = process.env.R2_ACCOUNT_ID;
+        const jurisdiction = process.env.R2_JURISDICTION;
+        const accessKeyId = r2AccessKeyId.value();
+        const secretAccessKey = r2SecretAccessKey.value();
+        if (!accountId || !accessKeyId || !secretAccessKey || !process.env.R2_BUCKET_NAME) {
+            throw new Error("Cloudflare R2 is not configured.");
         }
-        s3Instance = new S3({
-            endpoint: process.env.DO_ENDPOINT,
-            region: 'nyc3',
-            accessKeyId: process.env.DO_KEY_ID,
-            secretAccessKey: process.env.DO_SECRET,
-            signatureVersion: "v4",
+        const endpointAccount = jurisdiction ? `${accountId}.${jurisdiction}` : accountId;
+        s3Instance = new S3Client({
+            endpoint: `https://${endpointAccount}.r2.cloudflarestorage.com`,
+            region: "auto",
+            credentials: { accessKeyId, secretAccessKey },
         });
     }
     return s3Instance;
 }
-const getDoBucket = () => process.env.DO_BUCKET_NAME;
-const getDoPublicUrl = () => process.env.DO_PUBLIC_URL;
+const getR2Bucket = () => process.env.R2_BUCKET_NAME;
+
+async function r2BodyToBuffer(body) {
+    if (!body) throw new Error("Cloudflare R2 returned an empty object body.");
+    if (typeof body.transformToByteArray === "function") {
+        return Buffer.from(await body.transformToByteArray());
+    }
+    const chunks = [];
+    for await (const chunk of body) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+}
 
 // Secrets & Config
 // Secrets liegen im Secret Manager (firebase functions:secrets:set <NAME>) und
@@ -43,6 +69,8 @@ const getDoPublicUrl = () => process.env.DO_PUBLIC_URL;
 // .value() darf erst innerhalb eines Handlers aufgerufen werden.
 const discordClientSecret = defineSecret("DISCORD_CLIENT_SECRET");
 const backupSigningKey = defineSecret("BACKUP_SIGNING_KEY");
+const r2AccessKeyId = defineSecret("R2_ACCESS_KEY_ID");
+const r2SecretAccessKey = defineSecret("R2_SECRET_ACCESS_KEY");
 // Nicht-geheime Werte kommen aus functions/.env
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI;
@@ -67,12 +95,8 @@ const authenticate = async (req, res, next) => {
 
 // --- API Endpoint for signing backups ---
 app.post("/signBackup", authenticate, async (req, res) => {
-    const hash = req.body.hash;
+    const unsignedMetadata = req.body.metadata;
     const userId = req.user.uid;
-
-    if (!hash || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) {
-        return res.status(400).json({ error: "A valid SHA-256 hash must be provided." });
-    }
     
     const signingKey = backupSigningKey.value();
     if (!signingKey) {
@@ -81,25 +105,38 @@ app.post("/signBackup", authenticate, async (req, res) => {
     }
 
     try {
-        const signer = crypto.createSign("sha256");
-        signer.update(hash);
-        signer.end();
-        const signature = signer.sign(signingKey, "hex");
+        if (unsignedMetadata?.packageType === "media") {
+            validateUnsignedMediaMetadata(unsignedMetadata, ALLOWED_GAME_EXTENSIONS);
+        } else {
+            validateUnsignedMetadata(unsignedMetadata, ALLOWED_GAME_EXTENSIONS, "creation");
+        }
+        if (unsignedMetadata.isSigned !== false || unsignedMetadata.signature ||
+            unsignedMetadata.signerUid || unsignedMetadata.signerUsername) {
+            return res.status(400).json({ error: "Unsigned metadata must not contain signer fields." });
+        }
 
         const profileRef = db.doc(`profiles/${userId}`);
         const profileSnap = await profileRef.get();
-        const username = profileSnap.exists ? profileSnap.data().username : "Unknown User";
-
-
-        return res.status(200).json({
-            signature,
-            signerUid: userId,
-            signerUsername: username,
-        });
+        const username = profileSnap.exists ? (profileSnap.data().username || "Unknown User") : "Unknown User";
+        const metadata = buildSignedMetadata(
+            unsignedMetadata,
+            userId,
+            username,
+            signingKey,
+            process.env.BACKUP_SIGNING_KEY_ID || "backup-rsa-2026-01",
+        );
+        return res.status(200).json({ metadata });
     } catch (error) {
         console.error("Error creating signature:", error);
-        return res.status(500).json({ error: "An unexpected error occurred while creating the signature." });
+        return res.status(400).json({ error: error.message || "Could not sign this package." });
     }
+});
+
+app.get("/getPublicKey", (req, res) => {
+    const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
+    if (!publicKey) return res.status(500).send("Signing key is not configured.");
+    res.set("Cache-Control", "public, max-age=3600");
+    return res.type("text/plain").send(publicKey);
 });
 
 // --- HTTP Endpoint to handle the initial Discord auth redirect ---
@@ -190,7 +227,6 @@ exports.api = functions
 
 
 // --- Konstanten für Backup-Validierung ---
-const MAX_BACKUP_SIZE_BYTES = 300 * 1024 * 1024; // 300 MB
 // Fallback, wenn die Games-Registry (meta/games) fehlt oder leer ist
 const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
 
@@ -228,113 +264,13 @@ async function getAllowedGameExtensions() {
     return exts.length > 0 ? exts : ALLOWED_GAME_EXTENSIONS;
 }
 
-/**
- * Serverseitige Validierung eines Backup-Files aus S3
- * Prüft: Archiv-Integrität, metadata.json, Game-File-Typ, Signatur
- * @param {Buffer} fileBuffer - Das Backup als Buffer
- * @param {string} publicKey - Der öffentliche Schlüssel zur Signaturprüfung
- * @param {string[]} [allowedExtensions] - erlaubte Spieldatei-Endungen (Registry)
- * @returns {Object} { valid: boolean, error?: string, metadata?: object, verificationStatus: string }
- */
 function validateBackupBuffer(fileBuffer, publicKey, allowedExtensions = ALLOWED_GAME_EXTENSIONS) {
     try {
-        // 1. Prüfe ob es ein gültiges ZIP-Archiv ist
-        let zip;
-        try {
-            zip = new AdmZip(fileBuffer);
-        } catch (e) {
-            return { valid: false, error: 'Invalid or corrupted backup file.', verificationStatus: 'invalid' };
-        }
-
-        // 2. Prüfe ob metadata.json existiert
-        const metaEntry = zip.getEntry('metadata.json');
-        if (!metaEntry) {
-            return { valid: false, error: 'Invalid backup file: metadata.json is missing.', verificationStatus: 'invalid' };
-        }
-
-        // 3. Parse metadata.json
-        let metadata;
-        try {
-            metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-        } catch (e) {
-            return { valid: false, error: 'Invalid backup file: metadata.json is corrupted.', verificationStatus: 'invalid' };
-        }
-
-        // 4. Prüfe ob das Original-File ein gültiges Game-File war
-        if (!metadata.originalFileName) {
-            return { valid: false, error: 'Invalid backup: originalFileName is missing.', verificationStatus: 'invalid' };
-        }
-
-        const originalExt = path.extname(metadata.originalFileName).toLowerCase();
-        if (!allowedExtensions.includes(originalExt)) {
-            return {
-                valid: false,
-                error: `Invalid backup content. Only game files (${allowedExtensions.join(', ')}) are allowed.`,
-                verificationStatus: 'invalid'
-            };
-        }
-
-        // 5. Prüfe ob das Backup signiert ist
-        if (!metadata.isSigned || !metadata.signature) {
-            return {
-                valid: false,
-                error: 'Only signed backups can be uploaded. Please create a signed backup using the desktop client.',
-                verificationStatus: 'unsigned',
-                metadata
-            };
-        }
-
-        // 6. Verifiziere die Signatur
-        if (!publicKey) {
-            console.error('Public key not available for signature verification');
-            return { valid: false, error: 'Server configuration error: Cannot verify signature.', verificationStatus: 'error' };
-        }
-
-        try {
-            const { signature, ...metadataWithoutSignature } = metadata;
-            const metadataString = JSON.stringify(metadataWithoutSignature, null, 2);
-            const hash = crypto.createHash('sha256').update(metadataString).digest('hex');
-
-            const verifier = crypto.createVerify('RSA-SHA256');
-            verifier.update(hash);
-            verifier.end();
-
-            const isVerified = verifier.verify(publicKey, signature, 'hex');
-
-            if (!isVerified) {
-                return {
-                    valid: false,
-                    error: 'Backup signature is invalid. The file may have been tampered with.',
-                    verificationStatus: 'invalid',
-                    metadata
-                };
-            }
-
-            // Signatur ist gültig
-            return {
-                valid: true,
-                verificationStatus: 'verified',
-                metadata: {
-                    originalFileName: metadata.originalFileName,
-                    backupDate: metadata.backupDate,
-                    signerUid: metadata.signerUid,
-                    signerUsername: metadata.signerUsername,
-                    backupType: metadata.backupType
-                }
-            };
-
-        } catch (verifyError) {
-            console.error('Signature verification error:', verifyError);
-            return {
-                valid: false,
-                error: 'Signature verification failed: ' + verifyError.message,
-                verificationStatus: 'invalid'
-            };
-        }
-
+        const result = validateCreationArchive(fileBuffer, publicKey, allowedExtensions);
+        return { valid: true, verificationStatus: "verified", ...result };
     } catch (error) {
-        console.error('Backup validation error:', error);
-        return { valid: false, error: 'Validation failed: ' + error.message, verificationStatus: 'error' };
+        console.error("Backup validation error:", error);
+        return { valid: false, error: error.message, verificationStatus: "invalid" };
     }
 }
 
@@ -353,79 +289,281 @@ function getPublicKeyFromPrivate(privateKey) {
 
 // --- Callable Functions ---
 
-exports.getUploadUrl = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
-  }
-  const fileName = data.fileName;
-  const contentType = data.contentType;
-  const fileSize = data.fileSize; // Dateigröße vom Client
+const uploadFunctionOptions = { secrets: [r2AccessKeyId, r2SecretAccessKey] };
+const uploadSessionCollection = db.collection("backupUploadSessions");
+const uploadContentType = "application/zip";
 
-  if (!fileName || !contentType) {
-    throw new functions.https.HttpsError("invalid-argument", "File name and content type must be provided.");
-  }
-
-  // Validierung: Dateiendung prüfen
-  const ext = path.extname(fileName).toLowerCase();
-  if (ext !== '.planetcreations') {
-    throw new functions.https.HttpsError(
-      "invalid-argument",
-      "Invalid file type. Only .PlanetCreations backup files are allowed."
-    );
-  }
-
-  // Validierung: Dateigröße prüfen (falls vom Client mitgesendet)
-  if (fileSize && fileSize > MAX_BACKUP_SIZE_BYTES) {
-    const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
-    throw new functions.https.HttpsError(
-      "invalid-argument",
-      `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`
-    );
-  }
-
-  const filePath = `temp-uploads/${context.auth.uid}/${Date.now()}-${fileName}`;
-
-  const params = {
-    Bucket: getDoBucket(),
-    Key: filePath,
-    ContentType: contentType,
-    Expires: 60 * 10,
-    // Content-Length-Range Header für S3 - begrenzt Upload-Größe serverseitig
-    Conditions: [
-      ["content-length-range", 0, MAX_BACKUP_SIZE_BYTES]
-    ]
-  };
-  try {
-    const uploadUrl = await getS3().getSignedUrlPromise("putObject", params);
-    const finalFileUrl = `${getDoPublicUrl()}/${filePath}`;
-    return { uploadUrl, finalFileUrl, maxSizeBytes: MAX_BACKUP_SIZE_BYTES };
-  } catch (error) {
-    console.error("Error creating signed URL for DigitalOcean Spaces", error);
-    throw new functions.https.HttpsError("internal", "Could not create upload URL.");
-  }
-});
-
-exports.deleteTempFile = functions.https.onCall(async (data, context) => {
+function requireAuthenticated(context) {
     if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+        throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
     }
-    const tempUrl = data.tempUrl;
-    if (!tempUrl || !tempUrl.includes('/temp-uploads/')) {
-      throw new functions.https.HttpsError("invalid-argument", "A valid temporary URL must be provided.");
+    return context.auth.uid;
+}
+
+function sanitizeBackupFileName(fileName) {
+    if (typeof fileName !== "string" || path.extname(fileName).toLowerCase() !== ".planetcreations") {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Only .PlanetCreations creation packages can be uploaded.",
+        );
     }
-    try {
-        const urlParts = new URL(tempUrl);
-        const filePath = decodeURIComponent(urlParts.pathname.substring(1));
-        await getS3().deleteObject({
-            Bucket: getDoBucket(),
-            Key: filePath,
-        }).promise();
+    const baseName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+    return baseName.slice(-180) || "creation.PlanetCreations";
+}
+
+function isOwnedObjectKey(objectKey, uid, prefix) {
+    return typeof objectKey === "string" && objectKey.startsWith(`${prefix}/${uid}/`) &&
+        !objectKey.includes("..") && !objectKey.includes("\\");
+}
+
+function encodeCopySource(bucket, objectKey) {
+    const encodedKey = objectKey.split("/").map(encodeURIComponent).join("/");
+    return `/${encodeURIComponent(bucket)}/${encodedKey}`;
+}
+
+exports.getUploadUrl = functions
+    .runWith(uploadFunctionOptions)
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const fileName = sanitizeBackupFileName(data && data.fileName);
+        const fileSize = data && data.fileSize;
+        if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_BACKUP_SIZE_BYTES) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "The package size must be between 1 byte and 300 MB.",
+            );
+        }
+
+        const uploadId = crypto.randomUUID();
+        const objectKey = `temp-uploads/${uid}/${uploadId}.PlanetCreations`;
+        const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + (10 * 60 * 1000));
+        await uploadSessionCollection.doc(uploadId).set({
+            uid,
+            objectKey,
+            originalFileName: fileName,
+            expectedSize: fileSize,
+            contentType: uploadContentType,
+            status: "pending",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt,
+        });
+
+        try {
+            const uploadUrl = await getSignedUrl(
+                getS3(),
+                new PutObjectCommand({
+                    Bucket: getR2Bucket(),
+                    Key: objectKey,
+                    ContentType: uploadContentType,
+                }),
+                { expiresIn: 60 * 10, signableHeaders: new Set(["content-type"]) },
+            );
+            return {
+                uploadId,
+                uploadUrl,
+                contentType: uploadContentType,
+                expiresAt: expiresAt.toMillis(),
+                maxSizeBytes: MAX_BACKUP_SIZE_BYTES,
+            };
+        } catch (error) {
+            await uploadSessionCollection.doc(uploadId).delete().catch(() => null);
+            console.error("Error creating a Cloudflare R2 upload URL:", error);
+            throw new functions.https.HttpsError("internal", "Could not create the upload URL.");
+        }
+    });
+
+exports.abortBackupUpload = functions
+    .runWith(uploadFunctionOptions)
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const uploadId = data && data.uploadId;
+        if (typeof uploadId !== "string") {
+            throw new functions.https.HttpsError("invalid-argument", "An upload ID is required.");
+        }
+        const sessionRef = uploadSessionCollection.doc(uploadId);
+        const sessionSnap = await sessionRef.get();
+        if (!sessionSnap.exists || sessionSnap.data().uid !== uid) {
+            throw new functions.https.HttpsError("not-found", "Upload session not found.");
+        }
+        const session = sessionSnap.data();
+        if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
+            throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
+        }
+        await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: session.objectKey }))
+            .catch((error) => console.warn("R2 temp cleanup failed:", error.message));
+        await sessionRef.delete();
         return { success: true };
-    } catch (error) {
-        console.error(`Failed to delete temp file: ${tempUrl}`, error);
-        throw new functions.https.HttpsError('internal', 'Could not delete temporary file.');
-    }
-});
+    });
+
+exports.finalizeBackupUpload = functions
+    .runWith({ memory: "1GB", timeoutSeconds: 300, secrets: [
+        backupSigningKey, r2AccessKeyId, r2SecretAccessKey,
+    ] })
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const uploadId = data && data.uploadId;
+        const creationId = data && data.creationId;
+        if (typeof uploadId !== "string" || typeof creationId !== "string") {
+            throw new functions.https.HttpsError("invalid-argument", "Upload and creation IDs are required.");
+        }
+
+        const sessionRef = uploadSessionCollection.doc(uploadId);
+        const creationRef = db.doc(`creations/${creationId}`);
+        const [sessionSnap, creationSnap] = await Promise.all([sessionRef.get(), creationRef.get()]);
+        if (!sessionSnap.exists || sessionSnap.data().uid !== uid) {
+            throw new functions.https.HttpsError("not-found", "Upload session not found.");
+        }
+        if (!creationSnap.exists || creationSnap.data().userId !== uid) {
+            throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
+        }
+        const session = sessionSnap.data();
+        if (session.status === "completed" && session.creationId === creationId) {
+            return { success: true, alreadyFinalized: true };
+        }
+        if (session.status !== "pending" || !session.expiresAt || session.expiresAt.toMillis() < Date.now()) {
+            throw new functions.https.HttpsError("failed-precondition", "The upload session expired or was already used.");
+        }
+        if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
+            throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
+        }
+
+        await db.runTransaction(async (transaction) => {
+            const latestSessionSnap = await transaction.get(sessionRef);
+            const latestSession = latestSessionSnap.data();
+            if (!latestSessionSnap.exists || latestSession.uid !== uid || latestSession.status !== "pending") {
+                throw new functions.https.HttpsError("aborted", "The upload session is already being processed.");
+            }
+            transaction.update(sessionRef, {
+                status: "processing",
+                creationId,
+                processingAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+        const bucket = getR2Bucket();
+        let destinationKey = null;
+        try {
+            const head = await getS3().send(new HeadObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            if (head.ContentLength !== session.expectedSize || head.ContentLength > MAX_BACKUP_SIZE_BYTES ||
+                head.ContentType !== uploadContentType) {
+                throw new Error("The uploaded object size or content type does not match the upload session.");
+            }
+            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            const fileBuffer = await r2BodyToBuffer(object.Body);
+            const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
+            const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
+            if (!validation.valid) throw new Error(validation.error);
+            if (validation.metadata.signerUid !== uid) {
+                throw new Error("The package signer does not match the upload owner.");
+            }
+            if (validation.metadata.gameId !== creationSnap.data().game) {
+                throw new Error("The game in the package does not match the creation.");
+            }
+
+            destinationKey = `creation-backups/${uid}/${creationId}/${uploadId}.PlanetCreations`;
+            await getS3().send(new CopyObjectCommand({
+                Bucket: bucket,
+                CopySource: encodeCopySource(bucket, session.objectKey),
+                Key: destinationKey,
+                ContentType: uploadContentType,
+                MetadataDirective: "REPLACE",
+            }));
+            const oldObjectKey = creationSnap.data().backupObjectKey;
+            await creationRef.update({
+                backupObjectKey: destinationKey,
+                backupStorageProvider: "cloudflare-r2",
+                backupUrl: null,
+                backupFileSize: head.ContentLength,
+                backupIsSigned: true,
+                backupSignerUid: validation.metadata.signerUid,
+                backupSignerUsername: validation.metadata.signerUsername || null,
+                backupOriginalFileName: validation.metadata.originalFileName,
+                backupPackageId: validation.metadata.packageId,
+                backupMediaSetId: validation.metadata.mediaSetId,
+                backupProcessingError: null,
+                backupUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            await sessionRef.update({
+                status: "completed",
+                destinationKey,
+                completedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }).catch((error) => console.warn("Upload-session completion write failed:", error.message));
+            await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey }))
+                .catch((error) => console.warn("R2 temp cleanup after finalization failed:", error.message));
+
+            if (oldObjectKey && oldObjectKey !== destinationKey &&
+                isOwnedObjectKey(oldObjectKey, uid, "creation-backups") &&
+                oldObjectKey.startsWith(`creation-backups/${uid}/${creationId}/`)) {
+                await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: oldObjectKey }))
+                    .catch((error) => console.warn("Old R2 object cleanup failed:", error.message));
+            }
+            return { success: true };
+        } catch (error) {
+            console.error(`Backup finalization failed for ${uploadId}:`, error);
+            await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey })).catch(() => null);
+            if (destinationKey) {
+                await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: destinationKey })).catch(() => null);
+            }
+            await Promise.all([
+                sessionRef.set({ status: "rejected", error: error.message }, { merge: true }),
+                creationRef.update({ backupProcessingError: error.message }),
+            ]);
+            throw new functions.https.HttpsError("failed-precondition", error.message);
+        }
+    });
+
+exports.getBackupDownloadUrl = functions
+    .runWith(uploadFunctionOptions)
+    .https.onCall(async (data) => {
+        const creationId = data && data.creationId;
+        if (typeof creationId !== "string") {
+            throw new functions.https.HttpsError("invalid-argument", "A creation ID is required.");
+        }
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists) throw new functions.https.HttpsError("not-found", "Creation not found.");
+        const creation = creationSnap.data();
+        const objectKey = creation.backupObjectKey;
+        if (!isOwnedObjectKey(objectKey, creation.userId, "creation-backups") ||
+            !objectKey.startsWith(`creation-backups/${creation.userId}/${creationId}/`)) {
+            throw new functions.https.HttpsError("not-found", "This creation has no R2 backup.");
+        }
+        const downloadUrl = await getSignedUrl(
+            getS3(),
+            new GetObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }),
+            { expiresIn: 60 * 10 },
+        );
+        return { downloadUrl, expiresInSeconds: 600 };
+    });
+
+exports.removeCreationBackup = functions
+    .runWith(uploadFunctionOptions)
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const creationId = data && data.creationId;
+        const creationRef = db.doc(`creations/${creationId}`);
+        const creationSnap = await creationRef.get();
+        if (!creationSnap.exists || creationSnap.data().userId !== uid) {
+            throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
+        }
+        const objectKey = creationSnap.data().backupObjectKey;
+        if (objectKey && objectKey.startsWith(`creation-backups/${uid}/${creationId}/`)) {
+            await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }));
+        }
+        await creationRef.update({
+            backupObjectKey: null,
+            backupStorageProvider: null,
+            backupUrl: null,
+            backupFileSize: null,
+            backupIsSigned: false,
+            backupSignerUid: null,
+            backupSignerUsername: null,
+            backupOriginalFileName: null,
+            backupPackageId: null,
+            backupMediaSetId: null,
+            backupProcessingError: null,
+            backupUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return { success: true };
+    });
 
 
  exports.voteOnCreation = functions.https.onCall(async (data, context) => {
@@ -724,167 +862,10 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
 
 // --- Trigger Functions (Alles Gen 1) ---
 
-exports.onCreationWrite = functions
-    .runWith({ memory: '512MB', timeoutSeconds: 120, secrets: [backupSigningKey] }) // Mehr Speicher für ZIP-Verarbeitung
+
+exports.onCreationDelete = functions
+    .runWith(uploadFunctionOptions)
     .firestore
-    .document('creations/{creationId}')
-    .onWrite(async (change, context) => {
-        const dataAfter = change.after.exists ? change.after.data() : null;
-        const dataBefore = change.before.exists ? change.before.data() : null;
-
-        const urlAfter = dataAfter ? dataAfter.backupUrl : null;
-        const urlBefore = dataBefore ? dataBefore.backupUrl : null;
-        // Vom Temp-Processing gesetzte finale URL — schützt den Alt-Datei-Cleanup
-        // unten davor, ein gerade verschobenes Backup zu löschen, falls Ziel- und
-        // Altpfad kollidieren (Altbestand: creation-backups/{uid}/{fileName} war
-        // nicht pro Creation/Upload eindeutig → Replace mit gleichem Dateinamen
-        // überschrieb die Alt-Datei und der Cleanup löschte danach die neue).
-        let processedFinalUrl = null;
-
-        if (urlAfter && urlAfter.includes('/temp-uploads/') && urlAfter !== urlBefore) {
-            const bucketName = getDoBucket();
-            let sourcePath = null;
-
-            try {
-                const urlParts = new URL(urlAfter);
-                sourcePath = decodeURIComponent(urlParts.pathname.substring(1));
-                const fileName = sourcePath.split('/').pop();
-
-                // === SERVERSEITIGE VALIDIERUNG ===
-
-                // 1. Prüfe Dateiendung
-                const fileExt = path.extname(fileName).toLowerCase();
-                if (fileExt !== '.planetcreations') {
-                    console.error(`Invalid file extension for creation ${context.params.creationId}: ${fileExt}`);
-                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                    await change.after.ref.update({
-                        backupUrl: null,
-                        backupIsSigned: false,
-                        backupProcessingError: 'Invalid file type. Only .PlanetCreations files are allowed.'
-                    });
-                    return null;
-                }
-
-                // 2. Prüfe Dateigröße
-                const headResult = await getS3().headObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                const fileSizeBytes = headResult.ContentLength;
-
-                if (fileSizeBytes > MAX_BACKUP_SIZE_BYTES) {
-                    const sizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
-                    console.error(`File too large for creation ${context.params.creationId}: ${sizeMB} MB`);
-                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                    await change.after.ref.update({
-                        backupUrl: null,
-                        backupIsSigned: false,
-                        backupProcessingError: `File too large (${sizeMB} MB). Maximum allowed size is 300 MB.`
-                    });
-                    return null;
-                }
-
-                // 3. Lade die Datei herunter und validiere sie vollständig (inkl. Signatur)
-                console.log(`Downloading backup for validation: ${sourcePath}`);
-                const fileData = await getS3().getObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                const fileBuffer = fileData.Body;
-
-                // Hole den öffentlichen Schlüssel aus dem privaten Signing Key
-                const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
-                if (!publicKey) {
-                    console.error('Could not derive public key from signing key');
-                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                    await change.after.ref.update({
-                        backupUrl: null,
-                        backupIsSigned: false,
-                        backupProcessingError: 'Server configuration error: Cannot verify backup signatures.'
-                    });
-                    return null;
-                }
-
-                // Validiere das Backup vollständig (Archiv, Metadata, Game-File-Typ, Signatur)
-                // Erlaubte Endungen kommen aus der Games-Registry (meta/games)
-                const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
-                console.log(`Validation result for creation ${context.params.creationId}:`, validation.verificationStatus);
-
-                if (!validation.valid) {
-                    console.error(`Backup validation failed for creation ${context.params.creationId}: ${validation.error}`);
-                    await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                    await change.after.ref.update({
-                        backupUrl: null,
-                        backupIsSigned: false,
-                        backupProcessingError: validation.error
-                    });
-                    return null;
-                }
-
-                // === VALIDIERUNG BESTANDEN - Datei verschieben ===
-                console.log(`Backup validated successfully for creation ${context.params.creationId}. Moving to permanent storage.`);
-
-                // Pro Creation UND Upload eindeutig: verhindert, dass gleichnamige
-                // Dateien (Replace auf derselben Creation oder dieselbe Datei an
-                // zwei Creations) dasselbe Storage-Objekt teilen/überschreiben.
-                const destinationPath = `creation-backups/${dataAfter.userId}/${context.params.creationId}/${Date.now()}-${fileName}`;
-
-                await getS3().copyObject({
-                    Bucket: bucketName,
-                    CopySource: `/${bucketName}/${sourcePath}`,
-                    Key: destinationPath,
-                    ACL: 'public-read'
-                }).promise();
-                console.log(`Successfully copied ${sourcePath} to ${destinationPath} and made public.`);
-
-                await getS3().deleteObject({
-                    Bucket: bucketName,
-                    Key: sourcePath,
-                }).promise();
-                console.log(`Successfully deleted temporary file: ${sourcePath}`);
-
-                const newPublicUrl = `${getDoPublicUrl()}/${destinationPath}`;
-                processedFinalUrl = newPublicUrl;
-                await change.after.ref.update({
-                    backupUrl: newPublicUrl,
-                    backupFileSize: fileSizeBytes,
-                    backupIsSigned: true, // Vom Server verifiziert
-                    backupSignerUid: validation.metadata.signerUid || null,
-                    backupSignerUsername: validation.metadata.signerUsername || null,
-                    backupOriginalFileName: validation.metadata.originalFileName || null,
-                    backupProcessingError: null // Fehler zurücksetzen
-                });
-
-            } catch (error) {
-                console.error(`Failed to process temp file for creation ${context.params.creationId}. URL: ${urlAfter}`, error);
-                // Versuche die temporäre Datei zu löschen
-                if (sourcePath) {
-                    try {
-                        await getS3().deleteObject({ Bucket: bucketName, Key: sourcePath }).promise();
-                    } catch (deleteError) {
-                        console.error(`Failed to cleanup temp file after error: ${sourcePath}`, deleteError);
-                    }
-                }
-                await change.after.ref.update({
-                    backupUrl: null,
-                    backupIsSigned: false,
-                    backupProcessingError: error.message
-                });
-            }
-        }
-
-        if (urlBefore && urlBefore !== urlAfter && urlBefore !== processedFinalUrl && !urlBefore.includes('/temp-uploads/')) {
-             try {
-                const oldUrlParts = new URL(urlBefore);
-                const oldFilePath = decodeURIComponent(oldUrlParts.pathname.substring(1));
-                await getS3().deleteObject({
-                    Bucket: getDoBucket(),
-                    Key: oldFilePath,
-                }).promise();
-                console.log(`Successfully deleted old file: ${oldFilePath} for creation ${context.params.creationId}.`);
-            } catch (deleteError) {
-                console.error(`Failed to delete old file: ${urlBefore}`, deleteError);
-            }
-        }
-
-        return null;
-    });
-
-exports.onCreationDelete = functions.firestore
     .document('creations/{creationId}')
     .onDelete(async (snap, context) => {
         const creationId = context.params.creationId;
@@ -919,29 +900,14 @@ exports.onCreationDelete = functions.firestore
             }
         } catch (e) { console.error(`Failed to clean votes for ${creationId}:`, e.message); }
 
-        // --- S3-Backup löschen ---
-        const backupUrl = deletedData.backupUrl;
-        // Lösche keine temporären Dateien, da diese automatisch ablaufen
-        if (!backupUrl || backupUrl.includes('/temp-uploads/')) {
-            console.log(`Creation ${creationId} had no permanent backupUrl. No file to delete.`);
-            return null;
+        const objectKey = deletedData.backupObjectKey;
+        const expectedPrefix = `creation-backups/${deletedData.userId}/${creationId}/`;
+        if (typeof objectKey === "string" && objectKey.startsWith(expectedPrefix) &&
+            !objectKey.includes("..") && !objectKey.includes("\\")) {
+            await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }))
+                .catch((error) => console.error(`Failed to delete R2 object ${objectKey}:`, error));
         }
-
-        try {
-            const urlParts = new URL(backupUrl);
-            const filePath = decodeURIComponent(urlParts.pathname.substring(1));
-            const params = {
-                Bucket: getDoBucket(),
-                Key: filePath,
-            };
-            console.log(`Attempting to delete file: ${filePath} from bucket: ${params.Bucket}`);
-            await getS3().deleteObject(params).promise();
-            console.log(`Successfully deleted file: ${filePath}`);
-            return null;
-        } catch (error) {
-            console.error(`Failed to delete file for creation ${context.params.creationId}. URL: ${backupUrl}`, error);
-            return null;
-        }
+        return null;
     });
 
 exports.onMemberJoin = functions.firestore
@@ -1088,8 +1054,8 @@ const buildIndexEntry = (data) => ({
 
 /**
  * Hält searchIndex/{game} synchron mit der creations-Collection.
- * Bewusst eigener Trigger (nicht in onCreationWrite integriert): leichtgewichtig,
- * ohne S3-Kopplung und ohne das 512MB/120s-Profil der ZIP-Validierung.
+ * Bewusst eigener Trigger: leichtgewichtig und ohne R2-Kopplung oder das
+ * 1GB/300s-Profil der expliziten ZIP-Finalisierung.
  */
 exports.syncCreationToSearchIndex = functions.firestore
     .document('creations/{creationId}')
@@ -1117,7 +1083,7 @@ exports.syncCreationToSearchIndex = functions.firestore
             return null;
         }
 
-        // No-Op-Guard: onCreationWrite schreibt Backup-Felder aufs Doc zurück —
+        // No-Op-Guard: finalizeBackupUpload schreibt Backup-Felder aufs Doc zurück —
         // ohne diesen Vergleich würde jeder dieser Writes einen Index-Write auslösen.
         if (before && gameBefore === gameAfter) {
             if (JSON.stringify(buildIndexEntry(before)) === JSON.stringify(buildIndexEntry(after))) {
