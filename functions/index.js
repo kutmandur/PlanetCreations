@@ -353,19 +353,25 @@ exports.registerDesktopClient = functions.https.onCall(async (data, context) => 
         const storedClients = userSnap.data().clients;
         const clients = storedClients && typeof storedClients === "object" && !Array.isArray(storedClients) ?
             {...storedClients} : {};
-        if (!clients[clientId] && Object.keys(clients).length >= MAX_DESKTOP_CLIENTS) {
+        const existing = clients[clientId];
+        if (!existing && Object.keys(clients).length >= MAX_DESKTOP_CLIENTS) {
             throw new functions.https.HttpsError(
                 "resource-exhausted",
                 `A maximum of ${MAX_DESKTOP_CLIENTS} desktop clients can be registered.`,
             );
+        }
+        // Skip the write when nothing changed, so a plain app start on an
+        // already-registered client costs no Firestore write.
+        if (existing && existing.displayName === displayName &&
+            existing.clientVersion === clientVersion && existing.remoteInstall === true) {
+            return;
         }
         clients[clientId] = {
             displayName,
             platform: "windows",
             clientVersion,
             remoteInstall: true,
-            registeredAt: clients[clientId]?.registeredAt || now,
-            lastStartedAt: now,
+            registeredAt: existing?.registeredAt || now,
         };
         tx.update(userRef, {clients});
     });
