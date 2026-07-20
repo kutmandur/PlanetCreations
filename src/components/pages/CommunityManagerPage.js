@@ -7,11 +7,8 @@ import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
-import EditCommunityForm from '../management/EditCommunityForm';
 import MemberManager from '../management/MemberManager';
 import CreationManager from '../management/CreationManager';
-import CommunityCardEditor from '../management/CommunityCardEditor';
-import DiscordManager from '../management/DiscordManager';
 import CommunitySettingsManager from '../management/CommunitySettingsManager';
 import ShowcaseManager from '../management/ShowcaseManager';
 import EventsManager from '../management/EventsManager';
@@ -20,11 +17,10 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     const { id: communityId } = useParams();
     const [community, setCommunity] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [isEditing, setIsEditing] = useState(false);
     const [members, setMembers] = useState([]);
     const [creations, setCreations] = useState([]);
 
-    const TABS = useRef(['Creations', 'Members', 'Events', 'Showcases', 'Card Editor', 'Discord', 'Settings']).current;
+    const TABS = useRef(['Creations', 'Members', 'Events', 'Showcases', 'Settings']).current;
     const [activeTab, setActiveTab] = useState('Creations');
     const tabRefs = useRef([]);
     const [gliderStyle, setGliderStyle] = useState({});
@@ -136,10 +132,6 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     const isModerator = currentUserRoles.includes('moderator');
     const currentUserRankWeight = getHighestRankWeight(currentUserRoles, community.ranks || []);
 
-    if (isEditing) {
-        return <EditCommunityForm communityToEdit={community} setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} onCancel={() => setIsEditing(false)} blacklist={blacklist} userProfile={userProfile} />;
-    }
-
     const renderTabContent = () => {
         switch (activeTab) {
             case 'Creations': 
@@ -181,17 +173,18 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             setConfirmation={setConfirmation}
                             blacklist={blacklist}
                         />;
-            case 'Card Editor':
-                return <CommunityCardEditor community={community} setModalMessage={setModalMessage} />;
-            case 'Discord':
-                return <DiscordManager community={community} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;
-            case 'Settings': 
+            case 'Settings':
                 return <CommunitySettingsManager
                             community={community}
                             members={members}
+                            userProfile={userProfile}
+                            blacklist={blacklist}
                             setModalMessage={setModalMessage}
                             setPasswordConfirm={setPasswordConfirm}
+                            isOwner={isOwner}
+                            isModerator={isModerator}
                             onTransferComplete={() => navigate('/communitys')}
+                            onDeleted={() => navigate('/communitys')}
                         />;
             default: return null;
         }
@@ -208,15 +201,6 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                         <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
                         Back to Community
                     </button>
-                    {(isOwner || isModerator) && (
-                        <button
-                            onClick={() => setIsEditing(true)}
-                            className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg flex items-center ml-auto lg:pointer-events-auto"
-                        >
-                            <Icon path={ICONS.edit} className="w-5 h-5 mr-2" />
-                            Edit Community
-                        </button>
-                    )}
                 </div>
                 <div className="max-w-2xl mx-auto lg:px-48">
                     <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">Manage Community</h1>

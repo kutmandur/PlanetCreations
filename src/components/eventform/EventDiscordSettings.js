@@ -5,26 +5,26 @@ const ReminderInput = ({ index, reminder, onchange, isVoteReminder = false }) =>
     <div className="p-2 border rounded-lg bg-white">
         <label className="text-sm font-semibold text-gray-700 mb-2 block">Reminder {index + 1}:</label>
         <div className="grid grid-cols-3 items-center gap-2">
-            <input 
-                type="number" 
-                min="0" 
-                value={reminder.days} 
-                onChange={(e) => onchange(index, 'days', e.target.value, isVoteReminder)} 
-                className="p-2 border rounded-lg w-full" 
+            <input
+                type="number"
+                min="0"
+                value={reminder.days}
+                onChange={(e) => onchange(index, 'days', e.target.value, isVoteReminder)}
+                className="p-2 border rounded-lg w-full"
             />
-            <input 
-                type="number" 
+            <input
+                type="number"
                 min="0" max="23"
-                value={reminder.hours} 
-                onChange={(e) => onchange(index, 'hours', e.target.value, isVoteReminder)} 
-                className="p-2 border rounded-lg w-full" 
+                value={reminder.hours}
+                onChange={(e) => onchange(index, 'hours', e.target.value, isVoteReminder)}
+                className="p-2 border rounded-lg w-full"
             />
-            <input 
-                type="number" 
+            <input
+                type="number"
                 min="0" max="59"
-                value={reminder.minutes} 
-                onChange={(e) => onchange(index, 'minutes', e.target.value, isVoteReminder)} 
-                className="p-2 border rounded-lg w-full" 
+                value={reminder.minutes}
+                onChange={(e) => onchange(index, 'minutes', e.target.value, isVoteReminder)}
+                className="p-2 border rounded-lg w-full"
             />
             <label className="text-xs text-center text-gray-500">Days</label>
             <label className="text-xs text-center text-gray-500">Hours</label>
@@ -40,19 +40,19 @@ const NotificationTemplateInput = ({ templateKey, templates, setTemplates, getSu
         <div>
             <label className="block text-sm font-semibold text-gray-600 mb-1 capitalize">{templateKey.replace(/([A-Z])/g, ' $1')}</label>
             <div className="relative">
-                <textarea 
-                    value={templates[templateKey]} 
-                    onChange={(e) => setTemplates(p => ({ ...p, [templateKey]: e.target.value }))} 
-                    className="w-full p-2 border rounded-lg" 
-                    rows="3" 
+                <textarea
+                    value={templates[templateKey]}
+                    onChange={(e) => setTemplates(p => ({ ...p, [templateKey]: e.target.value }))}
+                    className="w-full p-2 border rounded-lg"
+                    rows="3"
                 />
                 {suggestions.length > 0 && (
-                    <select 
-                        className="absolute top-1 right-1 bg-gray-200 rounded text-xs p-1 appearance-none cursor-pointer" 
-                        onChange={(e) => { 
-                            if (e.target.value) { 
-                                setTemplates(p => ({ ...p, [templateKey]: e.target.value})); 
-                                e.target.value = ''; 
+                    <select
+                        className="absolute top-1 right-1 bg-gray-200 rounded text-xs p-1 appearance-none cursor-pointer"
+                        onChange={(e) => {
+                            if (e.target.value) {
+                                setTemplates(p => ({ ...p, [templateKey]: e.target.value}));
+                                e.target.value = '';
                             }
                         }}
                     >
@@ -65,61 +65,84 @@ const NotificationTemplateInput = ({ templateKey, templates, setTemplates, getSu
     );
 };
 
+// Dropdown der synchronisierten Discord-Text-Channels mit "aus"-Option.
+const ChannelSelect = ({ channels, value, onChange }) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+        <option value="">— Off —</option>
+        {channels.map(c => (
+            <option key={c.id} value={c.id}>#{c.name}</option>
+        ))}
+    </select>
+);
 
-const REMINDER_CHANNEL_OPTIONS = [
-    { id: 'both', label: 'Discord + Site' },
-    { id: 'discord', label: 'Discord only' },
-    { id: 'site', label: 'Site only' },
-    { id: 'none', label: 'None' },
+const MODE_OPTIONS = [
+    { id: 'both', label: 'Discord + PlanetCreations', discord: true },
+    { id: 'discord', label: 'Only Discord', discord: true },
+    { id: 'site', label: 'Only PlanetCreations', discord: false },
+    { id: 'none', label: 'None', discord: false },
 ];
 
 const EventDiscordSettings = ({
+    discordChannels = [],
+    notificationMode = 'none',
+    setNotificationMode,
+    discordNotificationChannelId = '',
+    setDiscordNotificationChannelId,
+    discordSubmissionChannelId = '',
+    setDiscordSubmissionChannelId,
     reminders,
     voteReminders,
     handleReminderChange,
     separateVoteTime,
     votingEnabled = true,
-    reminderChannels = 'both',
-    setReminderChannels,
-    autoPostSubmissions = false,
-    setAutoPostSubmissions,
     notificationTemplates,
     setNotificationTemplates,
     getMessageSuggestions
 }) => {
+    const hasChannels = discordChannels.length > 0;
+    // Discord-Optionen nur zeigen, wenn ein Bot/Server verbunden ist.
+    const visibleModes = MODE_OPTIONS.filter(o => hasChannels || !o.discord);
+    const wantDiscord = notificationMode === 'both' || notificationMode === 'discord';
+    const notificationsOn = notificationMode !== 'none';
+
     return (
         <>
             <div>
-                <label className="block text-gray-700 font-bold mb-2">Reminders</label>
+                <label className="block text-gray-700 font-bold mb-2">Notifications</label>
                 <div className="p-4 border rounded-lg bg-gray-50 space-y-3">
                     <div>
                         <p className="text-sm font-semibold text-gray-700 mb-2">Send reminders & event notifications via:</p>
                         <div className="flex flex-wrap gap-2">
-                            {REMINDER_CHANNEL_OPTIONS.map(opt => (
+                            {visibleModes.map(opt => (
                                 <button
                                     key={opt.id}
                                     type="button"
-                                    onClick={() => setReminderChannels(opt.id)}
-                                    className={`px-3 py-1 text-sm rounded-full font-semibold ${reminderChannels === opt.id ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                    onClick={() => setNotificationMode(opt.id)}
+                                    className={`px-3 py-1 text-sm rounded-full font-semibold ${notificationMode === opt.id ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                                 >
                                     {opt.label}
                                 </button>
                             ))}
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">"Site" sends in-app / push notifications to community members on PlanetCreations.</p>
+                        {!hasChannels && (
+                            <p className="text-xs text-gray-500 mt-1">
+                                Connect a Discord server (Community → Settings → Discord, then /import-community-setup) to enable Discord options.
+                            </p>
+                        )}
                     </div>
-                    {(reminderChannels === 'both' || reminderChannels === 'discord') && (
-                        <label className="flex items-center gap-2 text-sm text-gray-700 pt-2 border-t cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={autoPostSubmissions}
-                                onChange={(e) => setAutoPostSubmissions(e.target.checked)}
-                                className="h-4 w-4 rounded"
+
+                    {wantDiscord && (
+                        <div className="pt-2 border-t">
+                            <p className="text-sm font-semibold text-gray-700 mb-1">Discord channel</p>
+                            <ChannelSelect
+                                channels={discordChannels}
+                                value={discordNotificationChannelId}
+                                onChange={setDiscordNotificationChannelId}
                             />
-                            Automatically post new event submissions to Discord
-                        </label>
+                        </div>
                     )}
-                    {reminderChannels !== 'none' && (<>
+
+                    {notificationsOn && (<>
                         <p className="text-sm text-gray-600 pt-2 border-t">Set up to 3 automated reminders before the submission period ends.</p>
                         {[0, 1, 2].map(index =>
                             <ReminderInput
@@ -133,7 +156,27 @@ const EventDiscordSettings = ({
                 </div>
             </div>
 
-            {separateVoteTime && votingEnabled && reminderChannels !== 'none' && (
+            <div>
+                <label className="block text-gray-700 font-bold mb-2">Submissions</label>
+                <div className="p-4 border rounded-lg bg-gray-50 space-y-2">
+                    <p className="text-sm text-gray-600">
+                        Automatically post each new submission to a Discord channel as it comes in. Leave off to disable.
+                    </p>
+                    {hasChannels ? (
+                        <ChannelSelect
+                            channels={discordChannels}
+                            value={discordSubmissionChannelId}
+                            onChange={setDiscordSubmissionChannelId}
+                        />
+                    ) : (
+                        <p className="text-xs text-gray-500">
+                            No Discord channels available. Link a Discord server and run /import-community-setup in the community's Discord settings.
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {separateVoteTime && votingEnabled && notificationsOn && (
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Voting Reminders</label>
                     <div className="p-4 border rounded-lg bg-gray-50 space-y-3">
@@ -150,7 +193,7 @@ const EventDiscordSettings = ({
                     </div>
                 </div>
             )}
-            
+
             <div>
                 <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Custom Notifications</h3>
                 <p className="text-sm text-gray-500 mb-2">
@@ -158,12 +201,12 @@ const EventDiscordSettings = ({
                 </p>
                 <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
                     {Object.keys(notificationTemplates).map(key => (
-                        <NotificationTemplateInput 
-                            key={key} 
-                            templateKey={key} 
-                            templates={notificationTemplates} 
-                            setTemplates={setNotificationTemplates} 
-                            getSuggestions={getMessageSuggestions} 
+                        <NotificationTemplateInput
+                            key={key}
+                            templateKey={key}
+                            templates={notificationTemplates}
+                            setTemplates={setNotificationTemplates}
+                            getSuggestions={getMessageSuggestions}
                         />
                     ))}
                 </div>
