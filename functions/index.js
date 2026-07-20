@@ -300,6 +300,238 @@ function requireAuthenticated(context) {
     return context.auth.uid;
 }
 
+const MAX_DESKTOP_CLIENTS = 10;
+const MAX_CLIENT_INSTALL_QUEUE = 5;
+const CLIENT_COMMAND_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CLIENT_COMMAND_LEASE_MS = 15 * 60 * 1000;
+const clientIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const creationIdPattern = /^[a-zA-Z0-9_-]{1,128}$/;
+
+function requireClientId(value) {
+    if (typeof value !== "string" || !clientIdPattern.test(value)) {
+        throw new functions.https.HttpsError("invalid-argument", "A valid desktop client ID is required.");
+    }
+    return value;
+}
+
+function requireCreationId(value) {
+    if (typeof value !== "string" || !creationIdPattern.test(value)) {
+        throw new functions.https.HttpsError("invalid-argument", "A valid creation ID is required.");
+    }
+    return value;
+}
+
+function queueTimestampMillis(value) {
+    if (value && typeof value.toMillis === "function") return value.toMillis();
+    return 0;
+}
+
+function getClientQueueRef(uid, clientId) {
+    return db.doc(`clientInstallQueues/${uid}/clients/${clientId}`);
+}
+
+exports.registerDesktopClient = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const clientId = requireClientId(data && data.clientId);
+    const displayName = typeof data?.displayName === "string" ?
+        Array.from(data.displayName.trim())
+            .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
+            .join("").slice(0, 50) : "";
+    const clientVersion = typeof data?.clientVersion === "string" ?
+        data.clientVersion.trim().slice(0, 30) : "";
+    if (!displayName || !clientVersion) {
+        throw new functions.https.HttpsError("invalid-argument", "Client name and version are required.");
+    }
+
+    const userRef = db.doc(`users/${uid}`);
+    const now = admin.firestore.Timestamp.now();
+    await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists) {
+            throw new functions.https.HttpsError("failed-precondition", "The user profile does not exist.");
+        }
+        const storedClients = userSnap.data().clients;
+        const clients = storedClients && typeof storedClients === "object" && !Array.isArray(storedClients) ?
+            {...storedClients} : {};
+        if (!clients[clientId] && Object.keys(clients).length >= MAX_DESKTOP_CLIENTS) {
+            throw new functions.https.HttpsError(
+                "resource-exhausted",
+                `A maximum of ${MAX_DESKTOP_CLIENTS} desktop clients can be registered.`,
+            );
+        }
+        clients[clientId] = {
+            displayName,
+            platform: "windows",
+            clientVersion,
+            remoteInstall: true,
+            registeredAt: clients[clientId]?.registeredAt || now,
+            lastStartedAt: now,
+        };
+        tx.update(userRef, {clients});
+    });
+    return {success: true, clientId};
+});
+
+exports.enqueueClientInstall = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const clientId = requireClientId(data && data.clientId);
+    const creationId = requireCreationId(data && data.creationId);
+    const userRef = db.doc(`users/${uid}`);
+    const creationRef = db.doc(`creations/${creationId}`);
+    const queueRef = getClientQueueRef(uid, clientId);
+    const nowMs = Date.now();
+
+    return db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        const creationSnap = await tx.get(creationRef);
+        const queueSnap = await tx.get(queueRef);
+        const client = userSnap.data()?.clients?.[clientId];
+        if (!client || client.remoteInstall !== true) {
+            throw new functions.https.HttpsError("not-found", "The selected desktop client is not registered.");
+        }
+        if (!creationSnap.exists) {
+            throw new functions.https.HttpsError("not-found", "The creation does not exist.");
+        }
+        const creation = creationSnap.data();
+        if (!isOwnedObjectKey(creation.backupObjectKey, creation.userId, "creation-backups") ||
+            !creation.backupObjectKey.startsWith(`creation-backups/${creation.userId}/${creationId}/`)) {
+            throw new functions.https.HttpsError("failed-precondition", "This creation has no verified R2 package.");
+        }
+
+        const currentItems = queueSnap.exists ? queueSnap.data().items || [] : [];
+        const items = currentItems.filter((item) => queueTimestampMillis(item.expiresAt) > nowMs);
+        if (items.some((item) => item.creationId === creationId)) {
+            return {queued: false, duplicate: true, queueSize: items.length};
+        }
+        if (items.length >= MAX_CLIENT_INSTALL_QUEUE) {
+            throw new functions.https.HttpsError(
+                "resource-exhausted",
+                `The selected client queue already contains ${MAX_CLIENT_INSTALL_QUEUE} creations.`,
+            );
+        }
+
+        const commandId = crypto.randomUUID();
+        items.push({
+            id: commandId,
+            type: "install_creation",
+            creationId,
+            creationTitle: String(creation.title || "Creation").slice(0, 200),
+            requestedAt: admin.firestore.Timestamp.fromMillis(nowMs),
+            expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + CLIENT_COMMAND_TTL_MS),
+            status: "pending",
+            attempts: 0,
+        });
+        tx.set(queueRef, {
+            uid,
+            clientId,
+            items,
+            updatedAt: admin.firestore.Timestamp.fromMillis(nowMs),
+        }, {merge: true});
+        return {queued: true, commandId, queueSize: items.length};
+    });
+});
+
+exports.claimClientInstall = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const clientId = requireClientId(data && data.clientId);
+    const userRef = db.doc(`users/${uid}`);
+    const queueRef = getClientQueueRef(uid, clientId);
+    const nowMs = Date.now();
+
+    return db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        const queueSnap = await tx.get(queueRef);
+        if (!userSnap.data()?.clients?.[clientId]?.remoteInstall) {
+            throw new functions.https.HttpsError("permission-denied", "This desktop client is not registered.");
+        }
+        if (!queueSnap.exists) return {command: null};
+
+        let changed = false;
+        const items = (queueSnap.data().items || []).filter((item) => {
+            const keep = queueTimestampMillis(item.expiresAt) > nowMs;
+            if (!keep) changed = true;
+            return keep;
+        });
+        const commandIndex = items.findIndex((item) => {
+            const leaseExpired = item.status === "processing" && queueTimestampMillis(item.leaseUntil) <= nowMs;
+            const retryReady = !item.retryAfter || queueTimestampMillis(item.retryAfter) <= nowMs;
+            return retryReady && (item.status === "pending" || leaseExpired);
+        });
+
+        if (commandIndex < 0) {
+            if (changed) tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.now()}, {merge: true});
+            const nextAttemptAt = items.reduce((next, item) => {
+                const candidate = item.status === "processing" ? queueTimestampMillis(item.leaseUntil) :
+                    queueTimestampMillis(item.retryAfter);
+                return candidate > nowMs && (!next || candidate < next) ? candidate : next;
+            }, 0);
+            return {command: null, nextAttemptAt: nextAttemptAt || null};
+        }
+
+        const claimed = {
+            ...items[commandIndex],
+            status: "processing",
+            attempts: Number(items[commandIndex].attempts || 0) + 1,
+            claimedBy: clientId,
+            claimedAt: admin.firestore.Timestamp.fromMillis(nowMs),
+            leaseUntil: admin.firestore.Timestamp.fromMillis(nowMs + CLIENT_COMMAND_LEASE_MS),
+            retryAfter: null,
+        };
+        items[commandIndex] = claimed;
+        tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+        return {
+            command: {
+                id: claimed.id,
+                creationId: claimed.creationId,
+                creationTitle: claimed.creationTitle,
+                attempts: claimed.attempts,
+            },
+        };
+    });
+});
+
+exports.completeClientInstall = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const clientId = requireClientId(data && data.clientId);
+    const commandId = typeof data?.commandId === "string" ? data.commandId : "";
+    const success = data?.success === true;
+    const permanent = data?.permanent === true;
+    if (!creationIdPattern.test(commandId)) {
+        throw new functions.https.HttpsError("invalid-argument", "A valid command ID is required.");
+    }
+    const queueRef = getClientQueueRef(uid, clientId);
+    const nowMs = Date.now();
+
+    return db.runTransaction(async (tx) => {
+        const queueSnap = await tx.get(queueRef);
+        if (!queueSnap.exists) return {removed: true};
+        const items = queueSnap.data().items || [];
+        const index = items.findIndex((item) => item.id === commandId && item.claimedBy === clientId);
+        if (index < 0) return {removed: true};
+
+        const item = items[index];
+        if (success || permanent || Number(item.attempts || 0) >= 3) {
+            items.splice(index, 1);
+            tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+            return {removed: true};
+        }
+
+        const retryDelayMs = Math.min(15, Math.max(1, Number(item.attempts || 1) * 2)) * 60 * 1000;
+        const retryAt = nowMs + retryDelayMs;
+        items[index] = {
+            ...item,
+            status: "pending",
+            claimedBy: null,
+            claimedAt: null,
+            leaseUntil: null,
+            retryAfter: admin.firestore.Timestamp.fromMillis(retryAt),
+            lastError: String(data?.message || "Install failed").slice(0, 300),
+        };
+        tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+        return {removed: false, retryAt};
+    });
+});
+
 function sanitizeBackupFileName(fileName) {
     if (typeof fileName !== "string" || path.extname(fileName).toLowerCase() !== ".planetcreations") {
         throw new functions.https.HttpsError(
@@ -708,6 +940,8 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
         const creationsRef = db.collection('creations').where('userId', '==', userId);
         const creationsSnap = await creationsRef.get();
         creationsSnap.forEach(doc => batch.delete(doc.ref));
+        const clientQueuesSnap = await db.collection(`clientInstallQueues/${userId}/clients`).get();
+        clientQueuesSnap.forEach(doc => batch.delete(doc.ref));
 
         communityIds.forEach(communityId => {
             const memberRef = db.doc(`communitys/${communityId}/members/${userId}`);
@@ -761,6 +995,8 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
         const creationsRef = db.collection('creations').where('userId', '==', userIdToDelete);
         const creationsSnap = await creationsRef.get();
         creationsSnap.forEach(doc => batch.delete(doc.ref));
+        const clientQueuesSnap = await db.collection(`clientInstallQueues/${userIdToDelete}/clients`).get();
+        clientQueuesSnap.forEach(doc => batch.delete(doc.ref));
         console.log(`Deleting ${creationsSnap.size} creations...`);
 
         communityIds.forEach(communityId => {
@@ -941,7 +1177,9 @@ exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite
     const userId = context.params.userId;
     const userData = change.after.data();
     if (!userData || !userData.role) { return null; }
+    const previousRole = change.before.data()?.role;
     const newRole = userData.role;
+    if (previousRole === newRole) return null;
     try {
         await admin.auth().setCustomUserClaims(userId, { role: newRole });
         const profileRef = db.collection('profiles').doc(userId);

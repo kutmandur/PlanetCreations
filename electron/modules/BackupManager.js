@@ -37,6 +37,10 @@ const kindByExtension = {
     '.blpr2': 'blueprint', '.pzblueprint': 'blueprint',
     '.prkauto2': 'autosave', '.zooauto': 'autosave',
 };
+const gameFolderById = {
+    'planet-coaster-2': 'Planet Coaster 2',
+    'planet-zoo': 'Planet Zoo',
+};
 let cachedPublicKey = null;
 let publicKeyFetchedAt = 0;
 
@@ -85,6 +89,84 @@ function getRegisteredTarget(app, packageId) {
     if (!packageId) return null;
     const registered = readJson(getTargetRegistryPath(app), {})[packageId]?.targetPath;
     return typeof registered === 'string' ? registered : null;
+}
+
+function getDirectInstallRegistryPath(app) {
+    return path.join(app.getPath('userData'), 'direct_install_targets.json');
+}
+
+function getDirectInstallTarget(app, creationId) {
+    if (!creationId) return null;
+    const registered = readJson(getDirectInstallRegistryPath(app), {})[creationId]?.targetPath;
+    return typeof registered === 'string' ? registered : null;
+}
+
+function registerDirectInstallTarget(app, creationId, targetPath, metadata) {
+    if (!creationId || !targetPath) return;
+    const registryPath = getDirectInstallRegistryPath(app);
+    const registry = readJson(registryPath, {});
+    registry[creationId] = {
+        targetPath,
+        packageId: metadata?.packageId || null,
+        payloadSha256: metadata?.payloadSha256 || null,
+        updatedAt: new Date().toISOString(),
+    };
+    writeJsonAtomic(registryPath, registry);
+}
+
+function getLatestGameFileMtime(directoryPath, gameId) {
+    const allowedExtensions = new Set(Object.entries(gameByExtension)
+        .filter(([, mappedGameId]) => mappedGameId === gameId)
+        .map(([extension]) => extension));
+    let latest = 0;
+    try {
+        for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
+            if (!entry.isFile() || !allowedExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+            latest = Math.max(latest, fs.statSync(path.join(directoryPath, entry.name)).mtimeMs);
+        }
+    } catch (error) {
+        console.warn(`Could not inspect game save directory ${directoryPath}:`, error.message);
+    }
+    return latest;
+}
+
+function resolveGameSavesDirectory(frontierPath, gameId) {
+    const gameFolder = gameFolderById[gameId];
+    if (!gameFolder || !frontierPath || !fs.existsSync(frontierPath)) {
+        throw new Error('The configured Frontier game folder could not be found.');
+    }
+    const gamePath = path.join(frontierPath, gameFolder);
+    if (!fs.existsSync(gamePath)) throw new Error(`${gameFolder} was not found in the configured Frontier folder.`);
+
+    const candidates = fs.readdirSync(gamePath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^\d{17}$/.test(entry.name))
+        .map((entry) => path.join(gamePath, entry.name, 'Saves'))
+        .filter((savesPath) => fs.existsSync(savesPath))
+        .map((savesPath) => ({
+            savesPath,
+            latestFileMtime: getLatestGameFileMtime(savesPath, gameId),
+        }))
+        .sort((a, b) => b.latestFileMtime - a.latestFileMtime || a.savesPath.localeCompare(b.savesPath));
+
+    if (candidates.length === 0) throw new Error(`No local ${gameFolder} save profile was found.`);
+    return candidates[0].savesPath;
+}
+
+function createCollisionSafeTarget(directoryPath, originalFileName) {
+    const safeName = path.basename(originalFileName);
+    const extension = path.extname(safeName);
+    const baseName = path.basename(safeName, extension);
+    const initialPath = path.join(directoryPath, safeName);
+    if (!fs.existsSync(initialPath)) return initialPath;
+
+    let index = 1;
+    while (index < 1000) {
+        const suffix = index === 1 ? ' (PlanetCreations)' : ` (PlanetCreations ${index})`;
+        const candidate = path.join(directoryPath, `${baseName}${suffix}${extension}`);
+        if (!fs.existsSync(candidate)) return candidate;
+        index++;
+    }
+    throw new Error('Could not create a collision-free game file name.');
 }
 
 async function fetchPublicKey() {
@@ -355,6 +437,43 @@ async function importMediaBackup(app, dialog) {
     }
 }
 
+function writeVerifiedCreation(app, backupZipPath, verification, originalFilePath) {
+    if (!originalFilePath || !isValidGameFile(originalFilePath)) {
+        return { success: false, status: 'needs-target', originalFileName: verification.metadata?.originalFileName };
+    }
+    if (path.extname(originalFilePath).toLowerCase() !==
+        path.extname(verification.metadata?.originalFileName || '').toLowerCase()) {
+        return { success: false, status: 'error', message: 'The restore target must use the original game-file extension.' };
+    }
+
+    let payloadBuffer;
+    let manifest = null;
+    if (verification.inspection?.legacy) {
+        const zip = new AdmZip(backupZipPath);
+        const originalName = path.basename(verification.metadata.originalFileName || '');
+        const entry = zip.getEntry(originalName);
+        if (!entry || !isValidGameFile(originalName)) throw new Error('Legacy backup payload is missing or unsafe.');
+        payloadBuffer = entry.getData();
+    } else if (verification.metadata.packageType === 'creation') {
+        payloadBuffer = verification.inspection.payloadBuffer;
+        manifest = verification.inspection.mediaManifest;
+    } else {
+        throw new Error('A media package cannot be restored as a game file.');
+    }
+
+    if (fs.existsSync(originalFilePath)) {
+        const preRestoreDirectory = path.join(path.dirname(originalFilePath), 'Pre-Restore Backups');
+        fs.mkdirSync(preRestoreDirectory, { recursive: true });
+        fs.copyFileSync(originalFilePath, path.join(preRestoreDirectory, `${path.basename(originalFilePath)}.${Date.now()}.pre-restore`));
+    } else {
+        fs.mkdirSync(path.dirname(originalFilePath), { recursive: true });
+    }
+    fs.writeFileSync(originalFilePath, payloadBuffer);
+    if (manifest) savePortableManifestForCreation(originalFilePath, manifest);
+    registerLocalTarget(app, verification.metadata?.packageId, originalFilePath);
+    return { success: true, status: verification.status, targetPath: originalFilePath };
+}
+
 async function restoreBackup(app, backupZipPath, originalFilePath) {
     try {
         if (!fs.existsSync(backupZipPath)) return { success: false, status: 'error', message: 'Backup file not found.' };
@@ -362,40 +481,58 @@ async function restoreBackup(app, backupZipPath, originalFilePath) {
         if (verification.status === 'invalid' || verification.status === 'unverified') {
             return { success: false, status: verification.status, message: verification.error || 'Package verification failed.' };
         }
-        if (!originalFilePath || !isValidGameFile(originalFilePath)) {
-            return { success: false, status: 'needs-target', originalFileName: verification.metadata?.originalFileName };
-        }
-        if (path.extname(originalFilePath).toLowerCase() !==
-            path.extname(verification.metadata?.originalFileName || '').toLowerCase()) {
-            return { success: false, status: 'error', message: 'The restore target must use the original game-file extension.' };
-        }
-        let payloadBuffer;
-        let manifest = null;
-        if (verification.inspection?.legacy) {
-            const zip = new AdmZip(backupZipPath);
-            const originalName = path.basename(verification.metadata.originalFileName || '');
-            const entry = zip.getEntry(originalName);
-            if (!entry || !isValidGameFile(originalName)) throw new Error('Legacy backup payload is missing or unsafe.');
-            payloadBuffer = entry.getData();
-        } else if (verification.metadata.packageType === 'creation') {
-            payloadBuffer = verification.inspection.payloadBuffer;
-            manifest = verification.inspection.mediaManifest;
-        } else {
-            throw new Error('A media package cannot be restored as a game file.');
-        }
-        if (fs.existsSync(originalFilePath)) {
-            const preRestoreDirectory = path.join(path.dirname(originalFilePath), 'Pre-Restore Backups');
-            fs.mkdirSync(preRestoreDirectory, { recursive: true });
-            fs.copyFileSync(originalFilePath, path.join(preRestoreDirectory, `${path.basename(originalFilePath)}.${Date.now()}.pre-restore`));
-        } else {
-            fs.mkdirSync(path.dirname(originalFilePath), { recursive: true });
-        }
-        fs.writeFileSync(originalFilePath, payloadBuffer);
-        if (manifest) savePortableManifestForCreation(originalFilePath, manifest);
-        registerLocalTarget(app, verification.metadata?.packageId, originalFilePath);
-        return { success: true, status: verification.status };
+        return writeVerifiedCreation(app, backupZipPath, verification, originalFilePath);
     } catch (error) {
         return { success: false, status: 'error', message: error.message };
+    }
+}
+
+async function installCreationPackage(app, backupZipPath, creationId, frontierPath) {
+    try {
+        if (!fs.existsSync(backupZipPath)) throw new Error('Downloaded creation package was not found.');
+        if (typeof creationId !== 'string' || creationId.length < 1 || creationId.length > 128) {
+            throw new Error('The creation ID is invalid.');
+        }
+        const verification = await verifyBackup(backupZipPath);
+        if (verification.status !== 'verified' || verification.metadata?.packageType !== 'creation') {
+            return {
+                success: false,
+                status: verification.status,
+                permanent: verification.status === 'invalid',
+                message: verification.error || 'Only signed and verified creation packages can be installed.',
+            };
+        }
+
+        const metadata = verification.metadata;
+        const extension = path.extname(metadata.originalFileName || '').toLowerCase();
+        if (!isValidGameFile(metadata.originalFileName || '') || gameByExtension[extension] !== metadata.gameId) {
+            throw new Error('The package game and file type do not match.');
+        }
+
+        const registeredTarget = getDirectInstallTarget(app, creationId);
+        let targetPath = registeredTarget && isPathInside(frontierPath, registeredTarget) &&
+            path.extname(registeredTarget).toLowerCase() === extension ? registeredTarget : null;
+        if (!targetPath) {
+            const savesDirectory = resolveGameSavesDirectory(frontierPath, metadata.gameId);
+            const originalTarget = path.join(savesDirectory, path.basename(metadata.originalFileName));
+            if (fs.existsSync(originalTarget) && metadata.payloadSha256 &&
+                sha256(fs.readFileSync(originalTarget)) === metadata.payloadSha256) {
+                targetPath = originalTarget;
+            } else {
+                targetPath = createCollisionSafeTarget(savesDirectory, metadata.originalFileName);
+            }
+        }
+
+        const result = writeVerifiedCreation(app, backupZipPath, verification, targetPath);
+        if (!result.success) return result;
+        registerDirectInstallTarget(app, creationId, targetPath, metadata);
+        return {
+            ...result,
+            installedFileName: path.basename(targetPath),
+            mediaSetId: metadata.mediaSetId || null,
+        };
+    } catch (error) {
+        return { success: false, status: 'error', permanent: false, message: error.message };
     }
 }
 
@@ -403,6 +540,7 @@ module.exports = {
     createBackup,
     listAllBackups,
     restoreBackup,
+    installCreationPackage,
     backupCreationMedia,
     importMediaBackup,
     deleteBackup,
@@ -412,4 +550,8 @@ module.exports = {
     isValidGameFile,
     ALLOWED_GAME_EXTENSIONS,
     MAX_UPLOAD_SIZE_BYTES,
+    __test: {
+        resolveGameSavesDirectory,
+        createCollisionSafeTarget,
+    },
 };

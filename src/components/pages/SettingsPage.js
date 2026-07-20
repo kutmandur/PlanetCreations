@@ -28,6 +28,29 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [linkedDiscordInfo, setLinkedDiscordInfo] = useState(null);
     const [isJoining, setIsJoining] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [launchAtLogin, setLaunchAtLoginState] = useState(false);
+    const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
+    const [isUpdatingLaunchAtLogin, setIsUpdatingLaunchAtLogin] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadLaunchAtLoginSetting = async () => {
+            if (!window.electronAPI?.getLaunchAtLogin) return;
+            try {
+                const result = await window.electronAPI.getLaunchAtLogin();
+                if (!cancelled) {
+                    setLaunchAtLoginSupported(Boolean(result?.supported));
+                    setLaunchAtLoginState(Boolean(result?.enabled));
+                }
+            } catch (error) {
+                console.error('Could not read launch-at-login setting:', error);
+            }
+        };
+
+        loadLaunchAtLoginSetting();
+        return () => { cancelled = true; };
+    }, []);
 
     useEffect(() => {
         if (!user) return;
@@ -284,6 +307,20 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         }
     };
 
+    const handleLaunchAtLoginChange = async (event) => {
+        const enabled = event.target.checked;
+        setIsUpdatingLaunchAtLogin(true);
+        try {
+            const result = await window.electronAPI.setLaunchAtLogin(enabled);
+            setLaunchAtLoginSupported(Boolean(result?.supported));
+            setLaunchAtLoginState(Boolean(result?.enabled));
+        } catch (error) {
+            setModalMessage(`Could not update the Windows startup setting: ${error.message}`);
+        } finally {
+            setIsUpdatingLaunchAtLogin(false);
+        }
+    };
+
     return (
         <div className="max-w-4xl mx-auto mt-10 p-4 sm:p-8 space-y-8" style={color.style}>
             <h1 className="text-4xl font-bold text-center text-gray-800">Account Settings</h1>
@@ -391,6 +428,33 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
             </div>
 
             {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
+
+            {launchAtLoginSupported && (
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                    <h2 className="text-2xl font-bold mb-2">Desktop App</h2>
+                    <label className="flex items-start justify-between gap-6 cursor-pointer">
+                        <span>
+                            <span className="block text-lg font-semibold text-gray-800">Start with Windows</span>
+                            <span className="block text-gray-600 mt-1">
+                                Open PlanetCreations when you sign in to Windows. Closing the window keeps the client running in the system tray for notifications and background tasks.
+                            </span>
+                        </span>
+                        <span className="flex items-center gap-3 shrink-0 mt-1">
+                            <span className="text-sm font-semibold text-gray-600">
+                                {launchAtLogin ? 'Enabled' : 'Disabled'}
+                            </span>
+                            <input
+                                type="checkbox"
+                                checked={launchAtLogin}
+                                onChange={handleLaunchAtLoginChange}
+                                disabled={isUpdatingLaunchAtLogin}
+                                className="h-5 w-5 accent-blue-600 disabled:opacity-50"
+                                aria-label="Start PlanetCreations with Windows"
+                            />
+                        </span>
+                    </label>
+                </div>
+            )}
 
             {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
 
