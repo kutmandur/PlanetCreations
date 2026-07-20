@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../../firebase/config';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, updateDoc, arrayUnion, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
@@ -11,7 +11,6 @@ import useGames from '../../hooks/useGames';
 import EventGameSelector from '../eventform/EventGameSelector';
 import EventDetails from '../eventform/EventDetails';
 import EventGalleries from '../eventform/EventGalleries';
-import EventClassSelector from '../eventform/EventClassSelector';
 import RuleEditor from '../eventform/RuleEditor';
 import CustomFieldsEditor from '../eventform/CustomFieldsEditor';
 import EventTimeSettings from '../eventform/EventTimeSettings';
@@ -49,15 +48,13 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     const [submissionLimit, setSubmissionLimit] = useState(1);
     const [blockOldCreations, setBlockOldCreations] = useState(false);
     const [creationCutoffDate, setCreationCutoffDate] = useState('');
-    const [eventClasses, setEventClasses] = useState([]);
-    const [classInput, setClassInput] = useState('');
-    const [allCommunityClasses, setAllCommunityClasses] = useState([]);
-    const [suggestedClasses, setSuggestedClasses] = useState([]);
+    const [discordChannels, setDiscordChannels] = useState([]);
+    const [notificationMode, setNotificationMode] = useState('none');
+    const [discordNotificationChannelId, setDiscordNotificationChannelId] = useState('');
+    const [discordSubmissionChannelId, setDiscordSubmissionChannelId] = useState('');
     const [voteType, setVoteType] = useState('single');
     const [voteLimit, setVoteLimit] = useState(1);
     const [votingEnabled, setVotingEnabled] = useState(true);
-    const [reminderChannels, setReminderChannels] = useState('both');
-    const [autoPostSubmissions, setAutoPostSubmissions] = useState(false);
     const [publishResultsImmediately, setPublishResultsImmediately] = useState(false);
     const [imageItems, setImageItems] = useState([]);
     const [videoItems, setVideoItems] = useState([]);
@@ -136,12 +133,12 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     setSubmissionLimit(data.submissionLimit || 1);
                     setBlockOldCreations(data.blockOldCreations || false);
                     setGame(data.game || getDefaultGameId());
-                    setEventClasses(data.classes || []);
                     setVoteType(data.voteType || 'single');
                     setVoteLimit(data.voteLimit || 1);
                     setVotingEnabled(data.votingEnabled !== false);
-                    setReminderChannels(data.reminderChannels || 'both');
-                    setAutoPostSubmissions(data.autoPostSubmissions === true);
+                    setNotificationMode(data.notificationMode || 'none');
+                    setDiscordNotificationChannelId(data.discordNotificationChannelId || '');
+                    setDiscordSubmissionChannelId(data.discordSubmissionChannelId || '');
                     if (data.notificationTemplates) setNotificationTemplates(data.notificationTemplates);
                     
                     const loadedReminders = (data.reminders || []).map(parseReminderString);
@@ -181,7 +178,17 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     const communitySnap = await getDoc(communityRef);
                     if (communitySnap.exists()) {
                         setCommunityName(communitySnap.data().name);
-                        setAllCommunityClasses(communitySnap.data().eventClasses || []);
+                        const channels = communitySnap.data().discordChannels || [];
+                        setDiscordChannels(channels);
+                        const hasChannels = channels.length > 0;
+                        if (!isEditing) {
+                            // Neues Event: sinnvoller Default je nach Discord-Anbindung.
+                            setNotificationMode(hasChannels ? 'both' : 'site');
+                        } else if (!hasChannels) {
+                            // Bearbeiten ohne verbundenen Bot: Discord-Modi herunterstufen,
+                            // damit keine unwählbare Option aktiv bleibt.
+                            setNotificationMode(prev => (prev === 'both' ? 'site' : prev === 'discord' ? 'none' : prev));
+                        }
                     }
                     const prevEventsQuery = query(collection(db, 'events'), where('communityId', '==', effectiveCommunityId), orderBy('createdAt', 'desc'), limit(5));
                     const prevEventsSnap = await getDocs(prevEventsQuery);
@@ -204,16 +211,6 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     }, [timezone, isEditing, originalEventDates, formatDateForInput]);
 
     useEffect(() => {
-        const currentSelected = eventClasses.map(c => c.toLowerCase());
-        if (classInput.trim() === '') {
-            setSuggestedClasses(allCommunityClasses.filter(c => !currentSelected.includes(c.toLowerCase())).slice(0, 5));
-        } else {
-            const lowerClassInput = classInput.toLowerCase();
-            setSuggestedClasses(allCommunityClasses.filter(c => c.toLowerCase().includes(lowerClassInput) && !currentSelected.includes(c.toLowerCase())).slice(0, 5));
-        }
-    }, [classInput, allCommunityClasses, eventClasses]);
-    
-    useEffect(() => {
         if (loading) return;
         const activeTabIndex = TABS.findIndex(tab => tab.id === game);
         const activeTabNode = tabRefs.current[activeTabIndex];
@@ -223,17 +220,6 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
         }
     }, [game, TABS, loading]);
 
-    const handleAddClass = (classToAdd) => {
-        const newClass = classToAdd.trim();
-        if (newClass && !eventClasses.some(ec => ec.toLowerCase() === newClass.toLowerCase()) && eventClasses.length < 3) {
-            setEventClasses([...eventClasses, newClass]);
-        }
-        setClassInput('');
-    };
-    const handleRemoveClass = (classToRemove) => setEventClasses(eventClasses.filter(c => c !== classToRemove));
-    const handleClassKeyDown = (e) => {
-        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); handleAddClass(classInput); }
-    };
     const handleEndTimeChange = (e, setTimePart) => setTimePart(e.target.value);
     const handleReminderChange = (index, part, value, isVoteReminder = false) => {
         const updater = isVoteReminder ? setVoteReminders : setReminders;
@@ -322,10 +308,13 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
             submissionLimit: allowMultipleSubmissions ? Number(submissionLimit) : 1,
             blockOldCreations, creationCutoffDate: blockOldCreations ? new Date(creationCutoffDate) : null,
             game, communityId: isEditing ? (await getDoc(doc(db, 'events', eventId))).data().communityId : communityId,
-            creatorId: user.uid, updatedAt: serverTimestamp(), classes: eventClasses,
+            creatorId: user.uid, updatedAt: serverTimestamp(),
             reminders: finalReminders, voteReminders: (separateVoteTime && votingEnabled) ? finalVoteReminders : [],
             voteType, voteLimit: voteType === 'multiple' ? Number(voteLimit) : 1,
-            votingEnabled, reminderChannels, autoPostSubmissions,
+            votingEnabled,
+            notificationMode,
+            discordNotificationChannelId: (notificationMode === 'both' || notificationMode === 'discord') ? (discordNotificationChannelId || null) : null,
+            discordSubmissionChannelId: discordSubmissionChannelId || null,
             notificationsSent: isEditing ? (await getDoc(doc(db, 'events', eventId))).data().notificationsSent || {} : {},
             notificationTemplates,
         };
@@ -337,10 +326,6 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
             eventData.resultsStatus = publishResultsImmediately ? 'published' : 'managing';
         }
         try {
-            const newClasses = eventClasses.filter(c => !allCommunityClasses.some(ac => ac.toLowerCase() === c.toLowerCase()));
-            if (newClasses.length > 0) {
-                await updateDoc(doc(db, 'communitys', eventData.communityId), { eventClasses: arrayUnion(...newClasses) });
-            }
             if (isEditing) {
                 const eventRef = doc(db, 'events', eventId);
                 await setDoc(eventRef, { ...eventData, createdAt: (await getDoc(eventRef)).data()?.createdAt || serverTimestamp() }, { merge: true });
@@ -369,7 +354,6 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                 <EventGameSelector game={game} setGame={setGame} TABS={TABS} tabRefs={tabRefs} gliderRef={gliderRef} color={color} />
                 <EventDetails title={title} setTitle={setTitle} bannerImageUrl={bannerImageUrl} setBannerImageUrl={setBannerImageUrl} description={description} setDescription={setDescription} />
                 <EventGalleries imageItems={imageItems} videoItems={videoItems} handleMediaPaste={handleMediaPaste} handleMediaDragEnd={handleMediaDragEnd} handleRemoveMedia={handleRemoveMedia} IMAGE_LIMIT={IMAGE_LIMIT} VIDEO_LIMIT={VIDEO_LIMIT} />
-                <EventClassSelector eventClasses={eventClasses} classInput={classInput} setClassInput={setClassInput} suggestedClasses={suggestedClasses} handleAddClass={handleAddClass} handleRemoveClass={handleRemoveClass} handleClassKeyDown={handleClassKeyDown} color={color} />
                 <RuleEditor rules={rules} setRules={setRules} />
                 <CustomFieldsEditor fields={customFields} setCustomFields={setCustomFields} />
                 
@@ -396,15 +380,18 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                 />
                 
                 <EventDiscordSettings
+                    discordChannels={discordChannels}
+                    notificationMode={notificationMode}
+                    setNotificationMode={setNotificationMode}
+                    discordNotificationChannelId={discordNotificationChannelId}
+                    setDiscordNotificationChannelId={setDiscordNotificationChannelId}
+                    discordSubmissionChannelId={discordSubmissionChannelId}
+                    setDiscordSubmissionChannelId={setDiscordSubmissionChannelId}
                     reminders={reminders}
                     voteReminders={voteReminders}
                     handleReminderChange={handleReminderChange}
                     separateVoteTime={separateVoteTime}
                     votingEnabled={votingEnabled}
-                    reminderChannels={reminderChannels}
-                    setReminderChannels={setReminderChannels}
-                    autoPostSubmissions={autoPostSubmissions}
-                    setAutoPostSubmissions={setAutoPostSubmissions}
                     notificationTemplates={notificationTemplates}
                     setNotificationTemplates={setNotificationTemplates}
                     getMessageSuggestions={getMessageSuggestions}

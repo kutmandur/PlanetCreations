@@ -28,6 +28,35 @@ function initializeAllListeners(client) {
         console.log(`[Event Cache] Managing cache updated. Now tracking ${managingEventsCache.length} events.`);
     }, error => console.error('[Managing Cache] Listener failed:', error));
 
+    // --- Showcase Announcer: postet eine veröffentlichte Showcase-Kreation in den
+    // Showcase-Channel der Community. Idempotent über discordShowcaseMessageId. ---
+    const announceShowcase = async (linkDoc) => {
+        try {
+            const pathParts = linkDoc.ref.path.split('/');
+            if (pathParts.length < 4 || pathParts[0] !== 'communitys') return;
+            const communityId = pathParts[1];
+            const creationId = linkDoc.id;
+            const communityDoc = await db.collection('communitys').doc(communityId).get();
+            if (!communityDoc.exists) return;
+            const channelId = communityDoc.data().discordShowcaseChannelId;
+            if (!channelId) return;
+            const channel = await client.channels.fetch(channelId);
+            if (!channel) return;
+            const linkData = linkDoc.data();
+            const embed = await buildCreationEmbed(creationId, communityId, false);
+            embed.setTitle(`🌟 New Showcase: ${embed.data.title}`);
+            const message = await channel.send(
+                linkData.showcaseVideoUrl
+                    ? { content: linkData.showcaseVideoUrl, embeds: [embed] }
+                    : { embeds: [embed] }
+            );
+            await linkDoc.ref.update({ discordShowcaseMessageId: message.id, discordShowcaseChannelId: channel.id });
+            console.log(`[Showcase Announcer] ✅ Announced showcase ${creationId}`);
+        } catch (error) {
+            console.error(`[Showcase Announcer] ❌ Failed for ${linkDoc.id}:`, error.message);
+        }
+    };
+
     // --- Creation Announcer & Unlink Listener ---
     const creationsQuery = db.collectionGroup('creations');
     creationsQuery.onSnapshot(snapshot => {
@@ -39,6 +68,12 @@ function initializeAllListeners(client) {
         snapshot.docChanges().forEach(async (change) => {
             const linkDoc = change.doc;
             const linkData = linkDoc.data();
+
+            // Showcase Announcer (idempotent): postet einmalig, sobald ein Showcase-Video
+            // veröffentlicht wird (showcaseVideoUrl gesetzt), in den Showcase-Channel.
+            if ((change.type === 'added' || change.type === 'modified') && linkData.showcaseVideoUrl && !linkData.discordShowcaseMessageId) {
+                await announceShowcase(linkDoc);
+            }
 
             if (change.type === 'added') {
                 if (linkData.discordMessageId) return;
@@ -52,27 +87,22 @@ function initializeAllListeners(client) {
                     }
                     const communityId = pathParts[1];
                     const creationId = linkDoc.id;
-                    
+
                     const communityDoc = await db.collection('communitys').doc(communityId).get();
                     const creationDoc = await db.collection('creations').doc(creationId).get();
                     if (!communityDoc.exists || !creationDoc.exists) return;
-                    
+
                     const communityData = communityDoc.data();
                     const creationData = creationDoc.data();
-                    let eventClass = "general";
-                    if (creationData.eventIds?.length > 0) {
-                        const eventId = creationData.eventIds[0];
-                        const eventDoc = await db.collection('events').doc(eventId).get();
-                        if (eventDoc.exists && eventDoc.data().classes?.length > 0) {
-                            eventClass = eventDoc.data().classes[0];
-                        }
-                    }
-                    
-                    const channelId = communityData.discordChannelMapping?.[eventClass.toLowerCase()];
+
+                    // Event-Submissions laufen über den Submission Announcer (eigener
+                    // Channel). Der General-Channel ist nur für Creations außerhalb von Events.
+                    if (creationData.eventIds?.length > 0) return;
+
+                    const channelId = communityData.discordGeneralChannelId;
                     if (!channelId) return;
 
-                    const includeVotes = (eventClass === "general");
-                    const embed = await buildCreationEmbed(creationId, communityId, includeVotes);
+                    const embed = await buildCreationEmbed(creationId, communityId, true);
                     embed.setTitle(`New Creation Added: ${embed.data.title}`);
                     const channel = await client.channels.fetch(channelId);
                     if (channel) {
@@ -84,6 +114,16 @@ function initializeAllListeners(client) {
                     console.error(`[Creation Announcer] ❌ Failed to announce creation ${linkDoc.id}:`, error);
                 }
             } else if (change.type === 'removed') {
+                // Showcase-Nachricht mit aufräumen, falls vorhanden.
+                if (linkData.discordShowcaseMessageId && linkData.discordShowcaseChannelId) {
+                    try {
+                        const ch = await client.channels.fetch(linkData.discordShowcaseChannelId);
+                        const msg = await ch.messages.fetch(linkData.discordShowcaseMessageId);
+                        await msg.delete();
+                    } catch (error) {
+                        console.warn(`[Showcase Announcer] Could not delete showcase message for ${linkDoc.id}: ${error.message}`);
+                    }
+                }
                 if (!linkData.discordMessageId || !linkData.discordChannelId) return;
                 console.log(`[Creation Announcer] Detected creation unlink: ${linkDoc.id}. Deleting message...`);
                 try {
@@ -98,9 +138,9 @@ function initializeAllListeners(client) {
         });
     }, error => console.error('[Creation Announcer] Listener failed:', error));
 
-    // --- Event-Submission Announcer: postet neue Submissions in den gemappten
-    // Discord-Channel, wenn das Event autoPostSubmissions aktiviert hat.
-    // Marker (autoPostedSubmissions.<creationId> auf dem Event-Doc) verhindern
+    // --- Event-Submission Announcer: postet neue Submissions in den am Event
+    // gewählten Submission-Channel (event.discordSubmissionChannelId). Marker
+    // (autoPostedSubmissions.<creationId> auf dem Event-Doc) verhindern
     // Doppel-Posts über Bot-Neustarts hinweg. ---
     const announceEventSubmissions = async (creationDoc) => {
         const creationData = creationDoc.data();
@@ -108,17 +148,10 @@ function initializeAllListeners(client) {
         if (eventIds.length === 0) return;
         for (const eventId of eventIds) {
             const event = activeEventsCache.find(e => e.id === eventId);
-            if (!event || event.autoPostSubmissions !== true) continue;
-            const rc = event.reminderChannels || 'both';
-            if (rc !== 'both' && rc !== 'discord') continue;
+            if (!event || !event.discordSubmissionChannelId) continue;
             if (event.autoPostedSubmissions?.[creationDoc.id]) continue;
             try {
-                const communityDoc = await db.collection('communitys').doc(event.communityId).get();
-                if (!communityDoc.exists) continue;
-                const eventClass = event.classes?.[0] || 'general';
-                const channelId = communityDoc.data().discordChannelMapping?.[eventClass.toLowerCase()];
-                if (!channelId) continue;
-                const channel = await client.channels.fetch(channelId);
+                const channel = await client.channels.fetch(event.discordSubmissionChannelId);
                 if (!channel) continue;
                 const embed = await buildCreationEmbed(creationDoc.id, event.communityId, false);
                 embed.setTitle(`📥 New submission for "${event.title}": ${embed.data.title}`);

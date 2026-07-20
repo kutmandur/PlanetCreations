@@ -6,12 +6,13 @@ const { EmbedBuilder, Client } = require('discord.js');
 
 const SITE_ORIGIN = 'https://planetcreations.net';
 
-// Kanalwahl des Veranstalters: 'both' (Default) | 'discord' | 'site' | 'none'
+// Kanalwahl des Veranstalters: 'both' | 'discord' | 'site' | 'none' (Default 'none').
+// Der konkrete Discord-Channel steckt in event.discordNotificationChannelId.
 function resolveChannels(event) {
-    const rc = event.reminderChannels || 'both';
+    const mode = event.notificationMode || 'none';
     return {
-        wantDiscord: rc === 'both' || rc === 'discord',
-        wantSite: rc === 'both' || rc === 'site',
+        wantDiscord: mode === 'both' || mode === 'discord',
+        wantSite: mode === 'both' || mode === 'site',
     };
 }
 
@@ -45,10 +46,9 @@ function startEventNotifier(client) {
         }
     };
 
-    // Discord-Channel der Community für das Event auflösen (null = keiner gemappt)
-    const resolveDiscordChannel = async (event, community) => {
-        const eventClass = event.classes?.[0] || 'general';
-        const channelId = community.discordChannelMapping?.[eventClass.toLowerCase()];
+    // Discord-Channel des Events für Benachrichtigungen auflösen (null = keiner gewählt)
+    const resolveDiscordChannel = async (event) => {
+        const channelId = event.discordNotificationChannelId;
         if (!channelId) return null;
         try {
             return await client.channels.fetch(channelId);
@@ -70,7 +70,7 @@ function startEventNotifier(client) {
                 const community = communityDoc.data();
 
                 // Kein Discord-Channel darf Site-Benachrichtigungen nicht mehr blockieren.
-                const channel = wantDiscord ? await resolveDiscordChannel(event, community) : null;
+                const channel = wantDiscord ? await resolveDiscordChannel(event) : null;
 
                 const eventLink = `${SITE_ORIGIN}/#/event/${event.id}`;
                 const vars = { eventName: event.title, eventLink };
@@ -177,15 +177,13 @@ function startEventNotifier(client) {
                 const groups = event.managerGroups || [];
                 const assignments = event.managerGroupAssignments || {};
 
-                let communityData = null;
                 let channel = null;
+                let channelResolved = false;
                 const getChannel = async () => {
                     if (!wantDiscord) return null;
-                    if (!communityData) {
-                        const cSnap = await db.collection('communitys').doc(event.communityId).get();
-                        if (!cSnap.exists) return null;
-                        communityData = cSnap.data();
-                        channel = await resolveDiscordChannel(event, communityData);
+                    if (!channelResolved) {
+                        channel = await resolveDiscordChannel(event);
+                        channelResolved = true;
                     }
                     return channel;
                 };
