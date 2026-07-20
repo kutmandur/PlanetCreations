@@ -365,14 +365,23 @@ function getClientIdentity() {
     } catch (error) {
         log.warn('Could not read desktop client identity:', error);
     }
+    let changed = false;
     if (typeof identity.clientId !== 'string' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.clientId)) {
         identity.clientId = crypto.randomUUID();
+        changed = true;
     }
     if (typeof identity.displayName !== 'string' || !identity.displayName.trim()) {
         identity.displayName = String(os.hostname() || 'Windows PC').trim().slice(0, 50) || 'Windows PC';
+        changed = true;
     }
-    fs.writeFileSync(identityPath, JSON.stringify(identity, null, 2));
+    if (changed) {
+        try {
+            fs.writeFileSync(identityPath, JSON.stringify(identity, null, 2));
+        } catch (error) {
+            log.warn('Could not persist desktop client identity:', error);
+        }
+    }
     return {
         clientId: identity.clientId,
         displayName: identity.displayName,
