@@ -28,6 +28,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
     const [isStartingInstall, setIsStartingInstall] = useState(false);
+    const [selectedClientId, setSelectedClientId] = useState('');
+
+    useEffect(() => {
+        const clients = Object.entries(userProfile?.clients || {})
+            .filter(([, client]) => client?.remoteInstall === true);
+        setSelectedClientId((current) =>
+            clients.some(([clientId]) => clientId === current) ? current : (clients[0]?.[0] || '')
+        );
+    }, [userProfile?.clients]);
 
     // Versuche Profil aus Cache zu laden
     const cachedProfile = cachedCreation?.userId
@@ -387,24 +396,36 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const prevMedia = () => setActiveMediaIndex((prev) => (prev - 1 + mediaItems.length) % mediaItems.length);
 
     const isElectron = window.electronAPI?.isElectron;
-    const originBackupUrl = creation.backupUrl;
-    const hasDownloadableBackup = Boolean(creation.backupObjectKey || originBackupUrl);
+    const compatibleClients = Object.entries(userProfile?.clients || {})
+        .filter(([, client]) => client?.remoteInstall === true);
+    const selectedClient = compatibleClients.find(([clientId]) => clientId === selectedClientId)?.[1];
+    const hasDownloadableBackup = Boolean(creation.backupObjectKey);
+    const canDirectInstall = Boolean(user && hasDownloadableBackup && (isElectron || compatibleClients.length > 0));
 
     const handleDirectInstall = async () => {
-        if (!isElectron || isStartingInstall) return;
+        if (!user || isStartingInstall) return;
         setIsStartingInstall(true);
         try {
-            let downloadUrl = originBackupUrl;
-            if (creation.backupObjectKey) {
+            if (isElectron) {
                 const getBackupDownloadUrl = httpsCallable(functions, 'getBackupDownloadUrl');
                 const response = await getBackupDownloadUrl({ creationId: id });
-                downloadUrl = response.data.downloadUrl;
+                const installResult = await window.electronAPI.installQueuedCreation({
+                    creationId: id,
+                    downloadUrl: response.data.downloadUrl,
+                });
+                if (!installResult?.success) throw new Error(installResult?.message || 'The creation could not be installed.');
+                setModalMessage(`Successfully installed '${installResult.installedFileName}'.`);
+            } else {
+                if (!selectedClientId) throw new Error('No compatible desktop client is registered.');
+                const enqueueClientInstall = httpsCallable(functions, 'enqueueClientInstall');
+                const response = await enqueueClientInstall({ creationId: id, clientId: selectedClientId });
+                setModalMessage(response.data?.duplicate ?
+                    `This creation is already queued for ${selectedClient?.displayName || 'the selected client'}.` :
+                    `Direct install queued for ${selectedClient?.displayName || 'the selected client'}.`);
             }
-            if (!downloadUrl) throw new Error('No downloadable backup is available.');
-            window.location.href = `planetcreations://import?url=${encodeURIComponent(downloadUrl)}`;
         } catch (error) {
             console.error('Could not start direct install:', error);
-            setModalMessage(`Download could not be started: ${error.message}`);
+            setModalMessage(`Direct install could not be started: ${error.message}`);
         } finally {
             setIsStartingInstall(false);
         }
@@ -548,20 +569,26 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </div>
                             )}
 
-                            {hasDownloadableBackup && (
+                            {canDirectInstall && (
                                 <div>
                                     <p className="text-sm font-bold text-gray-600 mb-1">Direct Install</p>
-                                    {isElectron ? (
-                                        <button type="button" onClick={handleDirectInstall} disabled={isStartingInstall} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors disabled:opacity-60 ${color.bg} ${color.hoverBg}`}>
-                                            <Icon path={ICONS.download} className="w-5 h-5" />
-                                            {isStartingInstall ? 'Preparing Download...' : 'Direct Install'}
-                                        </button>
-                                    ) : (
-                                        <Link to="/client-info" className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
-                                            <Icon path={ICONS.download} className="w-5 h-5" />
-                                            Direct Install with Client
-                                        </Link>
+                                    {!isElectron && compatibleClients.length > 1 && (
+                                        <select
+                                            value={selectedClientId}
+                                            onChange={(event) => setSelectedClientId(event.target.value)}
+                                            className="w-full mb-2 p-2 border rounded-lg bg-white text-gray-800"
+                                            aria-label="Direct install target"
+                                        >
+                                            {compatibleClients.map(([clientId, client]) => (
+                                                <option key={clientId} value={clientId}>{client.displayName || 'Windows PC'}</option>
+                                            ))}
+                                        </select>
                                     )}
+                                    <button type="button" onClick={handleDirectInstall} disabled={isStartingInstall} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors disabled:opacity-60 ${color.bg} ${color.hoverBg}`}>
+                                        <Icon path={ICONS.download} className="w-5 h-5" />
+                                        {isStartingInstall ? 'Preparing Direct Install...' :
+                                            (isElectron ? 'Direct Install' : `Direct Install on ${selectedClient?.displayName || 'Client'}`)}
+                                    </button>
                                 </div>
                             )}
                         </div>

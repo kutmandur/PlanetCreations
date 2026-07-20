@@ -1,8 +1,9 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { auth, db, isConfigured } from './firebase/config';
 import { enablePush, getPushPermission } from './firebase/push';
@@ -76,6 +77,7 @@ const queryClient = new QueryClient({
 
 const AppContent = () => {
     const location = useLocation();
+    const navigate = useNavigate();
     const isOfflineMode = location.pathname.startsWith('/client');
     const [user, setUser] = useState(null);
     const [userProfile, setUserProfile] = useState(null);
@@ -106,6 +108,10 @@ const AppContent = () => {
     });
 
     const [notifications, setNotifications] = useState([]);
+    const knownNotificationIdsRef = useRef(new Set());
+    const notificationInboxInitializedRef = useRef(false);
+    const clientQueueProcessingRef = useRef(false);
+    const clientQueueRetryTimerRef = useRef(null);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
     const [updateInfo, setUpdateInfo] = useState(null);
@@ -129,6 +135,8 @@ const AppContent = () => {
         if (!isConfigured) { setLoadingAuth(false); return; }
         let notificationUnsubscribe = () => {};
         const authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            knownNotificationIdsRef.current = new Set();
+            notificationInboxInitializedRef.current = false;
             if (currentUser && currentUser.isAnonymous) {
                 await signOut(auth);
                 setUser(null); setUserProfile(null); setNotifications([]); setActiveTab(getDefaultGameId()); setLoadingAuth(false);
@@ -173,7 +181,26 @@ const AppContent = () => {
                     // items are already stored newest-first (server prepends).
                     const inboxRef = doc(db, 'users', currentUser.uid, 'meta', 'inbox');
                     notificationUnsubscribe = onSnapshot(inboxRef, (snap) => {
-                        setNotifications(snap.exists() ? (snap.data().items || []) : []);
+                        const nextNotifications = snap.exists() ? (snap.data().items || []) : [];
+                        const nextIds = new Set(nextNotifications.map(item => item?.id).filter(Boolean));
+
+                        if (notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
+                            nextNotifications
+                                .filter(item => item?.id && !item.isRead && !knownNotificationIdsRef.current.has(item.id))
+                                .slice(0, 5)
+                                .reverse()
+                                .forEach(item => {
+                                    window.electronAPI.showSystemNotification({
+                                        title: item.title || 'PlanetCreations',
+                                        body: item.message || '',
+                                        link: item.link || (item.creationId ? `/creation/${item.creationId}` : '/'),
+                                    }).catch(error => console.warn('Could not show system notification:', error));
+                                });
+                        }
+
+                        knownNotificationIdsRef.current = nextIds;
+                        notificationInboxInitializedRef.current = true;
+                        setNotifications(nextNotifications);
                     });
                 } catch (error) {
                     console.error('Error fetching user profile:', error);
@@ -209,6 +236,125 @@ const AppContent = () => {
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
     }, []);
+
+    useEffect(() => {
+        const unsubscribe = window.electronAPI?.onNavigateToRoute?.((route) => navigate(route));
+        return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+    }, [navigate]);
+
+    useEffect(() => {
+        if (!user || !window.electronAPI?.getClientIdentity || !window.electronAPI?.installQueuedCreation) return;
+        let cancelled = false;
+        let queueUnsubscribe = () => {};
+        const functions = getFunctions();
+        const registerDesktopClient = httpsCallable(functions, 'registerDesktopClient');
+        const claimClientInstall = httpsCallable(functions, 'claimClientInstall');
+        const completeClientInstall = httpsCallable(functions, 'completeClientInstall');
+        const getBackupDownloadUrl = httpsCallable(functions, 'getBackupDownloadUrl');
+
+        const scheduleQueueRetry = (processQueue, retryAt) => {
+            if (!retryAt || cancelled) return;
+            if (clientQueueRetryTimerRef.current) clearTimeout(clientQueueRetryTimerRef.current);
+            const delay = Math.max(1000, Math.min(retryAt - Date.now(), 15 * 60 * 1000));
+            clientQueueRetryTimerRef.current = setTimeout(processQueue, delay);
+        };
+
+        const start = async () => {
+            try {
+                const identity = await window.electronAPI.getClientIdentity();
+                if (cancelled) return;
+                await registerDesktopClient(identity);
+                if (cancelled) return;
+
+                const processQueue = async () => {
+                    if (cancelled || clientQueueProcessingRef.current) return;
+                    if (clientQueueRetryTimerRef.current) {
+                        clearTimeout(clientQueueRetryTimerRef.current);
+                        clientQueueRetryTimerRef.current = null;
+                    }
+                    clientQueueProcessingRef.current = true;
+                    let installedCount = 0;
+                    let failedCount = 0;
+                    let nextRetryAt = null;
+                    try {
+                        while (!cancelled) {
+                            const claimResult = await claimClientInstall({ clientId: identity.clientId });
+                            if (cancelled) break;
+                            const command = claimResult.data?.command;
+                            if (!command) {
+                                nextRetryAt = claimResult.data?.nextAttemptAt || null;
+                                break;
+                            }
+
+                            let installResult;
+                            try {
+                                const urlResult = await getBackupDownloadUrl({ creationId: command.creationId });
+                                installResult = await window.electronAPI.installQueuedCreation({
+                                    creationId: command.creationId,
+                                    downloadUrl: urlResult.data.downloadUrl,
+                                });
+                            } catch (error) {
+                                installResult = { success: false, permanent: false, message: error.message };
+                            }
+
+                            const completion = await completeClientInstall({
+                                clientId: identity.clientId,
+                                commandId: command.id,
+                                success: installResult?.success === true,
+                                permanent: installResult?.permanent === true,
+                                message: installResult?.message || '',
+                            });
+                            if (installResult?.success) installedCount++;
+                            else if (completion.data?.removed) failedCount++;
+                            if (completion.data?.retryAt) {
+                                nextRetryAt = !nextRetryAt ? completion.data.retryAt :
+                                    Math.min(nextRetryAt, completion.data.retryAt);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Could not process the client install queue:', error);
+                        nextRetryAt = Date.now() + 60 * 1000;
+                    } finally {
+                        clientQueueProcessingRef.current = false;
+                    }
+
+                    if (!cancelled && (installedCount > 0 || failedCount > 0)) {
+                        const installedText = `${installedCount} creation${installedCount === 1 ? '' : 's'} installed`;
+                        const failedText = failedCount > 0 ? `, ${failedCount} failed` : '';
+                        window.electronAPI.showSystemNotification({
+                            title: 'Direct install queue processed',
+                            body: `${installedText}${failedText}.`,
+                            link: '/client/dashboard',
+                        }).catch(() => {});
+                    }
+                    scheduleQueueRetry(processQueue, nextRetryAt);
+                };
+
+                const queueRef = doc(db, 'clientInstallQueues', user.uid, 'clients', identity.clientId);
+                queueUnsubscribe = onSnapshot(queueRef, (snapshot) => {
+                    if ((snapshot.data()?.items || []).length > 0) processQueue();
+                }, (error) => console.error('Could not listen for direct install commands:', error));
+            } catch (error) {
+                console.error('Could not register this desktop client:', error);
+                if (error.code === 'functions/resource-exhausted' || error.code === 'functions/failed-precondition') {
+                    setModalMessage(`Desktop client registration failed: ${error.message}`);
+                } else if (!cancelled) {
+                    clientQueueRetryTimerRef.current = setTimeout(start, 60 * 1000);
+                }
+            }
+        };
+
+        start();
+        return () => {
+            cancelled = true;
+            queueUnsubscribe();
+            if (clientQueueRetryTimerRef.current) {
+                clearTimeout(clientQueueRetryTimerRef.current);
+                clientQueueRetryTimerRef.current = null;
+            }
+            clientQueueProcessingRef.current = false;
+        };
+    }, [user, setModalMessage]);
 
     // Installed PWA: ask for notification permission automatically on first open.
     // If dismissed, the user can re-enable from Settings or the install dialog.
@@ -275,17 +421,17 @@ const AppContent = () => {
             
             {updateDownloaded ? (
                 <div className="bg-green-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">
-                    <p className="font-semibold">Update heruntergeladen. Jetzt neu starten, um zu installieren.</p>
-                    <button onClick={() => window.electronAPI.restartApp()} className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100">Neu starten</button>
+                    <p className="font-semibold">Update downloaded. Restart now to install it.</p>
+                    <button onClick={() => window.electronAPI.restartApp()} className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100">Restart</button>
                 </div>
             ) : updateInfo && (
                 <div className="bg-blue-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">
-                    <p className="font-semibold">Eine neue Version ({updateInfo.version}) ist verfügbar!</p>
+                    <p className="font-semibold">A new version ({updateInfo.version}) is available!</p>
                     <button 
                         onClick={() => window.electronAPI.openExternalLink(updateInfo.url)} 
                         className="ml-4 bg-white text-blue-700 font-bold py-1 px-3 rounded hover:bg-blue-100"
                     >
-                        Jetzt herunterladen
+                        Download now
                     </button>
                 </div>
             )}

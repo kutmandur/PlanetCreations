@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const mime = require('mime-types');
 const AdmZip = require('adm-zip');
@@ -9,12 +10,127 @@ const log = require('electron-log');
 const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
-const { createBackup, listAllBackups, restoreBackup, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
+const { createBackup, listAllBackups, restoreBackup, installCreationPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
 
 const isDev = !app.isPackaged;
+const AUTO_START_ARG = '--autostart';
+const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
 let mainWindow;
+let tray;
+let isQuitting = false;
+let hasShownTrayHint = false;
+const activeNotifications = new Set();
+
+function getAppIconPath() {
+    return isDev ?
+        path.join(__dirname, '../public/favicon.ico') :
+        path.join(__dirname, '../build/favicon.ico');
+}
+
+function showMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+        return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (process.platform === 'darwin') app.dock?.show();
+}
+
+function createTray() {
+    if (tray && !tray.isDestroyed()) return;
+    try {
+        tray = new Tray(getAppIconPath());
+        tray.setToolTip('PlanetCreations Client');
+        tray.setContextMenu(Menu.buildFromTemplate([
+            { label: 'PlanetCreations is running in the background', enabled: false },
+            { type: 'separator' },
+            { label: 'Open', click: showMainWindow },
+            {
+                label: 'Quit',
+                click: () => {
+                    isQuitting = true;
+                    app.quit();
+                },
+            },
+        ]));
+        tray.on('click', showMainWindow);
+        tray.on('balloon-click', showMainWindow);
+    } catch (error) {
+        log.error('Could not create system tray icon:', error);
+        tray = null;
+    }
+}
+
+function hideMainWindowToTray() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.hide();
+    if (process.platform === 'darwin') app.dock?.hide();
+    if (!hasShownTrayHint && tray && process.platform === 'win32') {
+        tray.displayBalloon({
+            iconType: 'info',
+            title: 'PlanetCreations is still running',
+            content: 'Notifications and background tasks remain active. Use the tray menu to open or quit the client.',
+        });
+        hasShownTrayHint = true;
+    }
+}
+
+function sanitizeNotificationPayload(payload) {
+    const title = typeof payload?.title === 'string' ? payload.title.trim().slice(0, 120) : '';
+    const body = typeof payload?.body === 'string' ? payload.body.trim().slice(0, 500) : '';
+    const rawLink = typeof payload?.link === 'string' ? payload.link.trim() : '';
+    const link = rawLink.startsWith('/') && !rawLink.startsWith('//') && rawLink.length <= 500 ? rawLink : null;
+    return { title: title || 'PlanetCreations', body, link };
+}
+
+function showSystemNotification(payload) {
+    if (!Notification.isSupported() || (mainWindow?.isVisible() && mainWindow?.isFocused())) {
+        return { shown: false };
+    }
+    const { title, body, link } = sanitizeNotificationPayload(payload);
+    const notification = new Notification({ title, body, icon: getAppIconPath() });
+    activeNotifications.add(notification);
+    notification.on('click', () => {
+        showMainWindow();
+        if (link && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('navigate-to-route', link);
+        }
+    });
+    notification.on('close', () => activeNotifications.delete(notification));
+    notification.show();
+    return { shown: true };
+}
+
+function getLaunchAtLoginStatus() {
+    const supported = app.isPackaged && process.platform === 'win32';
+    if (!supported) return { supported: false, enabled: false };
+
+    const settings = app.getLoginItemSettings({
+        path: process.execPath,
+        args: [AUTO_START_ARG],
+    });
+    return { supported: true, enabled: settings.openAtLogin };
+}
+
+function setLaunchAtLogin(enabled) {
+    if (typeof enabled !== 'boolean') {
+        throw new TypeError('The launch-at-login setting must be a boolean.');
+    }
+    if (!app.isPackaged || process.platform !== 'win32') {
+        return { supported: false, enabled: false };
+    }
+
+    app.setLoginItemSettings({
+        openAtLogin: enabled,
+        path: process.execPath,
+        args: [AUTO_START_ARG],
+    });
+    return getLaunchAtLoginStatus();
+}
 
 function isPathInside(root, candidate) {
     if (!root || !candidate) return false;
@@ -110,6 +226,36 @@ async function importBackupFromFile(filePath, overrideCategory = null) {
     }
 }
 
+function validateR2DownloadUrl(downloadUrl) {
+    if (typeof downloadUrl !== 'string' || downloadUrl.length > 4096) {
+        throw new Error('The download URL is invalid.');
+    }
+    const parsed = new URL(downloadUrl);
+    if (parsed.protocol !== 'https:') throw new Error('Only HTTPS downloads are allowed for security reasons.');
+    if (!parsed.hostname.endsWith('.r2.cloudflarestorage.com')) {
+        throw new Error('Direct creation installs are only accepted from PlanetCreations R2 downloads.');
+    }
+    return parsed.toString();
+}
+
+async function downloadR2PackageToTemp(downloadUrl) {
+    const safeUrl = validateR2DownloadUrl(downloadUrl);
+    const response = await fetch(safeUrl);
+    if (!response.ok) throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
+
+    const declaredSize = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
+        throw new Error('The download exceeds the 300 MB package limit.');
+    }
+    const buffer = await response.buffer();
+    if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
+        throw new Error('The downloaded package has an invalid size.');
+    }
+    const tempPath = path.join(app.getPath('temp'), `${crypto.randomUUID()}.PlanetCreations`);
+    fs.writeFileSync(tempPath, buffer);
+    return tempPath;
+}
+
 // --- FUNKTION: URL verarbeiten, herunterladen und importieren ---
 async function handleUrlImport(urlToHandle) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -126,37 +272,8 @@ async function handleUrlImport(urlToHandle) {
     try {
         const parsedUrl = new URL(urlToHandle);
         const downloadUrl = parsedUrl.searchParams.get('url');
-
-        if (!downloadUrl) {
-            throw new Error('No download URL found in the link.');
-        }
-
-        // URL-Validierung: Nur HTTPS erlauben
-        const downloadParsed = new URL(downloadUrl);
-        if (downloadParsed.protocol !== 'https:') {
-            throw new Error('Only HTTPS downloads are allowed for security reasons.');
-        }
-        if (!downloadParsed.hostname.endsWith('.r2.cloudflarestorage.com')) {
-            throw new Error('Direct creation installs are only accepted from PlanetCreations R2 downloads.');
-        }
-
-        const response = await fetch(downloadUrl);
-        if (!response.ok) {
-            throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
-        }
-
-        const declaredSize = Number(response.headers.get('content-length'));
-        if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
-            throw new Error('The download exceeds the 300 MB package limit.');
-        }
-        const buffer = await response.buffer();
-        if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
-            throw new Error('The downloaded package has an invalid size.');
-        }
-        const fileName = `${crypto.randomUUID()}.PlanetCreations`;
-        tempPath = path.join(app.getPath('temp'), fileName);
-
-        fs.writeFileSync(tempPath, buffer);
+        if (!downloadUrl) throw new Error('No download URL found in the link.');
+        tempPath = await downloadR2PackageToTemp(downloadUrl);
         sendStatus('info', 'Download complete. Importing backup...');
 
         const importResult = await importBackupFromFile(tempPath, 'Workshop');
@@ -192,11 +309,10 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-    const url = commandLine.pop();
+    const url = commandLine.find((argument) =>
+        argument.startsWith('planetcreations://') || argument.endsWith('.PlanetCreations')
+    );
+    showMainWindow();
     if (url && url.startsWith('planetcreations://')) {
         handleUrlImport(url);
     } else if (url && url.endsWith('.PlanetCreations')) {
@@ -221,34 +337,85 @@ function getStoredPath() {
 
 function setStoredPath(newPath) {
     try {
-        const config = { frontierPath: newPath };
         const configPath = path.join(app.getPath('userData'), 'config.json');
+        let config = {};
+        if (fs.existsSync(configPath)) {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+        config.frontierPath = newPath;
         fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     } catch (error) { console.error("Error storing path:", error); }
 }
 
-function createWindow() {
+function getFrontierPathForInstall() {
+    const storedPath = getStoredPath();
+    if (storedPath && fs.existsSync(storedPath)) return storedPath;
+    const candidates = [
+        path.join(app.getPath('home'), 'Saved Games', 'Frontier Developments'),
+        path.join(app.getPath('documents'), 'Frontier Developments'),
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) || storedPath || candidates[0];
+}
+
+function getClientIdentity() {
+    const identityPath = path.join(app.getPath('userData'), 'device.json');
+    let identity = {};
+    try {
+        if (fs.existsSync(identityPath)) identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+    } catch (error) {
+        log.warn('Could not read desktop client identity:', error);
+    }
+    if (typeof identity.clientId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.clientId)) {
+        identity.clientId = crypto.randomUUID();
+    }
+    if (typeof identity.displayName !== 'string' || !identity.displayName.trim()) {
+        identity.displayName = String(os.hostname() || 'Windows PC').trim().slice(0, 50) || 'Windows PC';
+    }
+    fs.writeFileSync(identityPath, JSON.stringify(identity, null, 2));
+    return {
+        clientId: identity.clientId,
+        displayName: identity.displayName,
+        platform: process.platform,
+        clientVersion: app.getVersion(),
+    };
+}
+
+function createWindow({ openOnline = false } = {}) {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
+        icon: getAppIconPath(),
         webPreferences: {
           preload: path.join(__dirname, 'preload.js'),
           contextIsolation: true,
           nodeIntegration: false,
+          backgroundThrottling: false,
         },
     });
 
     mainWindow.setMenu(null);
     const splashPath = isDev ? path.join(__dirname, '../public/splash.html') : path.join(__dirname, '../build/splash.html');
-    mainWindow.loadFile(splashPath);
+    const reactAppUrl = isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`;
+    if (openOnline) mainWindow.loadURL(reactAppUrl);
+    else mainWindow.loadFile(splashPath);
     
     ipcMain.on('select-mode', (event, mode) => {
-        const reactAppUrl = isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`;
         if (mode === 'online') mainWindow.loadURL(reactAppUrl);
         else if (mode === 'offline') mainWindow.loadURL(`${reactAppUrl}#/client/dashboard`);
     });
 
     if (isDev) mainWindow.webContents.openDevTools();
+
+    mainWindow.on('close', (event) => {
+        if (isQuitting || !tray) return;
+        event.preventDefault();
+        hideMainWindowToTray();
+    });
+
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
 
     mainWindow.once('ready-to-show', () => {
         if (!isDev) {
@@ -256,7 +423,9 @@ function createWindow() {
         }
     });
 
-    const initialUrlOrFile = !isDev ? process.argv[1] : null;
+    const initialUrlOrFile = !isDev ? process.argv.slice(1).find((argument) =>
+        argument.startsWith('planetcreations://') || argument.endsWith('.PlanetCreations')
+    ) : null;
     if (initialUrlOrFile) {
         mainWindow.webContents.once('did-finish-load', () => {
             if (initialUrlOrFile.startsWith('planetcreations://')) {
@@ -280,12 +449,41 @@ autoUpdater.on('update-downloaded', () => {
     mainWindow.webContents.send('update-downloaded');
 });
 ipcMain.on('restart-app', () => {
+    isQuitting = true;
     autoUpdater.quitAndInstall();
 });
 
 // --- IPC LISTENER ---
 ipcMain.handle('open-external-link', (event, url) => {
     shell.openExternal(url);
+});
+
+ipcMain.handle('show-system-notification', (event, payload) => {
+    return showSystemNotification(payload);
+});
+
+ipcMain.handle('get-launch-at-login', () => getLaunchAtLoginStatus());
+ipcMain.handle('set-launch-at-login', (event, enabled) => setLaunchAtLogin(enabled));
+ipcMain.handle('get-client-identity', () => getClientIdentity());
+ipcMain.handle('install-queued-creation', async (event, payload) => {
+    const creationId = typeof payload?.creationId === 'string' ? payload.creationId.trim() : '';
+    const downloadUrl = typeof payload?.downloadUrl === 'string' ? payload.downloadUrl : '';
+    if (!creationId || creationId.length > 128) {
+        return { success: false, permanent: true, message: 'The creation ID is invalid.' };
+    }
+
+    let tempPath = null;
+    try {
+        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        return await installCreationPackage(app, tempPath, creationId, getFrontierPathForInstall());
+    } catch (error) {
+        log.error(`Direct install failed for creation ${creationId}:`, error);
+        return { success: false, permanent: false, message: error.message };
+    } finally {
+        if (tempPath && fs.existsSync(tempPath)) {
+            try { fs.unlinkSync(tempPath); } catch (error) { log.warn('Could not remove direct-install temp file:', error); }
+        }
+    }
 });
 
 ipcMain.handle('get-stored-path', () => getStoredPath());
@@ -551,11 +749,22 @@ ipcMain.handle('install-media', (event, savePath, options) => installMedia(saveP
 ipcMain.handle('uninstall-media', (event, savePath) => uninstallMedia(savePath));
 ipcMain.handle('get-media-status', (event, savePath) => getMediaSetStatus(savePath));
 
-app.whenReady().then(createWindow);
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.whenReady().then(() => {
+    if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
+    createTray();
+    createWindow({ openOnline: isAutoStart });
+});
+app.on('before-quit', () => { isQuitting = true; });
+app.on('window-all-closed', () => {
+    if (!tray || isQuitting) app.quit();
+});
+app.on('activate', showMainWindow);
+app.on('will-quit', () => {
+    if (tray && !tray.isDestroyed()) tray.destroy();
+});
 
 app.on('open-url', (event, url) => {
     event.preventDefault();
+    showMainWindow();
     handleUrlImport(url);
 });

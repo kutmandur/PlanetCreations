@@ -10,6 +10,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
   restartApp: () => ipcRenderer.send('restart-app'),
 
+  // --- Hintergrundbetrieb und native Benachrichtigungen ---
+  showSystemNotification: (payload) => ipcRenderer.invoke('show-system-notification', payload),
+  getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
+  setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
+  getClientIdentity: () => ipcRenderer.invoke('get-client-identity'),
+  installQueuedCreation: (payload) => ipcRenderer.invoke('install-queued-creation', payload),
+  onNavigateToRoute: (callback) => {
+    const listener = (_event, route) => callback(route);
+    ipcRenderer.on('navigate-to-route', listener);
+    return () => ipcRenderer.removeListener('navigate-to-route', listener);
+  },
+
   // --- Auto-Import Funktionen ---
   onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
   importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
