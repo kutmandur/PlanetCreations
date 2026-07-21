@@ -692,14 +692,13 @@ function createWindow({ openOnline = false } = {}) {
     mainWindow.setMenu(null);
     secureAppWindow(mainWindow);
     const splashPath = isDev ? path.join(__dirname, '../public/splash.html') : path.join(__dirname, '../build/splash.html');
-    const bundledAppUrl = getBundledAppUrl();
     if (openOnline) loadHostedAppWithFallback(mainWindow, '/');
     else mainWindow.loadFile(splashPath);
     
     ipcMain.on('select-mode', (event, mode) => {
         if (!isTrustedIpcSender(event) || event.sender !== mainWindow?.webContents) return;
         if (mode === 'online') loadHostedAppWithFallback(mainWindow, '/');
-        else if (mode === 'offline') mainWindow.loadURL(`${bundledAppUrl}#/client/dashboard`);
+        else if (mode === 'offline') loadHostedAppWithFallback(mainWindow, '/client/dashboard');
     });
 
     if (isDev) mainWindow.webContents.openDevTools();
@@ -843,6 +842,7 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
     try {
         tempPath = await downloadR2PackageToTemp(downloadUrl);
         const workshopPath = await archiveWorkshopPackage(app, tempPath, creationId, { title, previewUrl });
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('backups-updated');
         const result = await installCreationPackage(app, workshopPath, creationId, getFrontierPathForInstall());
         return { ...result, workshopPath };
     } catch (error) {

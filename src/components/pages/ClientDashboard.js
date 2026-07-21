@@ -355,6 +355,8 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
             if (firstBackup.backupType !== 'creation') return false;
 
             switch (activeTab) {
+                case 'all':
+                    return true;
                 case 'parks':
                     return firstBackup.originalFileName.endsWith('.park2') || firstBackup.originalFileName.endsWith('.zoo');
                 case 'blueprints':
@@ -709,7 +711,7 @@ const ClientDashboard = ({ user }) => {
             return [ ...baseTabs, { id: 'customMedia', name: 'Custom Media' }];
         }
         if (activeView === 'workshop') {
-            return baseTabs; // Workshop-Tab hat keine "Custom Media" Option
+            return [{ id: 'all', name: 'All' }, ...baseTabs];
         }
         return baseTabs;
     }, [activeView]);
@@ -929,7 +931,7 @@ const ClientDashboard = ({ user }) => {
                     <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div ref={mainGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
                         {MAIN_TABS.map((tab, index) => (
-                            <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => setActiveView(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeView === tab.id ? 'text-white offline-active-tab' : 'text-gray-300 hover:text-white'}`}>
+                            <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => { setActiveView(tab.id); if (tab.id === 'workshop') setActiveTab('all'); }} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeView === tab.id ? 'text-white offline-active-tab' : 'text-gray-300 hover:text-white'}`}>
                                 {tab.name}
                             </button>
                         ))}
