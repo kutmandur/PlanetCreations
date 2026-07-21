@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import Icon from '../ui/Icon';
@@ -359,6 +360,7 @@ const CommunityCardEditor = ({ community, setModalMessage, previewThemeColor, pr
             const communityRef = doc(db, 'communitys', community.id);
             await updateDoc(communityRef, { customCreationFields: fields });
             setModalMessage('Custom card fields saved successfully!');
+            scheduleDataRefresh();
         } catch (error) {
             setModalMessage(`Error saving fields: ${error.message}`);
         } finally {

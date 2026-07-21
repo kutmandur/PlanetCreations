@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 import { db } from '../../../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
 import { ICONS } from '../../../utils/helpers';
@@ -113,6 +114,7 @@ const RanksSection = ({ community, setModalMessage }) => {
 
       await updateDoc(doc(db, 'communitys', community.id), { ranks: ranksToSave, defaultRankName });
       setModalMessage('Ranks saved successfully!');
+      scheduleDataRefresh();
       setDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);

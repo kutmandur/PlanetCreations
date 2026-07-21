@@ -30,6 +30,7 @@ const hostedApi = {
   onUpdateDownloaded: (callback) => listen('update-downloaded', callback, (_event, ...args) => args),
   restartApp: () => ipcRenderer.send('restart-app'),
 
+  reloadWindow: () => ipcRenderer.invoke('reload-window'),
   showSystemNotification: (payload) => ipcRenderer.invoke('show-system-notification', payload),
   getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
@@ -41,6 +42,15 @@ const hostedApi = {
   listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),
   prepareBackupForUpload: (filePath, idToken) => ipcRenderer.invoke('prepare-backup-for-upload', filePath, idToken),
   uploadBackupFile: (filePath, uploadUrl, contentType) => ipcRenderer.invoke('upload-backup-file', filePath, uploadUrl, contentType),
+
+  getObsStatus: () => ipcRenderer.invoke('get-obs-status'),
+  setObsConfig: (config) => ipcRenderer.invoke('set-obs-config', config),
+  onObsStatusChanged: (callback) => listen('obs-status-changed', callback, (_event, status) => [status]),
+  onObsStreamStarted: (callback) => listen('obs-stream-started', callback, (_event, payload) => [payload]),
+  onObsStreamStopped: (callback) => listen('obs-stream-stopped', callback, () => []),
+  getOverlayForced: () => ipcRenderer.invoke('get-overlay-forced'),
+  setOverlayForced: (value) => ipcRenderer.invoke('set-overlay-forced', value),
+  onOverlayForcedChanged: (callback) => listen('overlay-forced-changed', callback, (_event, value) => [value]),
 
   startOverlayDrag: (point) => ipcRenderer.send('overlay-drag-start', point),
   moveOverlay: (point) => ipcRenderer.send('overlay-drag-move', point),

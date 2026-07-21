@@ -4,6 +4,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import InfoBox from '../../ui/InfoBox';
 import CommunityCardEditor from '../CommunityCardEditor';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
 // Everything visual: theme color, banner & profile images, and the creation card editor.
 const AppearanceSection = ({ community, setModalMessage }) => {
@@ -27,6 +28,7 @@ const AppearanceSection = ({ community, setModalMessage }) => {
         profileImageUrl,
       });
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);

@@ -1283,6 +1283,276 @@ exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUp
     }
 });
 
+// --- Live-Streaming (server-authoritativ) ---
+// Das liveStream-Feld auf Creations wird ausschließlich hier geschrieben; die
+// Firestore-Rules pinnen es für Clients (wie activityScore). goLive verifiziert
+// über die Twitch-/YouTube-API, dass der Stream tatsächlich läuft — ein
+// modifizierter Client kann sich den Feed-Boost also nicht erschleichen.
+// sweepLiveStreams re-verifiziert alle 15 Min nur die aktuell geflaggten
+// Creations und beendet Sessions, deren Stream offline ging.
+
+const twitchClientId = defineSecret("TWITCH_CLIENT_ID");
+const twitchClientSecret = defineSecret("TWITCH_CLIENT_SECRET");
+const youtubeApiKey = defineSecret("YOUTUBE_API_KEY");
+const LIVE_SECRETS = {secrets: [twitchClientId, twitchClientSecret, youtubeApiKey]};
+
+const LIVE_STREAM_TTL_MS = 12 * 60 * 60 * 1000;
+const LIVE_PLATFORM_HOSTS = {
+    twitch: ["twitch.tv", "www.twitch.tv", "m.twitch.tv"],
+    youtube: ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"],
+};
+
+// Validiert die Stream-URL und extrahiert das API-Ziel (Twitch-Login bzw.
+// YouTube-Video-ID). YouTube braucht die konkrete Video-/Stream-URL, weil nur
+// videos.list (1 Quota-Unit) billig prüfbar ist — Kanal-URLs wären teuer.
+function parseStreamUrl(platform, rawUrl) {
+    if (typeof rawUrl !== "string" || rawUrl.length > 300) return null;
+    let url;
+    try {
+        url = new URL(rawUrl);
+    } catch (error) {
+        return null;
+    }
+    const hosts = LIVE_PLATFORM_HOSTS[platform];
+    if (!hosts || url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return null;
+    if (platform === "twitch") {
+        const login = url.pathname.split("/").filter(Boolean)[0] || "";
+        return /^[a-zA-Z0-9_]{3,25}$/.test(login) ? {url: rawUrl, twitchLogin: login.toLowerCase()} : null;
+    }
+    let videoId = null;
+    if (url.hostname.toLowerCase() === "youtu.be") {
+        videoId = url.pathname.split("/").filter(Boolean)[0] || null;
+    } else if (url.pathname === "/watch") {
+        videoId = url.searchParams.get("v");
+    } else if (url.pathname.startsWith("/live/")) {
+        videoId = url.pathname.split("/").filter(Boolean)[1] || null;
+    }
+    return videoId && /^[a-zA-Z0-9_-]{6,20}$/.test(videoId) ? {url: rawUrl, youtubeVideoId: videoId} : null;
+}
+
+// Twitch-App-Access-Token (Client Credentials), im Modul-Scope gecacht —
+// überlebt warme Function-Instanzen und spart den Token-Roundtrip.
+let twitchTokenCache = {token: null, expiresAt: 0};
+async function getTwitchAppToken() {
+    if (twitchTokenCache.token && twitchTokenCache.expiresAt > Date.now() + 60 * 1000) {
+        return twitchTokenCache.token;
+    }
+    const response = await fetch("https://id.twitch.tv/oauth2/token", {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: new URLSearchParams({
+            client_id: twitchClientId.value(),
+            client_secret: twitchClientSecret.value(),
+            grant_type: "client_credentials",
+        }).toString(),
+    });
+    if (!response.ok) throw new Error(`Twitch token request failed (${response.status}).`);
+    const tokenData = await response.json();
+    twitchTokenCache = {
+        token: tokenData.access_token,
+        expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+    };
+    return twitchTokenCache.token;
+}
+
+async function verifyStreamIsLive(platform, parsed) {
+    if (platform === "twitch") {
+        const token = await getTwitchAppToken();
+        const response = await fetch(
+            `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(parsed.twitchLogin)}`,
+            {headers: {"Client-ID": twitchClientId.value(), "Authorization": `Bearer ${token}`}},
+        );
+        if (!response.ok) throw new Error(`Twitch API request failed (${response.status}).`);
+        const body = await response.json();
+        return Array.isArray(body.data) && body.data.length > 0;
+    }
+    if (platform === "youtube") {
+        const response = await fetch(
+            `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(parsed.youtubeVideoId)}` +
+            `&key=${encodeURIComponent(youtubeApiKey.value())}`,
+        );
+        if (!response.ok) throw new Error(`YouTube API request failed (${response.status}).`);
+        const body = await response.json();
+        return body.items?.[0]?.snippet?.liveBroadcastContent === "live";
+    }
+    return false;
+}
+
+exports.goLive = functions.runWith(LIVE_SECRETS).https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const creationId = requireCreationId(data && data.creationId);
+    const platform = data?.platform;
+    if (!LIVE_PLATFORM_HOSTS[platform]) {
+        throw new functions.https.HttpsError("invalid-argument", "Platform must be 'twitch' or 'youtube'.");
+    }
+    const parsed = parseStreamUrl(platform, data?.url);
+    if (!parsed) {
+        throw new functions.https.HttpsError("invalid-argument",
+            platform === "youtube" ?
+                "A valid https YouTube video/stream URL is required (watch?v=... or youtu.be/...)." :
+                "A valid https Twitch channel URL is required.");
+    }
+
+    const creationRef = db.doc(`creations/${creationId}`);
+    const creationSnap = await creationRef.get();
+    if (!creationSnap.exists) {
+        throw new functions.https.HttpsError("not-found", "The creation does not exist.");
+    }
+    if (creationSnap.data().userId !== uid) {
+        throw new functions.https.HttpsError("permission-denied", "You can only go live with your own creations.");
+    }
+
+    let isLive;
+    try {
+        isLive = await verifyStreamIsLive(platform, parsed);
+    } catch (error) {
+        console.error("Live verification failed:", error);
+        throw new functions.https.HttpsError("unavailable", "Stream verification is temporarily unavailable. Please try again.");
+    }
+    if (!isLive) {
+        throw new functions.https.HttpsError("failed-precondition", "No live stream was found on this channel.");
+    }
+
+    const now = admin.firestore.Timestamp.now();
+    const liveStream = {
+        platform,
+        url: parsed.url,
+        startedAt: now,
+        expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + LIVE_STREAM_TTL_MS),
+        verifiedAt: now,
+    };
+
+    // Max. 1 Live-Creation pro User: die alte Session (Pointer auf users/{uid})
+    // wird in derselben Transaktion beendet.
+    const userRef = db.doc(`users/${uid}`);
+    await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        const previousId = userSnap.data()?.liveCreationId;
+        let previousRef = null;
+        if (previousId && previousId !== creationId) {
+            previousRef = db.doc(`creations/${previousId}`);
+            const previousSnap = await tx.get(previousRef);
+            if (!previousSnap.exists) previousRef = null;
+        }
+        if (previousRef) tx.update(previousRef, {liveStream: admin.firestore.FieldValue.delete()});
+        tx.update(creationRef, {liveStream});
+        tx.set(userRef, {liveCreationId: creationId}, {merge: true});
+    });
+    return {success: true, expiresAt: liveStream.expiresAt.toMillis()};
+});
+
+// Beendet die Live-Session des Aufrufers (idempotent). Räumt sowohl das
+// Pointer-Ziel als auch eine optional explizit genannte eigene Creation ab —
+// so lassen sich auch abgelaufene Altlasten ohne gültigen Pointer entfernen.
+exports.endLive = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const requestedId = data?.creationId ? requireCreationId(data.creationId) : null;
+    const userRef = db.doc(`users/${uid}`);
+    await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        const pointerId = userSnap.data()?.liveCreationId || null;
+        const targetIds = [...new Set([pointerId, requestedId].filter(Boolean))];
+        const clearRefs = [];
+        for (const targetId of targetIds) {
+            const ref = db.doc(`creations/${targetId}`);
+            const snap = await tx.get(ref);
+            if (snap.exists && snap.data().userId === uid && snap.data().liveStream) clearRefs.push(ref);
+        }
+        for (const ref of clearRefs) tx.update(ref, {liveStream: admin.firestore.FieldValue.delete()});
+        if (pointerId) tx.set(userRef, {liveCreationId: admin.firestore.FieldValue.delete()}, {merge: true});
+    });
+    return {success: true};
+});
+
+// Setzt/löscht den Overlay-QR eines registrierten Desktop-Clients remote.
+// Zustellung über das clientInstallQueues-Doc, auf dem der Client sowieso einen
+// Listener hat — 0 zusätzliche Reads auf Empfängerseite.
+exports.setClientOverlayQr = functions.https.onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const clientId = requireClientId(data && data.clientId);
+    const entry = data?.entry || null;
+
+    const userSnap = await db.doc(`users/${uid}`).get();
+    if (!userSnap.data()?.clients?.[clientId]?.remoteInstall) {
+        throw new functions.https.HttpsError("not-found", "The selected desktop client is not registered.");
+    }
+
+    let payload = null;
+    if (entry) {
+        const creationId = requireCreationId(entry.creationId);
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists || creationSnap.data().userId !== uid) {
+            throw new functions.https.HttpsError("permission-denied", "You can only show the QR of your own creations.");
+        }
+        payload = {
+            creationId,
+            title: String(creationSnap.data().title || "").slice(0, 200),
+            setAt: admin.firestore.Timestamp.now(),
+        };
+    }
+
+    await getClientQueueRef(uid, clientId).set({
+        uid,
+        clientId,
+        overlayQr: payload || admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.Timestamp.now(),
+    }, {merge: true});
+    return {success: true};
+});
+
+// Re-verifiziert alle 15 Min ausschließlich die aktuell geflaggten Creations
+// (meist 0–2) und beendet Sessions, deren Stream offline ging — begrenzt auch
+// unterschlagene OBS-Enden (modifizierter Client) auf max. ~15 Minuten.
+// Räumt zusätzlich abgelaufene liveStream-Felder ab, damit keine Altlasten
+// in den Dokumenten (und im Suchindex) liegen bleiben.
+exports.sweepLiveStreams = functions.runWith(LIVE_SECRETS).pubsub
+    .schedule("every 15 minutes")
+    .onRun(async () => {
+        const now = admin.firestore.Timestamp.now();
+
+        const clearLive = async (docSnap) => {
+            const userId = docSnap.data().userId;
+            const batch = db.batch();
+            batch.update(docSnap.ref, {liveStream: admin.firestore.FieldValue.delete()});
+            if (userId) {
+                const userRef = db.doc(`users/${userId}`);
+                const userSnap = await userRef.get();
+                if (userSnap.data()?.liveCreationId === docSnap.id) {
+                    batch.set(userRef, {liveCreationId: admin.firestore.FieldValue.delete()}, {merge: true});
+                }
+            }
+            await batch.commit();
+        };
+
+        // Abgelaufene Sessions (Client-Expiry längst erreicht): direkt aufräumen.
+        const expired = await db.collection("creations").where("liveStream.expiresAt", "<=", now).get();
+        for (const docSnap of expired.docs) {
+            await clearLive(docSnap);
+            console.log(`Cleared expired live session on creation ${docSnap.id}.`);
+        }
+
+        // Aktive Sessions: gegen die Plattform-API re-verifizieren.
+        const active = await db.collection("creations").where("liveStream.expiresAt", ">", now).get();
+        for (const docSnap of active.docs) {
+            const liveStream = docSnap.data().liveStream || {};
+            const parsed = parseStreamUrl(liveStream.platform, liveStream.url);
+            let stillLive = false;
+            try {
+                stillLive = parsed ? await verifyStreamIsLive(liveStream.platform, parsed) : false;
+            } catch (error) {
+                // API-Ausfall: lieber bis zum nächsten Sweep live lassen als
+                // eine echte Session fälschlich zu beenden.
+                console.warn(`Live re-verification failed for ${docSnap.id}, keeping:`, error.message);
+                continue;
+            }
+            if (!stillLive) {
+                await clearLive(docSnap);
+                console.log(`Ended live session on creation ${docSnap.id} (stream offline).`);
+            }
+        }
+        return null;
+    });
+
 // --- Search Index Sync Functions ---
 // Kompakter Suchindex in Firestore: ein Dokument pro Spiel unter searchIndex/{game},
 // mit einer entries-Map (creationId -> kompakter Eintrag). Der Client lädt das Doc
@@ -1318,6 +1588,11 @@ const buildIndexEntry = (data) => ({
     // Activity-Score fürs Feed-Ranking (gepflegt von onCreationActivityScore)
     as: data.activityScore || 0,
     aa: data.activityAt?.toMillis?.() || null,
+    // Live-Status (gepflegt von goLive/endLive/sweepLiveStreams): Plattform +
+    // live-bis. Karten/Feed brauchen keine Stream-URL — die liefert die
+    // Detailseite aus dem vollen Dokument.
+    lp: data.liveStream?.platform || null,
+    lu: data.liveStream?.expiresAt?.toMillis?.() || null,
 });
 
 /**

@@ -9,7 +9,11 @@ import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
 import CreationSharingQrCode from '../ui/CreationSharingQrCode';
+import GoLiveModal from '../modals/GoLiveModal';
 import { recordView, recordVote } from '../../utils/interestTracker';
+import { LIVE_PLATFORMS, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
+import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -30,10 +34,47 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [isStartingInstall, setIsStartingInstall] = useState(false);
     const [selectedClientId, setSelectedClientId] = useState('');
 
+    // Streamer Tools: Overlay-QR-Zustand (lokal + remote) und OBS-Status
+    const [overlayQrEntry, setOverlayQrEntry] = useState(() => readOverlayQr());
+    const [selectedQrClientId, setSelectedQrClientId] = useState('');
+    const [isSettingRemoteQr, setIsSettingRemoteQr] = useState(false);
+    const [obsStatus, setObsStatus] = useState(null);
+    const [showGoLiveModal, setShowGoLiveModal] = useState(false);
+    const [isEndingLive, setIsEndingLive] = useState(false);
+    const [, setLiveTick] = useState(0);
+
+    useEffect(() => subscribeOverlayQr(setOverlayQrEntry), []);
+
+    // OBS-Status vom Desktop-Client (Bridge existiert erst ab Client 1.0.23 —
+    // ohne sie verhält sich die UI wie "OBS nicht verbunden").
+    useEffect(() => {
+        if (!window.electronAPI?.getObsStatus) return undefined;
+        let cancelled = false;
+        window.electronAPI.getObsStatus()
+            .then((status) => { if (!cancelled) setObsStatus(status || null); })
+            .catch(() => {});
+        const unsubscribe = window.electronAPI.onObsStatusChanged?.((status) => setObsStatus(status || null));
+        return () => {
+            cancelled = true;
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, []);
+
+    // Live-Expiry neu bewerten, ohne dass ein Snapshot feuert: Minuten-Tick,
+    // solange die Creation ein liveStream-Feld trägt.
+    useEffect(() => {
+        if (!creation?.liveStream) return undefined;
+        const timer = setInterval(() => setLiveTick((n) => n + 1), 60 * 1000);
+        return () => clearInterval(timer);
+    }, [creation?.liveStream]);
+
     useEffect(() => {
         const clients = Object.entries(userProfile?.clients || {})
             .filter(([, client]) => client?.remoteInstall === true);
         setSelectedClientId((current) =>
+            clients.some(([clientId]) => clientId === current) ? current : (clients[0]?.[0] || '')
+        );
+        setSelectedQrClientId((current) =>
             clients.some(([clientId]) => clientId === current) ? current : (clients[0]?.[0] || '')
         );
     }, [userProfile?.clients]);
@@ -188,6 +229,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 if (isMounted) setActiveMediaIndex(initialIndex);
 
             } else {
+                // Aufräumen, falls diese Creation gerade im Overlay-QR oder als
+                // Live-Session dieses Clients hing und gelöscht wurde.
+                if (readOverlayQr()?.creationId === id) setOverlayQr(null);
+                if (readLiveSession()?.creationId === id) setLiveSession(null);
                 setModalMessage("Creation not found.");
                 if (!creationIdOverride) navigate('/');
             }
@@ -266,6 +311,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 try {
                     await deleteDoc(doc(db, 'creations', id));
                     setModalMessage("Creation deleted successfully.");
+                    scheduleDataRefresh();
                     navigate('/');
                 } catch (error) {
                     setModalMessage(`Error: ${error.message}`);
@@ -433,6 +479,74 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         }
     };
 
+    // --- Streamer Tools (Owner) + Live-Anzeige (alle Besucher) ---
+    const liveStream = creation.liveStream;
+    const liveIsActive = isLiveStreamActive(liveStream);
+    const livePlatformLabel = LIVE_PLATFORMS[liveStream?.platform]?.label || 'stream';
+    const qrActiveForThis = overlayQrEntry?.creationId === id;
+    const obsConnected = Boolean(obsStatus?.connected);
+    const obsStreaming = Boolean(obsStatus?.streaming);
+    const liveSession = readLiveSession();
+
+    const formatTime = (timestamp) => {
+        const ms = timestamp?.toMillis?.() || (timestamp?.seconds ? timestamp.seconds * 1000 : null);
+        return ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+    };
+
+    const handleToggleLocalQr = () => {
+        if (qrActiveForThis) {
+            setOverlayQr(null);
+        } else {
+            setOverlayQr({
+                creationId: id,
+                title: creation.title,
+                url: buildCreationShareUrl(id),
+                source: 'manual',
+                enabledAt: Date.now(),
+            });
+        }
+    };
+
+    const handleRemoteQr = async (clear) => {
+        if (!selectedQrClientId || isSettingRemoteQr) return;
+        setIsSettingRemoteQr(true);
+        try {
+            const setClientOverlayQr = httpsCallable(functions, 'setClientOverlayQr');
+            await setClientOverlayQr({
+                clientId: selectedQrClientId,
+                entry: clear ? null : { creationId: id, title: creation.title },
+            });
+            const clientName = compatibleClients.find(([cid]) => cid === selectedQrClientId)?.[1]?.displayName || 'the selected client';
+            setModalMessage(clear
+                ? `Overlay QR cleared on ${clientName}.`
+                : `Overlay now shows this creation's QR on ${clientName}.`);
+        } catch (error) {
+            setModalMessage(`Could not update the remote overlay: ${error.message}`);
+        } finally {
+            setIsSettingRemoteQr(false);
+        }
+    };
+
+    const handleEndLive = () => {
+        setConfirmation({
+            message: liveIsActive
+                ? 'End your live session? The LIVE badge will be removed for all viewers.'
+                : 'Clear the expired live session from this creation?',
+            onConfirm: async () => {
+                setIsEndingLive(true);
+                try {
+                    const endLive = httpsCallable(functions, 'endLive');
+                    await endLive({ creationId: id });
+                    if (readLiveSession()?.creationId === id) setLiveSession(null);
+                    if (readOverlayQr()?.creationId === id && readOverlayQr()?.source === 'goLive') setOverlayQr(null);
+                } catch (error) {
+                    setModalMessage(`Could not end the live session: ${error.message}`);
+                } finally {
+                    setIsEndingLive(false);
+                }
+            },
+        });
+    };
 
     return (
         <div className="container mx-auto mt-8 p-4" style={color.style}>
@@ -449,7 +563,28 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 </div>
             </div>
             <h2 className="text-4xl font-bold mb-6 text-center">{creation.title}</h2>
-            
+
+            {liveIsActive && (
+                <div className="mb-6 rounded-lg bg-red-600 text-white shadow-md p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-center">
+                    <span className="flex items-center gap-2 font-bold">
+                        <span className="relative flex h-3 w-3">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+                        </span>
+                        LIVE
+                    </span>
+                    <span className="text-sm sm:text-base">{displayUsername} is building this live on {livePlatformLabel}</span>
+                    {liveStream?.url && (
+                        <button
+                            onClick={() => setExternalLink(liveStream.url)}
+                            className="bg-white text-red-600 font-bold px-4 py-1.5 rounded-full hover:bg-red-50 transition-colors text-sm"
+                        >
+                            Watch stream
+                        </button>
+                    )}
+                </div>
+            )}
+
             <div className="flex flex-col lg:flex-row gap-8">
                 <div className="w-full lg:w-2/3">
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
@@ -539,7 +674,12 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             {creatorProfile ? (
                                 <>
                                     <p className="text-sm text-gray-500 mb-2">Creator</p>
-                                    <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover mb-2"/>
+                                    <div className="relative mb-2">
+                                        <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover"/>
+                                        {liveIsActive && (
+                                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wide ring-2 ring-white dark:ring-gray-800">Live</span>
+                                        )}
+                                    </div>
                                     <span className={`text-xl font-bold ${color.text} hover:underline`}>{displayUsername}</span>
                                 </>
                             ) : (
@@ -601,6 +741,121 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             </div>
                         )}
                         <CreationSharingQrCode creationId={id} creationName={creation.title} />
+                        {isOwner && (
+                            <div className="mt-6 pt-6 border-t dark:border-gray-700 space-y-4">
+                                <p className="text-sm font-bold text-gray-600 dark:text-gray-300 text-center">Streamer Tools</p>
+
+                                {isElectron && (
+                                    <div>
+                                        <button
+                                            type="button"
+                                            onClick={handleToggleLocalQr}
+                                            className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold transition-colors ${qrActiveForThis
+                                                ? 'bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100'
+                                                : `text-white ${color.bg} ${color.hoverBg}`}`}
+                                        >
+                                            <Icon path={ICONS.share} className="w-5 h-5" />
+                                            {qrActiveForThis ? 'Stop showing QR in overlay' : 'Show QR in game overlay'}
+                                        </button>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                                            Replaces the overlay logo with this creation's QR code so viewers can scan it on stream. Tip: hold and scroll on the overlay icon to enlarge it.
+                                        </p>
+                                        {overlayQrEntry && !qrActiveForThis && (
+                                            <p className="text-xs text-orange-500 mt-1 text-center">
+                                                The overlay currently shows the QR of another creation — enabling it here will replace it.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {compatibleClients.length > 0 && (
+                                    <div>
+                                        {compatibleClients.length > 1 && (
+                                            <select
+                                                value={selectedQrClientId}
+                                                onChange={(event) => setSelectedQrClientId(event.target.value)}
+                                                className="w-full mb-2 p-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100"
+                                                aria-label="Overlay QR target client"
+                                            >
+                                                {compatibleClients.map(([clientId, client]) => (
+                                                    <option key={clientId} value={clientId}>{client.displayName || 'Windows PC'}</option>
+                                                ))}
+                                            </select>
+                                        )}
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoteQr(false)}
+                                                disabled={isSettingRemoteQr}
+                                                className="flex-1 flex items-center justify-center gap-2 p-3 rounded-lg font-semibold bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100 transition-colors disabled:opacity-60"
+                                            >
+                                                <Icon path={ICONS.desktop} className="w-5 h-5" />
+                                                Show QR remotely
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoteQr(true)}
+                                                disabled={isSettingRemoteQr}
+                                                className="p-3 rounded-lg font-semibold bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100 transition-colors disabled:opacity-60"
+                                                title="Clear the overlay QR on the selected client"
+                                            >
+                                                <Icon path={ICONS.xMark} className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                                            Sends this creation's QR to the game overlay of {compatibleClients.length > 1 ? 'the selected' : 'your'} desktop client.
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div>
+                                    {liveStream ? (
+                                        <div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 text-center">
+                                                {liveIsActive
+                                                    ? `Live on ${livePlatformLabel}${formatTime(liveStream.startedAt) ? ` since ${formatTime(liveStream.startedAt)}` : ''} — ends automatically with your stream.`
+                                                    : 'The last live session expired without being ended.'}
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={handleEndLive}
+                                                disabled={isEndingLive}
+                                                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100 transition-colors disabled:opacity-60"
+                                            >
+                                                <Icon path={ICONS.video} className="w-5 h-5" />
+                                                {liveIsActive ? 'End live now' : 'Clear expired live session'}
+                                            </button>
+                                        </div>
+                                    ) : !isElectron ? (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                                            Live mode requires the desktop client with OBS or Streamlabs connected.
+                                        </p>
+                                    ) : !obsConnected ? (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                                            Connect OBS or Streamlabs in the client's Streaming settings to go live.
+                                        </p>
+                                    ) : !obsStreaming ? (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                                            Start your stream to go live with this creation.
+                                        </p>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowGoLiveModal(true)}
+                                            className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors"
+                                        >
+                                            <Icon path={ICONS.video} className="w-5 h-5" />
+                                            Link this creation to your stream
+                                        </button>
+                                    )}
+                                    {liveSession && liveSession.creationId !== id && !liveStream && (
+                                        <p className="text-xs text-orange-500 mt-1 text-center">
+                                            You are currently live with another creation — going live here will move the LIVE badge.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2 text-center">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer">{tag}</button>))}</div></div>
                     </div>
                     {loadingCommunities ? (
@@ -614,6 +869,17 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     )}
                 </div>
             </div>
+            {showGoLiveModal && (
+                <GoLiveModal
+                    user={user}
+                    userProfile={userProfile}
+                    isElectron={isElectron}
+                    obsService={obsStatus?.service || null}
+                    initialCreation={creation}
+                    onClose={() => setShowGoLiveModal(false)}
+                    setModalMessage={setModalMessage}
+                />
+            )}
         </div>
     );
 };

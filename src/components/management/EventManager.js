@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot, getDoc, collection, query, where, getDocs, updateDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -351,6 +352,7 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
                 await batch.commit();
                 setSubmissions(updatedSubmissions);
                 setModalMessage("Video assigned to group successfully!");
+                scheduleDataRefresh();
             } catch (error) {
                 setModalMessage(`Error assigning video to group: ${error.message}`);
             }
@@ -382,6 +384,7 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
                     sub.id === submissionId ? { ...sub, assignedVideoUrl: videoUrl } : sub
                 ));
                 setModalMessage("Assigned video updated successfully!");
+                scheduleDataRefresh();
             } catch (error) {
                 setModalMessage(`Error assigning video: ${error.message}`);
             }

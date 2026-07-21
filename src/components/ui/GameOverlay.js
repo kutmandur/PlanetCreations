@@ -1,11 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import { ICONS } from '../../utils/helpers';
+import { readOverlayQr, subscribeOverlayQr } from '../../utils/overlayQr';
+import { composeSharingQrCanvas } from './SharingQrCode';
 
 export const GameOverlayWidget = ({ unreadCount = 0 }) => {
     const [dragging, setDragging] = useState(false);
+    const [overlayQr, setOverlayQrState] = useState(() => readOverlayQr());
+    const [qrDataUrl, setQrDataUrl] = useState(null);
     const movedRef = useRef(false);
     const startRef = useRef({ x: 0, y: 0 });
+
+    useEffect(() => subscribeOverlayQr(setOverlayQrState), []);
+
+    // Das voll assemblierte Sharing-Bild (Template + QR + Creation-Name) einmal
+    // in voller Auflösung (1254px) komponieren und vom Browser herunterskalieren
+    // lassen — bleibt beim Puck-Resize scharf, ohne pro Resize neu zu rendern.
+    useEffect(() => {
+        let cancelled = false;
+        if (!overlayQr?.url) {
+            setQrDataUrl(null);
+            return undefined;
+        }
+        composeSharingQrCanvas(overlayQr.url, overlayQr.title || '')
+            .then((canvas) => { if (!cancelled) setQrDataUrl(canvas.toDataURL('image/png')); })
+            .catch(() => { if (!cancelled) setQrDataUrl(null); });
+        return () => { cancelled = true; };
+    }, [overlayQr?.url, overlayQr?.title]);
 
     useEffect(() => {
         const stopDragging = () => {
@@ -60,10 +81,16 @@ export const GameOverlayWidget = ({ unreadCount = 0 }) => {
                 onPointerUp={handleMouseUp}
                 onWheel={handleWheel}
                 onClick={handleClick}
-                title="Drag to move. Hold and scroll to resize. Click to open PlanetCreations."
+                title={qrDataUrl && overlayQr
+                    ? `QR code for "${overlayQr.title || 'your creation'}" — scan to open it. Drag to move. Hold and scroll to resize (bigger scans easier). Click to open PlanetCreations.`
+                    : 'Drag to move. Hold and scroll to resize. Click to open PlanetCreations.'}
                 aria-label="Open PlanetCreations overlay"
             >
-                <img src="logo.png" alt="" draggable="false" />
+                {qrDataUrl && overlayQr ? (
+                    <img src={qrDataUrl} alt="" draggable="false" className="game-overlay-qr" />
+                ) : (
+                    <img src="logo.png" alt="" draggable="false" />
+                )}
                 {unreadCount > 0 && (
                     <span className="game-overlay-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
                 )}

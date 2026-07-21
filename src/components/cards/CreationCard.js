@@ -6,6 +6,7 @@ import { db } from '../../firebase/config';
 import { fetchCreationById } from '../../firebase/creationsService';
 import { ICONS, getTextColorForBackground } from '../../utils/helpers';
 import { POOL_LABELS } from '../../utils/feedRanking';
+import { isLiveStreamActive } from '../../utils/liveStream';
 import Icon from '../ui/Icon';
 import { preloadComponent } from '../../utils/preload';
 import useHoverSlideshow from '../../hooks/useHoverSlideshow';
@@ -60,9 +61,16 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
         }
     }, [onTagClick]);
 
+    const isLive = isLiveStreamActive(creation.liveStream);
+
     const CardContent = () => (
-        <article className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full">
+        <article className={`bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ${isLive ? 'ring-2 ring-red-500' : ''}`}>
             <div className="relative h-48 overflow-hidden">
+                {isLive && (
+                    <span className="absolute top-2 left-2 z-10 bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wide flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span> Live
+                    </span>
+                )}
                 <img
                     src={imgSrc}
                     alt={creation.title}
@@ -77,7 +85,7 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                     // Admin-Debug: aus welchem Pool dieser Eintrag im
                     // Recommended-Feed gezogen wurde (+ Komponenten-Scores im Tooltip)
                     <div
-                        className="absolute top-2 left-2 bg-black bg-opacity-75 text-white text-[10px] font-mono px-2 py-1 rounded-md"
+                        className={`absolute ${isLive ? 'top-8' : 'top-2'} left-2 bg-black bg-opacity-75 text-white text-[10px] font-mono px-2 py-1 rounded-md`}
                         title={Object.entries(creation.__feedDebug.parts)
                             .map(([k, v]) => `${k}: ${v.toFixed(3)}`)
                             .join('\n')}

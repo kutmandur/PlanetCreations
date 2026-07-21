@@ -6,6 +6,7 @@ import {
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { getDefaultGameId, getGame, getShareCodeLabel } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
@@ -675,6 +676,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 }
 
                 setModalMessage("Creation updated successfully!");
+                scheduleDataRefresh();
                 navigate(`/creation/${creationToEditId}`);
 
             } else {
@@ -711,6 +713,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
                 }
                 setModalMessage("Creation submitted successfully!");
+                scheduleDataRefresh();
                 navigate('/');
             }
         } catch (error) {
