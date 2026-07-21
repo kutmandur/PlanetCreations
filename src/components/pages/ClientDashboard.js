@@ -325,8 +325,11 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
 
     useEffect(() => {
         fetchBackups();
+    }, [fetchBackups, refreshKey]);
+
+    useEffect(() => {
         setSelectedBackups({});
-    }, [fetchBackups, refreshKey, activeGame, activeTab]);
+    }, [activeGame, activeTab]);
 
     const processedBackups = useMemo(() => {
         if (!allBackups) return [];
@@ -478,7 +481,6 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         }
     };
 
-    if (loading) return <div className="flex h-full items-center justify-center"><Spinner /></div>;
     const hasBackups = processedBackups && processedBackups.length > 0;
 
     return (
@@ -494,7 +496,9 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 selectedCount={Object.keys(selectedBackups).length}
             />
             <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-gutter-stable">
-                {!hasBackups ? (
+                {loading ? (
+                    <div className="flex h-full items-center justify-center"><Spinner /></div>
+                ) : !hasBackups ? (
                     <div className="flex h-full items-center justify-center"><p className="text-gray-400">No backups found for this category.</p></div>
                 ) : (
                     <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 items-start ${activeView === 'restore' ? 'xl:grid-cols-3 2xl:grid-cols-4' : 'lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6'}`}>
