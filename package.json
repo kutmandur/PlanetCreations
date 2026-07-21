@@ -97,8 +97,7 @@
       {
         "ext": "PlanetCreations",
         "name": "PlanetCreations Backup",
-        "description": "Backup file for PlanetCreations Client",
-        "icon": "assets/icon.ico"
+        "description": "Backup file for PlanetCreations Client"
       }
     ]
   }
