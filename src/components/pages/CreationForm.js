@@ -222,6 +222,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [removeExistingBackup, setRemoveExistingBackup] = useState(false);
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
     const [isPreparingUpload, setIsPreparingUpload] = useState(false);
+    const [ownershipConfirmed, setOwnershipConfirmed] = useState(false);
+    const [hostingAccepted, setHostingAccepted] = useState(false);
     const [activeStep, setActiveStep] = useState('details');
     const [mobileOpen, setMobileOpen] = useState(false);
     const [completedSteps, setCompletedSteps] = useState([]);
@@ -479,6 +481,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const handleFileSelectedForUpload = async (file) => {
         setIsBackupModalOpen(false);
         if (!file || !file.path) return;
+
+        if (!ownershipConfirmed || !hostingAccepted) {
+            setModalMessage("Please confirm that you own the creation and accept hosting before uploading it.");
+            return;
+        }
     
         if (!window.electronAPI) {
             setModalMessage("This feature is only available in the desktop client.");
@@ -509,6 +516,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             const { data } = await getUploadUrl({
                 fileName: result.fileName,
                 fileSize: result.fileSize,
+                ownershipConfirmed,
+                hostingAccepted,
             });
 
             const { uploadId, uploadUrl, contentType } = data;
@@ -550,9 +559,15 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         if (hadExistingBackup) setRemoveExistingBackup(true);
         setBackupUploadId(null);
         setBackupInfo(null);
+        setOwnershipConfirmed(false);
+        setHostingAccepted(false);
     };
 
     const handleAttachFileClick = () => {
+        if (!ownershipConfirmed || !hostingAccepted) {
+            setModalMessage("Please confirm both statements before selecting a file.");
+            return;
+        }
         if (window.electronAPI?.isElectron) {
             setIsBackupModalOpen(true);
         } else {
@@ -940,10 +955,23 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                         )}
 
                         {!isPreparingUpload && !backupInfo && !isUploading && (
-                            <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
-                                <Icon path={ICONS.upload} className="w-5 h-5" />
-                                Add savegame file
-                            </button>
+                            <div className="space-y-3">
+                                <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-left dark:border-amber-700 dark:bg-amber-950/30">
+                                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Required before uploading a file</p>
+                                    <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+                                        <input type="checkbox" checked={ownershipConfirmed} onChange={(event) => setOwnershipConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                                        <span>I confirm that this is my own creation or that I have all necessary rights to upload it. <span className="text-red-500">*</span></span>
+                                    </label>
+                                    <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+                                        <input type="checkbox" checked={hostingAccepted} onChange={(event) => setHostingAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                                        <span>I agree that this file may be uploaded to and hosted by PlanetCreations. <span className="text-red-500">*</span></span>
+                                    </label>
+                                </div>
+                                <button type="button" onClick={handleAttachFileClick} disabled={!ownershipConfirmed || !hostingAccepted} className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-semibold text-white transition-colors ${ownershipConfirmed && hostingAccepted ? `${color.bg} ${color.hoverBg}` : 'cursor-not-allowed bg-gray-400 dark:bg-gray-600'}`}>
+                                    <Icon path={ICONS.upload} className="w-5 h-5" />
+                                    Add savegame file
+                                </button>
+                            </div>
                         )}
 
                         {!isPreparingUpload && isUploading && (

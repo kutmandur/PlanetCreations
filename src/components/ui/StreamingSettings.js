@@ -124,7 +124,7 @@ const StreamingSettings = ({ setModalMessage }) => {
     };
 
     const statusText = !status?.enabled ? 'Disabled'
-        : !status?.connected ? `Waiting for ${PROVIDERS[status?.provider === 'streamlabs' ? 'streamlabs' : 'obs'].label}...`
+        : !status?.connected ? (status?.error || `Waiting for ${PROVIDERS[status?.provider === 'streamlabs' ? 'streamlabs' : 'obs'].label}...`)
             : status?.streaming ? `Connected — streaming${status?.service ? ` on ${status.service}` : ''}`
                 : 'Connected';
     const statusColor = !status?.enabled ? 'text-gray-500'

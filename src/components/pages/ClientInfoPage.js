@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
@@ -42,7 +42,66 @@ const WorkflowStep = ({ number, title, description, last = false }) => (
     </div>
 );
 
+const DownloadCard = ({ title, subtitle, detail, icon, accent, href, loading, recommended, note }) => (
+    <article className={`relative rounded-xl border-2 bg-white dark:bg-gray-800 p-6 text-center shadow-md transition-all hover:-translate-y-1 hover:shadow-xl ${recommended ? 'border-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
+        {recommended && (
+            <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">
+                Recommended for this device
+            </span>
+        )}
+        <div className={`w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center ${accent}`}>
+            <Icon path={icon} className="w-7 h-7" />
+        </div>
+        <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h3>
+        <p className="mt-1 font-semibold text-gray-700 dark:text-gray-200">{subtitle}</p>
+        <p className="mt-2 min-h-[2.5rem] text-sm text-gray-500 dark:text-gray-400">{detail}</p>
+        {href ? (
+            <a href={href} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-5 py-3 font-bold text-white transition-colors">
+                <Icon path={ICONS.download} className="w-5 h-5" />
+                Download
+            </a>
+        ) : (
+            <span className="mt-5 inline-flex w-full items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700 px-5 py-3 font-bold text-gray-500 dark:text-gray-300">
+                {loading ? 'Finding latest download…' : 'Download unavailable'}
+            </span>
+        )}
+        {note && <p className="mt-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300">{note}</p>}
+    </article>
+);
+
 const ClientInfoPage = () => {
+    const [downloads, setDownloads] = useState({ loading: true, version: null, windows: null, mac: null, linux: null });
+
+    useEffect(() => {
+        let cancelled = false;
+        fetch('https://api.github.com/repos/kutmandur/PlanetCreations/releases/latest', {
+            headers: { Accept: 'application/vnd.github+json' },
+        })
+            .then((response) => {
+                if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+                return response.json();
+            })
+            .then((release) => {
+                if (cancelled) return;
+                const assets = Array.isArray(release.assets) ? release.assets : [];
+                const findAsset = (predicate) => assets.find((asset) => predicate(asset.name))?.browser_download_url || null;
+                setDownloads({
+                    loading: false,
+                    version: release.tag_name || null,
+                    windows: findAsset((name) => /Setup-.*\.exe$/i.test(name)),
+                    mac: findAsset((name) => /\.dmg$/i.test(name)),
+                    linux: findAsset((name) => /\.AppImage$/i.test(name)),
+                });
+            })
+            .catch(() => {
+                if (!cancelled) setDownloads((current) => ({ ...current, loading: false }));
+            });
+        return () => { cancelled = true; };
+    }, []);
+
+    const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+    const recommendedPlatform = platform.includes('mac') ? 'mac' : platform.includes('win') ? 'windows' : platform.includes('linux') ? 'linux' : null;
+
     return (
         <main className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
             <section className="client-hero relative overflow-hidden bg-gray-900 text-white">
@@ -57,10 +116,10 @@ const ClientInfoPage = () => {
                     </div>
                     <h1 className="client-hero-enter client-hero-title text-4xl md:text-6xl font-extrabold tracking-tight">Your creations, <span className="client-gradient-text">managed locally.</span></h1>
                     <p className="client-hero-enter client-hero-copy max-w-3xl mx-auto mt-6 text-lg md:text-xl leading-relaxed text-gray-200">
-                        Find your game files, create secure backups, manage custom media and install shared creations directly from PlanetCreations.net.
+                        Find your game files, create secure backups, install shared creations and connect PlanetCreations to OBS or Streamlabs while you build live.
                     </p>
                     <div className="client-hero-enter client-hero-actions mt-9 flex flex-col sm:flex-row justify-center gap-3">
-                        <a href="https://github.com/kutmandur/PlanetCreations/releases/latest" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
+                        <a href="#client-downloads" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
                             <Icon path={ICONS.download} className="w-5 h-5" />
                             Download Latest Release
                         </a>
@@ -69,7 +128,7 @@ const ClientInfoPage = () => {
                             View Source Code
                         </a>
                     </div>
-                    <p className="mt-4 text-sm text-gray-400">Available for Windows 10 and Windows 11</p>
+                    <p className="mt-4 text-sm text-gray-400">Available for Windows, Apple Silicon Macs and Linux</p>
                     <div className="client-app-preview relative mt-12 max-w-3xl mx-auto rounded-xl border border-white/20 bg-gray-950/80 p-2 shadow-2xl backdrop-blur-md text-left" aria-hidden="true">
                         <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
                             <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
@@ -98,6 +157,55 @@ const ClientInfoPage = () => {
             </section>
 
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-14 md:py-20 space-y-20">
+                <section id="client-downloads" className="scroll-mt-8">
+                    <div className="text-center mb-10">
+                        <h2 className="text-3xl md:text-4xl font-bold">Download the right client</h2>
+                        <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
+                            Choose your operating system — each button opens the correct installer directly.
+                            {downloads.version && <span className="block mt-1 font-semibold">Latest release: {downloads.version}</span>}
+                        </p>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-6">
+                        <DownloadCard
+                            title="Windows"
+                            subtitle="Windows 10 & 11"
+                            detail="Standard setup installer (.exe) with automatic updates."
+                            icon={ICONS.desktop}
+                            accent="bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
+                            href={downloads.windows}
+                            loading={downloads.loading}
+                            recommended={recommendedPlatform === 'windows'}
+                        />
+                        <DownloadCard
+                            title="macOS"
+                            subtitle="Apple Silicon"
+                            detail="For Macs with an M1, M2, M3, M4 or newer Apple chip (.dmg)."
+                            icon={ICONS.desktop}
+                            accent="bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                            href={downloads.mac}
+                            loading={downloads.loading}
+                            recommended={recommendedPlatform === 'mac'}
+                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch. Intel Macs are not supported yet."
+                        />
+                        <DownloadCard
+                            title="Linux"
+                            subtitle="64-bit Linux"
+                            detail="Portable AppImage — download, make executable and launch."
+                            icon={ICONS.code}
+                            accent="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                            href={downloads.linux}
+                            loading={downloads.loading}
+                            recommended={recommendedPlatform === 'linux'}
+                        />
+                    </div>
+                    {!downloads.loading && !downloads.windows && !downloads.mac && !downloads.linux && (
+                        <p className="mt-5 text-center text-sm text-red-600 dark:text-red-400">
+                            GitHub could not provide the download list. Try the{' '}
+                            <a href="https://github.com/kutmandur/PlanetCreations/releases/latest" target="_blank" rel="noopener noreferrer" className="font-bold underline">release page</a>.
+                        </p>
+                    )}
+                </section>
+
                 <section>
                     <div className="text-center mb-10">
                         <h2 className="text-3xl md:text-4xl font-bold">Everything in one client</h2>
@@ -156,11 +264,64 @@ const ClientInfoPage = () => {
 
                 <section>
                     <div className="text-center mb-10">
+                        <div className="inline-flex items-center gap-2 rounded-full bg-red-100 dark:bg-red-900/40 px-4 py-2 text-sm font-bold text-red-700 dark:text-red-300 mb-4">
+                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                            Streaming & LIVE creations
+                        </div>
+                        <h2 className="text-3xl md:text-4xl font-bold">Build with your community watching</h2>
+                        <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+                            Connect your streaming software once. PlanetCreations can recognize when a stream starts, link it to the creation you are currently building and keep the website and overlay in sync.
+                        </p>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-6">
+                        <FeatureCard
+                            icon={ICONS.wifi}
+                            accent="purple"
+                            badge="OBS & Streamlabs"
+                            title="Streaming bridge"
+                            description="Connect OBS Studio through its WebSocket server or Streamlabs Desktop through its local and Remote Control APIs. The settings page guides you to every required port, IP address, password or API token."
+                        />
+                        <FeatureCard
+                            icon={ICONS.video}
+                            accent="rose"
+                            badge="LIVE"
+                            title="Creation live mode"
+                            description="When your stream starts, choose the creation you are working on. Its cards and detail page receive a visible LIVE badge, and the session ends automatically when your stream stops."
+                        />
+                        <FeatureCard
+                            icon={ICONS.share}
+                            accent="cyan"
+                            badge="Interactive"
+                            title="QR & website overlay"
+                            description="Show the selected creation as a QR code and open PlanetCreations in an overlay while streaming. Drag the logo to position it, hold it and use the scroll wheel to resize it, or force it visible for OBS and Streamlabs capture."
+                        />
+                    </div>
+                    <div className="mt-8 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 p-6">
+                        <h3 className="text-xl font-bold text-center text-gray-900 dark:text-gray-100">How the live workflow works</h3>
+                        <div className="mt-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-center">
+                            {[
+                                ['1', 'Connect', 'Select OBS or Streamlabs in Desktop & Streaming settings.'],
+                                ['2', 'Start streaming', 'The client detects the stream start automatically.'],
+                                ['3', 'Choose a creation', 'Link the stream and optionally show its QR code in the overlay.'],
+                                ['4', 'Stop normally', 'The LIVE badge and linked session end with the stream.'],
+                            ].map(([number, title, description]) => (
+                                <div key={number} className="rounded-lg bg-white dark:bg-gray-800 p-4 shadow-sm">
+                                    <span className="w-8 h-8 mx-auto rounded-full bg-red-600 text-white flex items-center justify-center font-bold">{number}</span>
+                                    <h4 className="mt-3 font-bold text-gray-900 dark:text-gray-100">{title}</h4>
+                                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{description}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <div className="text-center mb-10">
                         <h2 className="text-3xl font-bold">Designed for everyday use</h2>
                         <p className="mt-3 text-gray-600 dark:text-gray-300">Small conveniences that keep the client ready without getting in your way.</p>
                     </div>
                     <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <FeatureCard icon={ICONS.desktop} accent="cyan" badge="New" title="In-game Overlay" description="When Planet Coaster 2 is running, a movable PlanetCreations logo provides access to the full website without leaving the game. Hold and scroll to resize it." />
+                        <FeatureCard icon={ICONS.desktop} accent="cyan" badge="Updated" title="Game-aware Overlay" description="On Windows, the movable PlanetCreations logo appears automatically with Planet Coaster 2. On macOS and Linux it can be shown manually for streaming capture. Open the full website, drag to reposition, and hold while scrolling to resize." />
                         <FeatureCard icon={ICONS.cog} title="Start with Windows" description="Enable automatic startup in Settings so queued installs and background notifications are available after signing in to Windows." />
                         <FeatureCard icon={ICONS.bell} accent="purple" title="System Tray" description="Closing the window can keep the client running in the tray. Open it again or quit it completely from the tray menu." />
                         <FeatureCard icon={ICONS.refresh} accent="green" title="Automatic Updates" description="The client checks published releases and can download and install updates, keeping desktop features compatible with the website." />
@@ -193,10 +354,10 @@ const ClientInfoPage = () => {
                         <Icon path={ICONS.download} className="w-8 h-8" />
                     </div>
                     <h2 className="text-3xl font-bold">Ready to manage your creations?</h2>
-                    <p className="mt-3 mb-7 text-gray-600 dark:text-gray-300 max-w-xl mx-auto">Download the latest open-source PlanetCreations Client release from GitHub.</p>
-                    <a href="https://github.com/kutmandur/PlanetCreations/releases/latest" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors">
+                    <p className="mt-3 mb-7 text-gray-600 dark:text-gray-300 max-w-xl mx-auto">Jump to the downloads above and get the correct installer for your operating system.</p>
+                    <a href="#client-downloads" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors">
                         <Icon path={ICONS.download} className="w-5 h-5" />
-                        Download for Windows
+                        Choose your download
                     </a>
                 </section>
             </div>
