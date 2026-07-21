@@ -64,8 +64,8 @@ const CommunityCard = memo(({ community, selectable = false, selected = false, o
                     className="p-4 flex flex-col flex-grow"
                     style={{ backgroundColor: hexToRgba(themeColor) }}
                 >
-                    <h3 className="text-xl font-bold mb-2 truncate dark:text-gray-100" title={community.name}>{community.name}</h3>
-                    <p className="text-gray-600 dark:text-gray-300 flex-grow text-sm mb-4 h-10 overflow-hidden">
+                    <h3 className="text-xl font-bold mb-2 truncate text-center dark:text-gray-100" title={community.name}>{community.name}</h3>
+                    <p className="text-gray-600 dark:text-gray-300 flex-grow text-sm mb-4 h-10 overflow-hidden text-center">
                         {community.description}
                     </p>
                     <div className="flex justify-between items-center mt-auto pt-2 border-t" style={{ borderColor: 'rgba(0,0,0,0.1)' }}>

@@ -71,6 +71,7 @@ const SharingQrCode = ({
     name,
     fileLabel,
     heading = 'Share via QR Code',
+    headingClassName = '',
     previewClassName = 'max-w-[160px]',
     containerClassName = 'mt-4',
     copyLabel = 'Copy Link',
@@ -214,7 +215,7 @@ const SharingQrCode = ({
     if (status === 'error') {
         return (
             <div className={containerClassName}>
-                {heading && <p className="text-sm font-bold text-gray-600 mb-1">{heading}</p>}
+                {heading && <p className={`text-sm font-bold text-gray-600 mb-1 ${headingClassName}`}>{heading}</p>}
                 <p className="text-sm text-gray-500">The QR code could not be generated.</p>
                 {errorMsg && <p className="text-xs text-gray-400 mt-1 break-words">{errorMsg}</p>}
             </div>
@@ -223,7 +224,7 @@ const SharingQrCode = ({
 
     return (
         <div className={containerClassName}>
-            {heading && <p className="text-sm font-bold text-gray-600 mb-2">{heading}</p>}
+            {heading && <p className={`text-sm font-bold text-gray-600 mb-2 ${headingClassName}`}>{heading}</p>}
             <div className={`relative mx-auto ${previewClassName}`}>
                 {previewUrl && (
                     <img

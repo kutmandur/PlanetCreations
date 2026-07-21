@@ -98,9 +98,12 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
             </div>
 
             <div className="p-4 flex flex-col flex-grow">
-                <h3 className="text-xl font-bold mb-2 truncate" title={creation.title}>{creation.title}</h3>
+                <h3 className="text-xl font-bold mb-2 truncate text-center" title={creation.title}>{creation.title}</h3>
+                <p className="text-gray-600 dark:text-gray-400 flex-grow text-sm mb-2 h-10 overflow-hidden text-center">
+                    {creation.description}
+                </p>
                 {creation.creatorRanks?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-2">
+                    <div className="flex flex-wrap justify-center gap-1 mb-4">
                         {creation.creatorRanks.map(rank => (
                             <span key={rank.name} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ backgroundColor: rank.color || '#6B7280', color: getTextColorForBackground(rank.color || '#6B7280') }}>
                                 {rank.name}
@@ -108,9 +111,6 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                         ))}
                     </div>
                 )}
-                <p className="text-gray-600 dark:text-gray-400 flex-grow text-sm mb-4 h-10 overflow-hidden">
-                    {creation.description}
-                </p>
                 <div className="flex justify-between items-center mt-auto pt-2 border-t dark:border-gray-700">
                     <div className="flex space-x-3 text-sm">
                         <span className="flex items-center"><Icon path={ICONS.thumbUp} className="w-5 h-5 mr-1 text-green-500" solid/> {creation.likes || 0}</span>

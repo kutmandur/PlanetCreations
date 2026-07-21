@@ -27,6 +27,7 @@ import ReportModal from './components/ui/ReportModal';
 import StrikeModal from './components/ui/StrikeModal';
 import PopoverModal from './components/ui/PopoverModal';
 import RickRollModal from './components/modals/RickRollModal';
+import { GameOverlayWidget, GameOverlayChrome } from './components/ui/GameOverlay';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import CookieConsent from './components/modals/CookieConsent';
@@ -79,6 +80,8 @@ const queryClient = new QueryClient({
 const AppContent = () => {
     const location = useLocation();
     const navigate = useNavigate();
+    const isGameOverlay = Boolean(window.electronAPI?.isGameOverlay);
+    const [isOverlayExpanded, setIsOverlayExpanded] = useState(false);
     const isOfflineMode = location.pathname.startsWith('/client');
     const [user, setUser] = useState(null);
     const [userProfile, setUserProfile] = useState(null);
@@ -121,6 +124,16 @@ const AppContent = () => {
 
     const [updateInfo, setUpdateInfo] = useState(null);
     const [updateDownloaded, setUpdateDownloaded] = useState(false);
+
+    useEffect(() => {
+        if (!isGameOverlay) return undefined;
+        document.documentElement.classList.add('game-overlay-window');
+        const unsubscribe = window.electronAPI?.onOverlayModeChanged?.(setIsOverlayExpanded);
+        return () => {
+            document.documentElement.classList.remove('game-overlay-window');
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, [isGameOverlay]);
 
     useEffect(() => {
         if (isOfflineMode) {
@@ -189,7 +202,7 @@ const AppContent = () => {
                         const nextNotifications = snap.exists() ? (snap.data().items || []) : [];
                         const nextIds = new Set(nextNotifications.map(item => item?.id).filter(Boolean));
 
-                        if (notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
+                        if (!isGameOverlay && notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
                             nextNotifications
                                 .filter(item => item?.id && !item.isRead && !knownNotificationIdsRef.current.has(item.id))
                                 .slice(0, 5)
@@ -240,7 +253,7 @@ const AppContent = () => {
         preloadCriticalComponents();
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
-    }, []);
+    }, [isGameOverlay]);
 
     useEffect(() => {
         const unsubscribe = window.electronAPI?.onNavigateToRoute?.((route) => navigate(route));
@@ -248,7 +261,7 @@ const AppContent = () => {
     }, [navigate]);
 
     useEffect(() => {
-        if (!user || !window.electronAPI?.getClientIdentity || !window.electronAPI?.installQueuedCreation) return;
+        if (isGameOverlay || !user || !window.electronAPI?.getClientIdentity || !window.electronAPI?.installQueuedCreation) return;
         let cancelled = false;
         let queueUnsubscribe = () => {};
         const functions = getFunctions();
@@ -359,7 +372,7 @@ const AppContent = () => {
             }
             clientQueueProcessingRef.current = false;
         };
-    }, [user, setModalMessage]);
+    }, [user, setModalMessage, isGameOverlay]);
 
     // Installed PWA: ask for notification permission automatically on first open.
     // If dismissed, the user can re-enable from Settings or the install dialog.
@@ -404,13 +417,20 @@ const AppContent = () => {
     };
     
     if (loadingAuth) {
+        if (isGameOverlay) return <div className="h-screen w-screen bg-transparent" />;
         return <div className="h-screen flex justify-center items-center bg-gray-100"><Spinner /></div>;
+    }
+
+    if (isGameOverlay && !isOverlayExpanded) {
+        return <GameOverlayWidget unreadCount={notifications.filter(notification => !notification.isRead).length} />;
     }
 
     const showNewCreationButton = user && location.pathname === '/';
 
     return (
-        <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900">
+        <>
+        {isGameOverlay && <GameOverlayChrome />}
+        <div className={`h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900 ${isGameOverlay ? 'pt-10' : ''}`}>
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { if (isSafeHttpUrl(externalLink)) { window.open(externalLink, '_blank', 'noopener,noreferrer'); } setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
@@ -518,6 +538,7 @@ const AppContent = () => {
             )}
             <CookieConsent />
         </div>
+        </>
     );
 };
 

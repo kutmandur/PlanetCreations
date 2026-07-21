@@ -168,6 +168,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         communityId,
                         communityName: communitySnap.data().name,
                         communitySlug: communitySnap.data().slug,
+                        communityBannerImageUrl: communitySnap.data().bannerImageUrl,
                         communityProfileImageUrl: communitySnap.data().profileImageUrl,
                         roles: memberSnap.data().roles,
                         ranks: communitySnap.data().ranks
@@ -541,7 +542,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                 <div className="w-full lg:w-1/4">
                     <div className="sticky top-24 space-y-6">
                         <h3 className={`text-2xl font-bold ${color.text}`}>Community Memberships</h3>
-                        <div className="space-y-4">
+                        <div className="space-y-6">
                             {memberships.length > 0 ? (
                                 memberships.map(membership => (
                                     <CommunityMembershipCard key={membership.communityId} membership={membership} />

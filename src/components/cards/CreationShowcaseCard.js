@@ -26,7 +26,7 @@ const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMes
             <div className="flex justify-between items-start">
                 <button 
                     onClick={() => setPopoverView({ name: 'detail', id: creation.id })} 
-                    className="font-bold text-blue-600 hover:underline text-left text-lg"
+                    className="font-bold text-blue-600 hover:underline text-center text-lg w-full"
                 >
                     {creation.title}
                 </button>

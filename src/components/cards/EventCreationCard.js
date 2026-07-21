@@ -157,7 +157,7 @@ const EventCreationCard = ({
                 </div>
             </div>
             <div className="p-4 flex flex-col flex-grow">
-                <h3 className="text-xl font-bold mb-2 truncate" title={creation.title}>{creation.title}</h3>
+                <h3 className="text-xl font-bold mb-2 truncate text-center" title={creation.title}>{creation.title}</h3>
                 <div className="flex items-center text-gray-700 text-sm mb-2">
                     <Link to={`/profile/${creation.userId}`} className="hover:underline flex items-center" onClick={(e) => e.stopPropagation()}>
                         <img src={creation.userProfilePictureUrl || 'https://placehold.co/24x24/e2e8f0/64748b?text=P'} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-gray-300" />

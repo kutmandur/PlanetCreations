@@ -52,8 +52,8 @@ const ManagedCreationCard = ({ creation, onPinToggle, onUnlink, onClick, onMarkF
                     </div>
                 </div>
                 <div className="p-3 flex flex-col flex-grow">
-                    <h3 className="text-lg font-bold truncate" title={creation.title}>{creation.title}</h3>
-                    <p className="text-sm text-gray-500">by {creation.username}</p>
+                    <h3 className="text-lg font-bold truncate text-center" title={creation.title}>{creation.title}</h3>
+                    <p className="text-sm text-gray-500 text-center">by {creation.username}</p>
                 </div>
             </button>
 
