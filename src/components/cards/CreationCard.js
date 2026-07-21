@@ -61,7 +61,7 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     }, [onTagClick]);
 
     const CardContent = () => (
-        <article className="bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full">
+        <article className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full">
             <div className="relative h-48 overflow-hidden">
                 <img
                     src={imgSrc}
@@ -108,10 +108,10 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                         ))}
                     </div>
                 )}
-                <p className="text-gray-600 flex-grow text-sm mb-4 h-10 overflow-hidden">
+                <p className="text-gray-600 dark:text-gray-400 flex-grow text-sm mb-4 h-10 overflow-hidden">
                     {creation.description}
                 </p>
-                <div className="flex justify-between items-center mt-auto pt-2 border-t">
+                <div className="flex justify-between items-center mt-auto pt-2 border-t dark:border-gray-700">
                     <div className="flex space-x-3 text-sm">
                         <span className="flex items-center"><Icon path={ICONS.thumbUp} className="w-5 h-5 mr-1 text-green-500" solid/> {creation.likes || 0}</span>
                         <span className="flex items-center"><Icon path={ICONS.thumbDown} className="w-5 h-5 mr-1 text-red-500" solid/> {creation.dislikes || 0}</span>
@@ -121,7 +121,7 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                             <button
                                 key={tag}
                                 onClick={(e) => handleTagClick(e, tag)}
-                                className={`text-xs bg-gray-200 px-2 py-1 rounded-full ${onTagClick ? 'hover:bg-gray-300 transition-colors cursor-pointer' : 'cursor-default'}`}
+                                className={`text-xs bg-gray-200 dark:bg-gray-700 dark:text-gray-200 px-2 py-1 rounded-full ${onTagClick ? 'hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer' : 'cursor-default'}`}
                                 disabled={!onTagClick}
                             >
                                 {tag}

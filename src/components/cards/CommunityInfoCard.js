@@ -44,7 +44,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                     return (
                         <button 
                             onClick={() => handleCopyToClipboard(value)}
-                            className="w-full text-sm text-left text-gray-800 font-medium bg-gray-100 p-2 rounded hover:bg-gray-200 transition-colors flex items-center justify-between"
+                            className="w-full text-sm text-left text-gray-800 dark:text-gray-100 font-medium bg-gray-100 dark:bg-gray-700 p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex items-center justify-between"
                             title="Click to copy"
                         >
                            <span className="break-all">{value}</span>
@@ -52,7 +52,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                         </button>
                     );
                 }
-                return <p className="text-sm text-gray-800 font-medium bg-gray-100 p-2 rounded break-words">{value}</p>;
+                return <p className="text-sm text-gray-800 dark:text-gray-100 font-medium bg-gray-100 dark:bg-gray-700 p-2 rounded break-words">{value}</p>;
             case 'toggle':
                 const isActive = !!value;
                 const bgColor = isActive ? (field.toggleColors?.on || '#4ADE80') : (field.toggleColors?.off || '#D1D5DB');
@@ -60,7 +60,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                 const label = isActive ? (field.toggleLabels?.on || 'On') : (field.toggleLabels?.off || 'Off');
                 return <span className="text-sm font-semibold px-3 py-1 rounded-full" style={{ backgroundColor: bgColor, color: textColor }}>{label}</span>;
             case 'dropdown':
-                 return <p className="text-sm text-gray-800 font-medium">{value}</p>;
+                 return <p className="text-sm text-gray-800 dark:text-gray-100 font-medium">{value}</p>;
             case 'checklist':
                 return (
                     <ul className="space-y-1 text-left">
@@ -93,7 +93,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
     // Ränge des Creators, creation-spezifische Community-Infos.
     return (
         <div
-            className="bg-white rounded-lg shadow-md flex flex-col overflow-hidden ring-4"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-md flex flex-col overflow-hidden ring-4"
             style={{ '--tw-ring-color': themeColor }}
         >
             <div
@@ -107,15 +107,15 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                         className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-md mb-2"
                     />
                     <h4
-                        className="font-bold text-lg text-gray-800 hover:underline break-all"
+                        className="font-bold text-lg text-gray-800 dark:text-gray-100 hover:underline break-all"
                         style={nameStyle}
                         title={communityInfo.communityName}
                     >
                         {communityInfo.communityName}
                     </h4>
                 </Link>
-                <div className="mt-3 pt-3 border-t w-full">
-                    <p className="text-xs font-semibold text-gray-500 mb-2">Creator's Ranks</p>
+                <div className="mt-3 pt-3 border-t dark:border-gray-700 w-full">
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">Creator's Ranks</p>
                     <div className="flex flex-wrap gap-1 justify-center">
                         {communityInfo.creatorRanksInCommunity?.map(rank => (
                              <span
@@ -127,24 +127,24 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                             </span>
                         ))}
                          {(!communityInfo.creatorRanksInCommunity || communityInfo.creatorRanksInCommunity.length === 0) && (
-                            <span className="text-xs bg-gray-200 px-2 py-1 rounded-full">Member</span>
+                            <span className="text-xs bg-gray-200 dark:bg-gray-700 dark:text-gray-200 px-2 py-1 rounded-full">Member</span>
                         )}
                     </div>
                 </div>
             </div>
 
-            <div className="w-full p-4 flex flex-col items-center border-t">
+            <div className="w-full p-4 flex flex-col items-center border-t dark:border-gray-700">
                 <div className="space-y-3 w-full max-w-xs">
                     {communityInfo.customFieldsSchema?.map(field => (
                         <div key={field.id} className="text-center">
-                            <p className="text-sm font-bold text-gray-600">{field.label}</p>
+                            <p className="text-sm font-bold text-gray-600 dark:text-gray-300">{field.label}</p>
                             <div className="mt-1 flex justify-center">
                                {renderFieldValue(field, communityInfo.customData?.[field.id])}
                             </div>
                         </div>
                     ))}
                     {(!communityInfo.customFieldsSchema || communityInfo.customFieldsSchema.length === 0) && (
-                        <p className="text-sm text-gray-400 text-center">This community has no custom fields.</p>
+                        <p className="text-sm text-gray-400 dark:text-gray-500 text-center">This community has no custom fields.</p>
                     )}
                 </div>
             </div>

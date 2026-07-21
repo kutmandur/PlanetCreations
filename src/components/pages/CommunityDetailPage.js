@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, doc, getDocs, getDoc, updateDoc, orderBy, limit, startAfter } from 'firebase/firestore';
 import { joinCommunity, leaveCommunity, deleteCommunityAsAdmin } from '../../firebase/community';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import AddCreationsToCommunityModal from '../modals/AddCreationsToCommunityModal';
 import CommunityVideosTab from '../community/CommunityVideosTab';
+import { youtubeChannelFeedOptions } from '../../hooks/youtubeChannelFeed';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import MiniCreationCard from '../cards/MiniCreationCard';
@@ -24,6 +25,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
 
+    const queryClient = useQueryClient();
     const [community, setCommunity] = useState(null);
     const [members, setMembers] = useState([]);
     const [events, setEvents] = useState([]);
@@ -221,6 +223,16 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
     const visibleTabs = useMemo(() => hasVideos ? [...TABS, 'Videos'] : TABS, [hasVideos]);
 
+    // YouTube-Feed schon beim Laden der Community vorwärmen, damit die Videos beim
+    // Wechsel in den Videos-Tab sofort da sind (der Tab wird erst dann gemountet).
+    // prefetchQuery füllt nur den Cache und löst kein Re-Render dieser Seite aus.
+    const youtubeChannelUrl = community?.socialLinks?.youtube || null;
+    useEffect(() => {
+        if (youtubeChannelUrl) {
+            queryClient.prefetchQuery(youtubeChannelFeedOptions(youtubeChannelUrl));
+        }
+    }, [youtubeChannelUrl, queryClient]);
+
     useEffect(() => {
         if (!visibleTabs.includes(activeTab)) setActiveTab(TABS[0]);
     }, [visibleTabs, activeTab]);
@@ -252,7 +264,12 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
     const isSiteAdmin = userProfile?.role === 'admin';
     const currentUserMemberInfo = members.find(m => m.id === user?.uid);
-    const isCommunityOwner = currentUserMemberInfo?.roles?.includes('owner');
+    // Ownership über community.ownerId bestimmen — steht sofort mit dem Community-Doc
+    // bereit, während das members-Array erst später lädt. Sonst blitzt beim Laden
+    // der eigenen Community kurz der "Leave Community"-Button auf.
+    const isCommunityOwner = (community?.ownerId && user)
+        ? community.ownerId === user.uid
+        : currentUserMemberInfo?.roles?.includes('owner');
     const isCommunityModerator = currentUserMemberInfo?.roles?.includes('moderator');
     const showManageButton = isSiteAdmin || isCommunityModerator || isCommunityOwner;
 
@@ -372,8 +389,8 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     </div>
 
                     <div className="text-center order-1 md:order-2 flex-grow">
-                        <h1 className="text-4xl font-bold text-gray-800">{community.name}</h1>
-                        <p className="text-gray-600 mt-2 max-w-2xl mx-auto">{community.description}</p>
+                        <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-100">{community.name}</h1>
+                        <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">{community.description}</p>
                     </div>
                     
                     <div className="text-center order-3 md:order-3 md:text-right w-48 flex-shrink-0">
@@ -383,7 +400,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                     <button onClick={handleLeave} disabled={isProcessingJoin} className="bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors">
                                         {isProcessingJoin ? 'Leaving...' : 'Leave Community'}
                                     </button>
-                                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                                    <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 cursor-pointer">
                                         <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={eventNotifyOn} onChange={handleToggleEventNotify} />
                                         Notify me about events
                                     </label>
@@ -402,7 +419,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
             {pinnedCreations.length > 0 && (
                 <div className="mb-12">
-                    <h2 className="text-2xl font-bold mb-4 text-gray-800">Pinned Creations</h2>
+                    <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-100">Pinned Creations</h2>
                     <div className="flex overflow-x-auto space-x-4 pb-4">
                         {pinnedCreations.map(creation => (
                             <div key={creation.id} className="w-64 flex-shrink-0">
@@ -415,7 +432,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
             <div className="relative my-6">
                 <div className="flex justify-center items-center">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                    <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div
                             ref={gliderRef}
                             className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out"
@@ -425,7 +442,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                 key={tab}
                                 ref={el => tabRefs.current[index] = el}
                                 onClick={() => setActiveTab(tab)}
-                                className={`relative z-10 py-2 px-4 sm:px-8 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                                className={`relative z-10 py-2 px-4 sm:px-8 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}
                             >
                                 {tab}
                             </button>
@@ -465,36 +482,36 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     placeholder={`Search in ${activeTab}...`}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full max-w-lg p-3 bg-gray-200 rounded-full focus:outline-none focus:ring-2"
+                    className="w-full max-w-lg p-3 bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-full focus:outline-none focus:ring-2"
                     style={{'--tw-ring-color': themeColor}}
                 />
                 <div className="relative" ref={filterMenuRef}>
-                    <button onClick={() => setIsFilterVisible(!isFilterVisible)} className="p-3 bg-gray-200 rounded-full hover:bg-gray-300">
-                        <Icon path={ICONS.filter} className="w-6 h-6 text-gray-700" />
+                    <button onClick={() => setIsFilterVisible(!isFilterVisible)} className="p-3 bg-gray-200 dark:bg-gray-700 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600">
+                        <Icon path={ICONS.filter} className="w-6 h-6 text-gray-700 dark:text-gray-200" />
                     </button>
                     {isFilterVisible && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl z-20 border p-4">
+                        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl z-20 border dark:border-gray-700 p-4">
                             {activeTab === 'Creations' && (
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Status</label>
-                                        <select value={creationStatusFilter} onChange={(e) => setCreationStatusFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2">Status</label>
+                                        <select value={creationStatusFilter} onChange={(e) => setCreationStatusFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100">
                                             <option value="all">All</option>
                                             <option value="wip">Work in Progress</option>
                                             <option value="finished">Finished</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Platform</label>
-                                        <select value={creationPlatformFilter} onChange={(e) => setCreationPlatformFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2">Platform</label>
+                                        <select value={creationPlatformFilter} onChange={(e) => setCreationPlatformFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100">
                                             <option value="all">All</option>
                                             <option value="pc">PC</option>
                                             <option value="console">Console</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Creator Rank</label>
-                                        <select value={creationRankFilter} onChange={(e) => setCreationRankFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2">Creator Rank</label>
+                                        <select value={creationRankFilter} onChange={(e) => setCreationRankFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100">
                                             <option value="all">All Ranks</option>
                                             {community?.ranks?.map(rank => (
                                                 <option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>
@@ -502,7 +519,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">Tag</label>
+                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2">Tag</label>
                                         <input
                                             type="text"
                                             placeholder="e.g. Coaster"
@@ -513,8 +530,8 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                     </div>
                                     {availableDlcs.length > 0 && (
                                         <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-2">Required DLC</label>
-                                            <select value={creationDlcFilter} onChange={(e) => setCreationDlcFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2">Required DLC</label>
+                                            <select value={creationDlcFilter} onChange={(e) => setCreationDlcFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100">
                                                 <option value="all">All DLCs</option>
                                                 {availableDlcs.map(dlc => (
                                                     <option key={dlc} value={dlc}>{dlc}</option>
@@ -527,7 +544,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                              {activeTab === 'Members' && (
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-2">Filter by Rank</label>
-                                    <select value={memberRankFilter} onChange={(e) => setMemberRankFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white">
+                                    <select value={memberRankFilter} onChange={(e) => setMemberRankFilter(e.target.value)} className="w-full p-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100">
                                         <option value="all">All Ranks</option>
                                         {community?.ranks?.map(rank => (
                                             <option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>
@@ -554,11 +571,11 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             </div>
                             {loadingMoreEvents && <div className="text-center col-span-full p-8"><Spinner /></div>}
                             {!hasMoreEvents && events.length > 0 && (
-                                <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>
+                                <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>
                             )}
                         </>
                     ) : (
-                        <div className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">
+                        <div className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                             <h3 className="text-2xl font-bold">No Events Yet</h3>
                             <p className="mt-2">This community hasn't scheduled any events.</p>
                         </div>
@@ -572,7 +589,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     {filteredContent.map(item => <CreationCard key={item.id} creation={item} onTagClick={(tag) => setCreationTagFilter(tag)} />)}
                 </div>
                 {filteredContent.length === 0 && (
-                    <p className="text-center text-gray-500 mt-10 text-xl">No creations found.</p>
+                    <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No creations found.</p>
                 )}
               </>
             )}
@@ -583,7 +600,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     {filteredContent.map(item => <MemberCard key={item.id} member={item} community={community} />)}
                 </div>
                 {filteredContent.length === 0 && (
-                    <p className="text-center text-gray-500 mt-10 text-xl">No members found.</p>
+                    <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No members found.</p>
                 )}
               </>
             )}

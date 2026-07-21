@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import Spinner from '../ui/Spinner';
-import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
+import Icon from '../ui/Icon';
+import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 
@@ -27,6 +28,8 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
 
     // --- ALL STATE LIVES IN THE PARENT COMPONENT ---
     const [loading, setLoading] = useState(true);
+    const [activeCategory, setActiveCategory] = useState('details');
+    const [mobileOpen, setMobileOpen] = useState(false);
     const [communityName, setCommunityName] = useState('');
     const [game, setGame] = useState(getDefaultGameId());
     const [title, setTitle] = useState('');
@@ -211,14 +214,19 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
     }, [timezone, isEditing, originalEventDates, formatDateForInput]);
 
     useEffect(() => {
-        if (loading) return;
-        const activeTabIndex = TABS.findIndex(tab => tab.id === game);
-        const activeTabNode = tabRefs.current[activeTabIndex];
-        if (activeTabNode && gliderRef.current) {
-            gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
-            gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
-        }
-    }, [game, TABS, loading]);
+        if (loading || activeCategory !== 'details') return;
+        // Der Game-Selector wird erst gemountet, wenn die "Details"-Kategorie aktiv ist —
+        // kurz warten, damit die Tab-Refs gemessen werden können.
+        const t = setTimeout(() => {
+            const activeTabIndex = TABS.findIndex(tab => tab.id === game);
+            const activeTabNode = tabRefs.current[activeTabIndex];
+            if (activeTabNode && gliderRef.current) {
+                gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
+                gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
+            }
+        }, 50);
+        return () => clearTimeout(t);
+    }, [game, TABS, loading, activeCategory]);
 
     const handleEndTimeChange = (e, setTimePart) => setTimePart(e.target.value);
     const handleReminderChange = (index, part, value, isVoteReminder = false) => {
@@ -272,6 +280,23 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // Nur von der letzten Kategorie aus absenden (verhindert versehentliches
+        // Submit per Enter auf einer früheren Wizard-Seite).
+        if (activeCategory !== 'visibility') return;
+
+        // Pflichtfelder auf ihren Kategorie-Seiten prüfen (native required greift nicht
+        // über die nicht gemounteten Seiten hinweg).
+        if (!title.trim()) {
+            setModalMessage('Please enter an event title.');
+            goToCategory('details');
+            return;
+        }
+        if (!endDatePart) {
+            setModalMessage('Please set an end date for the event.');
+            goToCategory('schedule');
+            return;
+        }
 
         // Blacklist validation
         const textsToCheck = [
@@ -343,21 +368,45 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
         }
     };
 
-    if (loading) return <div className="h-screen flex justify-center items-center"><Spinner /></div>;
+    const CATEGORIES = [
+        { id: 'details', label: 'Details', icon: ICONS.pencil },
+        { id: 'media', label: 'Media', icon: ICONS.image },
+        { id: 'rules', label: 'Rules & Fields', icon: ICONS.checklist },
+        { id: 'submissions', label: 'Submissions & Voting', icon: ICONS.users },
+        { id: 'schedule', label: 'Schedule', icon: ICONS.clock },
+        { id: 'notifications', label: 'Notifications', icon: ICONS.bell },
+        { id: 'visibility', label: 'Visibility & Results', icon: ICONS.eye },
+    ];
+    const activeIndex = CATEGORIES.findIndex(c => c.id === activeCategory);
+    const isLast = activeIndex === CATEGORIES.length - 1;
+    const activeCategoryLabel = CATEGORIES[activeIndex]?.label || '';
 
-    return (
-        <div className="max-w-2xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg" style={color.style}>
-            <h1 className="text-3xl font-bold text-center">{isEditing ? 'Edit Event' : 'Create New Event'}</h1>
-            {communityName && (<div className="text-center mb-6 text-gray-500">for <span className="font-bold" style={{ color: color.text }}>{communityName}</span></div>)}
-            
-            <form onSubmit={handleSubmit} className="space-y-6">
-                <EventGameSelector game={game} setGame={setGame} TABS={TABS} tabRefs={tabRefs} gliderRef={gliderRef} color={color} />
-                <EventDetails title={title} setTitle={setTitle} bannerImageUrl={bannerImageUrl} setBannerImageUrl={setBannerImageUrl} description={description} setDescription={setDescription} />
-                <EventGalleries imageItems={imageItems} videoItems={videoItems} handleMediaPaste={handleMediaPaste} handleMediaDragEnd={handleMediaDragEnd} handleRemoveMedia={handleRemoveMedia} IMAGE_LIMIT={IMAGE_LIMIT} VIDEO_LIMIT={VIDEO_LIMIT} />
-                <RuleEditor rules={rules} setRules={setRules} />
-                <CustomFieldsEditor fields={customFields} setCustomFields={setCustomFields} />
-                
-                <EventSubmissionRules
+    const goToCategory = (id) => {
+        setActiveCategory(id);
+        setMobileOpen(true);
+        if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    const goNext = () => {
+        const next = CATEGORIES[activeIndex + 1];
+        if (next) goToCategory(next.id);
+    };
+
+    const renderCategory = () => {
+        switch (activeCategory) {
+            case 'details':
+                return (<>
+                    <EventGameSelector game={game} setGame={setGame} TABS={TABS} tabRefs={tabRefs} gliderRef={gliderRef} color={color} />
+                    <EventDetails title={title} setTitle={setTitle} bannerImageUrl={bannerImageUrl} setBannerImageUrl={setBannerImageUrl} description={description} setDescription={setDescription} />
+                </>);
+            case 'media':
+                return <EventGalleries imageItems={imageItems} videoItems={videoItems} handleMediaPaste={handleMediaPaste} handleMediaDragEnd={handleMediaDragEnd} handleRemoveMedia={handleRemoveMedia} IMAGE_LIMIT={IMAGE_LIMIT} VIDEO_LIMIT={VIDEO_LIMIT} />;
+            case 'rules':
+                return (<>
+                    <RuleEditor rules={rules} setRules={setRules} />
+                    <CustomFieldsEditor fields={customFields} setCustomFields={setCustomFields} />
+                </>);
+            case 'submissions':
+                return <EventSubmissionRules
                     allowMultipleSubmissions={allowMultipleSubmissions} setAllowMultipleSubmissions={setAllowMultipleSubmissions}
                     submissionLimit={submissionLimit} setSubmissionLimit={setSubmissionLimit}
                     blockOldCreations={blockOldCreations} setBlockOldCreations={setBlockOldCreations}
@@ -365,9 +414,9 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     voteType={voteType} setVoteType={setVoteType}
                     voteLimit={voteLimit} setVoteLimit={setVoteLimit}
                     votingEnabled={votingEnabled} setVotingEnabled={setVotingEnabled}
-                />
-                
-                <EventTimeSettings
+                />;
+            case 'schedule':
+                return <EventTimeSettings
                     startDate={startDate} setStartDate={setStartDate}
                     endDatePart={endDatePart} setEndDatePart={setEndDatePart}
                     endTimePart={endTimePart} setEndTimePart={setEndTimePart}
@@ -377,9 +426,9 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     voteEndTimePart={voteEndTimePart} setVoteEndTimePart={setVoteEndTimePart}
                     handleEndTimeChange={handleEndTimeChange}
                     timezone={timezone} setTimezone={setTimezone} timezones={timezones}
-                />
-                
-                <EventDiscordSettings
+                />;
+            case 'notifications':
+                return <EventDiscordSettings
                     discordChannels={discordChannels}
                     notificationMode={notificationMode}
                     setNotificationMode={setNotificationMode}
@@ -395,36 +444,120 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                     notificationTemplates={notificationTemplates}
                     setNotificationTemplates={setNotificationTemplates}
                     getMessageSuggestions={getMessageSuggestions}
-                />
+                />;
+            case 'visibility':
+                return (<>
+                    <EventVisibility status={status} setStatus={setStatus} />
+                    {!isEditing && (
+                        <div>
+                            <label className="block text-gray-700 font-bold mb-2">Results</label>
+                            <div className="flex items-center space-x-4 bg-gray-100 p-3 rounded-lg">
+                                <span className="text-gray-600 flex-grow">Publish results immediately when the event ends?</span>
+                                <div
+                                    className="relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 flex-shrink-0"
+                                    onClick={() => setPublishResultsImmediately(prev => !prev)}
+                                    style={{ backgroundColor: publishResultsImmediately ? '#34D399' : '#D1D5DB' }}
+                                >
+                                    <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${publishResultsImmediately ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1 px-1">
+                                Off: the event enters a managing phase after it ends — you review, order and publish the results yourself (with optional video groups).
+                            </p>
+                        </div>
+                    )}
+                </>);
+            default:
+                return null;
+        }
+    };
 
-                <EventVisibility status={status} setStatus={setStatus} />
+    if (loading) return <div className="h-screen flex justify-center items-center"><Spinner /></div>;
 
-                {!isEditing && (
-                    <div>
-                        <label className="block text-gray-700 font-bold mb-2">Results</label>
-                        <div className="flex items-center space-x-4 bg-gray-100 p-3 rounded-lg">
-                            <span className="text-gray-600 flex-grow">Publish results immediately when the event ends?</span>
-                            <div
-                                className="relative w-14 h-8 flex items-center rounded-full cursor-pointer p-1 transition-colors duration-300 flex-shrink-0"
-                                onClick={() => setPublishResultsImmediately(prev => !prev)}
-                                style={{ backgroundColor: publishResultsImmediately ? '#34D399' : '#D1D5DB' }}
-                            >
-                                <div className={`absolute bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${publishResultsImmediately ? 'translate-x-6' : 'translate-x-0'}`}></div>
+    return (
+        <div className="max-w-5xl mx-auto mt-10 px-4" style={color.style}>
+            <div className="text-center mb-6">
+                <h1 className="text-3xl font-bold">{isEditing ? 'Edit Event' : 'Create New Event'}</h1>
+                {communityName && (<div className="text-gray-500">for <span className="font-bold" style={{ color: color.hex }}>{communityName}</span></div>)}
+            </div>
+
+            <form onSubmit={handleSubmit}>
+                <div className="lg:flex lg:gap-6 lg:items-start">
+                    {/* Category list — sidebar on desktop, first screen on mobile */}
+                    <nav className={`${mobileOpen ? 'hidden' : 'block'} lg:block lg:w-64 lg:flex-shrink-0`}>
+                        <div className="bg-white rounded-2xl shadow-md p-2">
+                            {CATEGORIES.map((cat, i) => {
+                                const active = cat.id === activeCategory;
+                                return (
+                                    <button
+                                        key={cat.id}
+                                        type="button"
+                                        onClick={() => goToCategory(cat.id)}
+                                        style={active ? { backgroundColor: color.hex, color: '#fff' } : {}}
+                                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left mb-1 last:mb-0 transition-colors ${active ? '' : 'hover:bg-gray-100 text-gray-800'}`}
+                                    >
+                                        <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-xs font-bold ${active ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>
+                                            {i + 1}
+                                        </span>
+                                        <span className="flex-grow min-w-0 font-semibold text-sm truncate">{cat.label}</span>
+                                        <Icon path={ICONS.chevronRight} className={`w-4 h-4 flex-shrink-0 lg:hidden ${active ? 'text-white' : 'text-gray-300'}`} />
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </nav>
+
+                    {/* Detail pane — right column on desktop, drilled-in screen on mobile */}
+                    <section className={`${mobileOpen ? 'block' : 'hidden'} lg:block flex-1 min-w-0 mt-4 lg:mt-0`}>
+                        <button
+                            type="button"
+                            onClick={() => setMobileOpen(false)}
+                            className="lg:hidden flex items-center gap-1 font-semibold mb-3"
+                            style={{ color: color.hex }}
+                        >
+                            <Icon path={ICONS.chevronLeft} className="w-5 h-5" />
+                            All sections
+                        </button>
+
+                        <div className="bg-white rounded-2xl shadow-md p-6 sm:p-8 space-y-6">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-2xl font-bold text-gray-800">{activeCategoryLabel}</h2>
+                                <span className="text-sm text-gray-400">{activeIndex + 1} / {CATEGORIES.length}</span>
+                            </div>
+
+                            {renderCategory()}
+
+                            <div className="flex justify-between items-center gap-4 pt-6 border-t">
+                                <button
+                                    type="button"
+                                    onClick={() => navigate(-1)}
+                                    className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2.5 px-5 rounded-xl"
+                                >
+                                    Cancel
+                                </button>
+                                {isLast ? (
+                                    <button
+                                        type="submit"
+                                        disabled={loading}
+                                        style={{ backgroundColor: color.hex }}
+                                        className="text-white font-bold py-2.5 px-6 rounded-xl disabled:opacity-50 hover:brightness-95"
+                                    >
+                                        {loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Create Event')}
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={goNext}
+                                        style={{ backgroundColor: color.hex }}
+                                        className="text-white font-bold py-2.5 px-6 rounded-xl hover:brightness-95 flex items-center gap-2"
+                                    >
+                                        Next
+                                        <Icon path={ICONS.chevronRight} className="w-5 h-5" />
+                                    </button>
+                                )}
                             </div>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1 px-1">
-                            Off: the event enters a managing phase after it ends — you review, order and publish the results yourself (with optional video groups).
-                        </p>
-                    </div>
-                )}
-
-                <div className="flex space-x-4 pt-4">
-                    <button type="submit" disabled={loading} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50">
-                        {loading ? 'Saving...' : (isEditing ? 'Save Changes' : 'Create Event')}
-                    </button>
-                    <button type="button" onClick={() => navigate(-1)} className="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg">
-                        Cancel
-                    </button>
+                    </section>
                 </div>
             </form>
         </div>

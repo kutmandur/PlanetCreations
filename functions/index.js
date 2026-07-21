@@ -1168,6 +1168,30 @@ exports.onMemberLeave = functions.firestore
         return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(-1) });
     });
 
+// Keep the denormalized profile membership in sync with the authoritative member
+// document. This lets read-heavy UI paths load ranks together with memberships
+// without one additional member-document read per community.
+exports.syncCommunityMembershipRoles = functions.firestore
+    .document('communitys/{communityId}/members/{userId}')
+    .onWrite(async (change, context) => {
+        const { communityId, userId } = context.params;
+        const membershipRef = db.doc(`profiles/${userId}/communityMemberships/${communityId}`);
+
+        if (!change.after.exists) {
+            await membershipRef.delete().catch(error => {
+                if (error.code !== 5 && error.code !== 'not-found') throw error;
+            });
+            return null;
+        }
+
+        const afterData = change.after.data() || {};
+        const roles = Array.isArray(afterData.roles)
+            ? afterData.roles
+            : (typeof afterData.role === 'string' ? [afterData.role] : []);
+        await membershipRef.set({ roles }, { merge: true });
+        return null;
+    });
+
 exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWrite(async (change, context) => {
     const afterData = change.after.data();
     const beforeData = change.before.data();

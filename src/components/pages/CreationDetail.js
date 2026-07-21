@@ -439,9 +439,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back
                 </button>
                 <div className="flex items-center space-x-2">
-                    <button onClick={handleShare} title="Share Creation" className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors"><Icon path={ICONS.share} className="w-6 h-6" /></button>
-                    {user && (<button onClick={handleFollowCreation} disabled={isTogglingCreationFollow} title={isFollowingCreation ? "Following this creation — you'll be notified of updates" : "Follow this creation to get notified of updates"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:opacity-50 ${isFollowingCreation ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.bell} className="w-6 h-6" solid={isFollowingCreation} /></button>)}
-                    {user && user.uid !== creation.userId && (<button onClick={handleFollow} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.userAdd} className="w-6 h-6" solid={isFollowing} /></button>)}
+                    <button onClick={handleShare} title="Share Creation" className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"><Icon path={ICONS.share} className="w-6 h-6" /></button>
+                    {user && (<button onClick={handleFollowCreation} disabled={isTogglingCreationFollow} title={isFollowingCreation ? "Following this creation — you'll be notified of updates" : "Follow this creation to get notified of updates"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:opacity-50 ${isFollowingCreation ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.bell} className="w-6 h-6" solid={isFollowingCreation} /></button>)}
+                    {user && user.uid !== creation.userId && (<button onClick={handleFollow} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.userAdd} className="w-6 h-6" solid={isFollowing} /></button>)}
                     {canEdit && (<Link to={`/creation/${id}/edit`} className="flex items-center justify-center w-10 h-10 bg-yellow-500 hover:bg-yellow-600 text-white rounded-full transition-colors"><Icon path={ICONS.edit} className="w-5 h-5" solid/></Link>)}
                     {canDelete && (<button onClick={handleDelete} className="flex items-center justify-center w-10 h-10 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"><Icon path={ICONS.trash} className="w-5 h-5" solid/></button>)}
                 </div>
@@ -450,7 +450,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             
             <div className="flex flex-col lg:flex-row gap-8">
                 <div className="w-full lg:w-2/3">
-                    <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                         <div className="bg-black flex justify-center items-center aspect-video relative group">
                             {activeMedia && isYoutube(activeMedia) ? (
                                 <iframe src={getYoutubeEmbedUrl(activeMedia)} title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
@@ -463,7 +463,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             </>)}
                         </div>
                         {mediaItems.length > 1 && (
-                            <div className="flex p-2 bg-gray-100 overflow-x-auto">
+                            <div className="flex p-2 bg-gray-100 dark:bg-gray-700 overflow-x-auto">
                                 {mediaItems.map((item, index) => (
                                     <button key={index} onClick={() => setActiveMediaIndex(index)} className={`w-24 h-16 flex-shrink-0 mx-1 rounded-md overflow-hidden border-2 ${activeMediaIndex === index ? color.border : 'border-transparent'}`}>
                                         {isYoutube(item) ? (<img src={getYoutubeThumbnail(item)} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />) : (<img src={item} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />)}
@@ -473,13 +473,13 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         )}
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
                         <h3 className="text-2xl font-bold mb-4">Description</h3>
-                        <p className="text-gray-800 whitespace-pre-wrap">{creation.description}</p>
+                        <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{creation.description}</p>
                     </div>
 
                     {showcaseVideos.length > 0 && (
-                        <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
                             <h3 className="text-2xl font-bold mb-4">Showcase</h3>
                             <div className="flex overflow-x-auto space-x-4 pb-2">
                                 {showcaseVideos.map((video, index) => (
@@ -498,13 +498,13 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     )}
 
                     {sortedChangelog.length > 0 && (
-                        <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
                             <h3 className="text-2xl font-bold mb-4">Changelog</h3>
                             <div className="h-48 overflow-y-auto pr-2 space-y-4">
                                 {sortedChangelog.map((entry, index) => (
                                     <div key={index} className="pb-4 border-b last:border-b-0">
-                                        <p className="font-semibold text-gray-800">{entry.text}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{formatDate(entry.timestamp)}</p>
+                                        <p className="font-semibold text-gray-800 dark:text-gray-100">{entry.text}</p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{formatDate(entry.timestamp)}</p>
                                     </div>
                                 ))}
                             </div>
@@ -512,15 +512,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     )}
 
                     {eventDetails && eventSubmissions && (
-                        <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
                             <h3 className="text-2xl font-bold mb-4">
                                 Event Specific Information for <Link to={`/event/${eventDetails.id}`} className="text-blue-500 hover:underline">{eventDetails.title}</Link>
                             </h3>
                             <div className="space-y-4">
                                 {eventDetails.customFields?.map(field => (
                                     <div key={field.id}>
-                                        <p className="font-semibold text-gray-700">{field.label}</p>
-                                        <p className="text-gray-600 pl-2 border-l-2 ml-2">{eventSubmissions[field.id] || "No answer provided."}</p>
+                                        <p className="font-semibold text-gray-700 dark:text-gray-200">{field.label}</p>
+                                        <p className="text-gray-600 dark:text-gray-300 pl-2 border-l-2 dark:border-gray-600 ml-2">{eventSubmissions[field.id] || "No answer provided."}</p>
                                     </div>
                                 ))}
                                 {(!eventDetails.customFields || eventDetails.customFields.length === 0) && (
@@ -532,7 +532,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 </div>
 
                 <div className="w-full lg:w-1/3 space-y-8">
-                    <div className="bg-white rounded-lg shadow-md p-6">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
                         <Link to={`/profile/${creation.userId}`} className="flex items-center mb-4 cursor-pointer">
                             {creatorProfile ? (
                                 <>
@@ -552,7 +552,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </>
                             )}
                         </Link>
-                        <div className="mt-6 pt-6 border-t text-sm text-gray-600 space-y-4">
+                        <div className="mt-6 pt-6 border-t dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 space-y-4">
                             <div className="flex items-center justify-between"><span className="font-bold">Status:</span><span className={`px-2 py-1 rounded-full font-semibold text-xs ${creation.status === 'finished' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>{creation.status === 'finished' ? 'Finished' : 'Work in Progress'}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Rating:</span><div className="flex items-center space-x-4"><button onClick={() => handleVote('like')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}><Icon path={ICONS.thumbUp} className="w-5 h-5" solid={userVote === 'like'}/><span className="font-bold">{creation.likes || 0}</span></button><button onClick={() => handleVote('dislike')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}><Icon path={ICONS.thumbDown} className="w-5 h-5" solid={userVote === 'dislike'}/><span className="font-bold">{creation.dislikes || 0}</span></button></div></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Views:</span><span className="flex items-center space-x-1"><Icon path={ICONS.eye} className="w-5 h-5 text-gray-400"/><span className="font-bold">{creation.views || 0}</span></span></div>
@@ -564,19 +564,19 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         <div className="mt-6 pt-6 border-t space-y-4">
                             {creation.shareCode && (
                                 <div>
-                                    <p className="text-sm font-bold text-gray-600 mb-1">Share Code</p>
-                                    <button onClick={handleCopyShareCode} className="w-full font-mono bg-gray-100 p-2 rounded text-center hover:bg-gray-200 transition-colors">{creation.shareCode}</button>
+                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">Share Code</p>
+                                    <button onClick={handleCopyShareCode} className="w-full font-mono bg-gray-100 dark:bg-gray-700 dark:text-gray-100 p-2 rounded text-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">{creation.shareCode}</button>
                                 </div>
                             )}
 
                             {canDirectInstall && (
                                 <div>
-                                    <p className="text-sm font-bold text-gray-600 mb-1">Direct Install</p>
+                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">Direct Install</p>
                                     {!isElectron && compatibleClients.length > 1 && (
                                         <select
                                             value={selectedClientId}
                                             onChange={(event) => setSelectedClientId(event.target.value)}
-                                            className="w-full mb-2 p-2 border rounded-lg bg-white text-gray-800"
+                                            className="w-full mb-2 p-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100"
                                             aria-label="Direct install target"
                                         >
                                             {compatibleClients.map(([clientId, client]) => (
@@ -595,10 +595,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         
                         {creation.customMediaLink && (<div className="mt-4"><p className="text-sm font-bold text-gray-600 mb-1">Custom Media</p><button onClick={() => setExternalLink(creation.customMediaLink)} className={`${color.text} hover:underline break-all text-left`}>Download Link</button></div>)}
                         <CreationSharingQrCode creationId={id} creationName={creation.title} />
-                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 text-gray-800 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 transition-colors cursor-pointer">{tag}</button>))}</div></div>
+                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer">{tag}</button>))}</div></div>
                     </div>
                     {loadingCommunities ? (
-                        <div className="bg-white rounded-lg shadow-md p-6 animate-pulse">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 animate-pulse">
                             <div className="h-6 bg-gray-200 rounded w-1/2 mb-4"></div>
                             <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
                             <div className="h-4 bg-gray-200 rounded w-1/2"></div>

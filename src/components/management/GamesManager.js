@@ -12,7 +12,7 @@ import Spinner from '../ui/Spinner';
 
 const EMPTY_FORM = {
     id: '', name: '', shortName: '', color: '#3B82F6',
-    console: false, modsSupported: false, extensions: '', enabled: true,
+    shareCodeLabel: 'Share Code', console: false, modsSupported: false, extensions: '', enabled: true,
 };
 
 const GamesManager = ({ setModalMessage }) => {
@@ -66,6 +66,7 @@ const GamesManager = ({ setModalMessage }) => {
         setEditingId(g.id);
         setForm({
             id: g.id, name: g.name, shortName: g.shortName || '', color: g.color || '#6B7280',
+            shareCodeLabel: g.shareCodeLabel || 'Share Code',
             console: !!g.platforms?.includes('console'), modsSupported: !!g.modsSupported,
             extensions: (g.fileExtensions || []).join(', '), enabled: g.enabled !== false,
         });
@@ -90,6 +91,7 @@ const GamesManager = ({ setModalMessage }) => {
             id: editingId || id,
             name: form.name.trim(),
             shortName: form.shortName.trim() || form.name.trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase(),
+            shareCodeLabel: form.shareCodeLabel.trim() || 'Share Code',
             color: form.color,
             platforms: form.console ? ['pc', 'console'] : ['pc'],
             modsSupported: form.modsSupported,
@@ -250,6 +252,11 @@ const GamesManager = ({ setModalMessage }) => {
                                     <input type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-24 p-2 border rounded-lg font-mono" />
                                 </div>
                             </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Sharecode field name</label>
+                            <input type="text" value={form.shareCodeLabel} onChange={(e) => setForm({ ...form, shareCodeLabel: e.target.value })} placeholder="Steam Sharecode" className="w-full p-2 border rounded-lg" />
+                            <p className="text-xs text-gray-500 mt-1">Shown when users create or edit a creation for this game.</p>
                         </div>
                         <div className="flex gap-6">
                             <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={form.console} onChange={(e) => setForm({ ...form, console: e.target.checked })} className="h-4 w-4 rounded" /> Console platform</label>

@@ -4,6 +4,28 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Restore the user's chosen view mode (mobile vs. forced desktop) before React
+      // loads, so there is no layout flash. Toggled via the footer "Desktop view" button.
+      (function () {
+        try {
+          if (localStorage.getItem('pcViewMode') === 'desktop') {
+            var m = document.querySelector('meta[name="viewport"]');
+            if (m) m.setAttribute('content', 'width=1280');
+          }
+        } catch (e) {}
+      })();
+      // Apply the dark/light theme before React mounts (no flash). 'pcTheme' is
+      // 'dark'/'light' for an explicit choice, or unset to follow the OS setting.
+      (function () {
+        try {
+          var t = localStorage.getItem('pcTheme');
+          var dark = t === 'dark' || (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
     <meta name="theme-color" content="#000000" />
     <meta
       name="description"

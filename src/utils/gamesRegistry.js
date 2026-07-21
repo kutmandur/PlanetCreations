@@ -15,9 +15,9 @@ const STORAGE_KEY = 'pcn_games_v1';
 // Notnagel = der Stand vor Einführung der Registry (heutige Semantik:
 // PC1/PZ mit Console + Mods, PC2 PC-only ohne Mods).
 export const FALLBACK_GAMES = [
-    { id: 'planet-coaster', name: 'Planet Coaster', shortName: 'PC1', color: '#3B82F6', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: [], enabled: true, order: 0 },
-    { id: 'planet-coaster-2', name: 'Planet Coaster 2', shortName: 'PC2', color: '#1E40AF', platforms: ['pc'], modsSupported: false, fileExtensions: ['.park2', '.blpr2', '.prkauto2'], enabled: true, order: 1 },
-    { id: 'planet-zoo', name: 'Planet Zoo', shortName: 'PZ', color: '#22C55E', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: ['.zoo', '.pzblueprint', '.zooauto'], enabled: true, order: 2 },
+    { id: 'planet-coaster', name: 'Planet Coaster', shortName: 'PC1', shareCodeLabel: 'Steam Sharecode', color: '#3B82F6', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: [], enabled: true, order: 0 },
+    { id: 'planet-coaster-2', name: 'Planet Coaster 2', shortName: 'PC2', shareCodeLabel: 'Frontier Workshop Sharecode', color: '#1E40AF', platforms: ['pc'], modsSupported: false, fileExtensions: ['.park2', '.blpr2', '.prkauto2'], enabled: true, order: 1 },
+    { id: 'planet-zoo', name: 'Planet Zoo', shortName: 'PZ', shareCodeLabel: 'Steam Sharecode', color: '#22C55E', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: ['.zoo', '.pzblueprint', '.zooauto'], enabled: true, order: 2 },
 ];
 export const FALLBACK_DEFAULT_GAME_ID = 'planet-coaster-2';
 
@@ -103,6 +103,14 @@ export function getDefaultGameId() {
 /** Anzeigename; für unbekannte ids Slug → Titel ("planet-zoo-2" → "planet zoo 2"). */
 export function getGameDisplayName(id) {
     return getGame(id)?.name || String(id || '').replace(/-/g, ' ');
+}
+
+export function getShareCodeLabel(id) {
+    const configured = getGame(id)?.shareCodeLabel?.trim();
+    if (configured) return configured;
+    if (id === 'planet-coaster-2') return 'Frontier Workshop Sharecode';
+    if (id === 'planet-coaster' || id === 'planet-zoo') return 'Steam Sharecode';
+    return 'Share Code';
 }
 
 /**

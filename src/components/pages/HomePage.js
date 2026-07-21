@@ -740,14 +740,14 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     return (
         <div className="container mx-auto p-4" style={color.style}>
             <div className="flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner">
+                <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner">
                     <div ref={gliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
                     {TABS.map((tab, index) => (
                         <button
                             key={tab.id}
                             ref={el => tabRefs.current[index] = el}
                             onClick={() => handleTabClick(tab.id)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeTab === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium ${activeTab === tab.id ? 'text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}
                         >
                             {tab.name}
                         </button>
@@ -757,14 +757,14 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
             <div className={`transition-opacity duration-300 ${isPending ? 'opacity-50' : 'opacity-100'}`}>
                 <div className="flex justify-center mb-6">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                        <div ref={categoryGliderRef} className="absolute h-full rounded-full bg-white transition-all duration-500 ease-in-out shadow" />
+                    <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
+                        <div ref={categoryGliderRef} className="absolute h-full rounded-full bg-white dark:bg-gray-500 transition-all duration-500 ease-in-out shadow" />
                         {categories.map((cat, index) => (
                             <button
                                 key={cat}
                                 ref={el => categoryTabRefs.current[index] = el}
                                 onClick={() => handleCategoryClick(cat)}
-                                className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium text-sm whitespace-nowrap ${homeState.activeCategory === cat ? color.text : 'text-gray-500 hover:text-gray-800'}`}
+                                className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium text-sm whitespace-nowrap ${homeState.activeCategory === cat ? `${color.text} dark:text-white` : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100'}`}
                             >
                                 {cat}
                             </button>
@@ -775,14 +775,14 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                 <div className="flex flex-col md:flex-row justify-center items-center mb-6 gap-4">
                     <div className="flex w-full md:w-auto flex-grow max-w-xl items-center gap-2">
                         <div className="relative flex-grow">
-                            <input type="text" placeholder="Search for creations or users" value={homeState.searchTerm} onChange={handleSearchChange} className={`w-full p-3 pl-10 pr-10 bg-gray-200 rounded-full focus:outline-none focus:ring-2 ${color.ring}`} />
+                            <input type="text" placeholder="Search for creations or users" value={homeState.searchTerm} onChange={handleSearchChange} className={`w-full p-3 pl-10 pr-10 bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-full focus:outline-none focus:ring-2 ${color.ring}`} />
                             <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             {homeState.searchTerm && (<button onClick={handleClearSearch} className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50 transition-colors" aria-label="Clear search"><span className={`text-2xl font-bold ${color.text} pb-1`}>×</span></button>)}
                         </div>
                         <div className="relative" ref={filterMenuRef}>
-                            <button onClick={handleFilterToggle} className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? `${color.bg} text-white` : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}><Icon path={ICONS.filter} className="w-6 h-6" /></button>
+                            <button onClick={handleFilterToggle} className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? `${color.bg} text-white` : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.filter} className="w-6 h-6" /></button>
                             {isFilterVisible && (
-                                <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl p-4 z-20">
+                                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 z-20">
                                     <h4 className="font-bold mb-2">Sort & Filter</h4>
                                     <label className="block text-sm font-medium text-gray-700">Sort by</label>
                                     <select value={homeState.sortBy} onChange={handleSortChange} className={`mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 ${color.ring} focus:border-blue-500`}><option value="recommended">Recommended</option><option value="createdAt">Newest First</option><option value="likes">Most Popular</option><option value="createdAt_asc">Oldest First</option><option value="likes_asc">Least Popular</option></select>
@@ -809,9 +809,9 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                             )}
                         </div>
                         <div className="relative" ref={dlcMenuRef}>
-                            <button onClick={handleDlcFilterToggle} className="bg-gray-200 p-3 rounded-full hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 font-semibold">DLC</button>
+                            <button onClick={handleDlcFilterToggle} className="bg-gray-200 dark:bg-gray-700 dark:text-gray-100 p-3 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 font-semibold">DLC</button>
                             {isDlcFilterVisible && (
-                                <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl p-4 z-20">
+                                <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 z-20">
                                     <h4 className="font-bold mb-3 border-b pb-2">Filter by DLC</h4>
                                     <div className="space-y-2 max-h-64 overflow-y-auto">
                                         <label className="flex items-center text-gray-800 font-semibold"><input type="radio" name="dlcFilter" checked={dlcFilterMode === 'all'} onChange={handleSelectAll} className="h-4 w-4 text-blue-600 focus:ring-blue-500"/><span className="ml-2">Show All (Default)</span></label>
@@ -836,17 +836,17 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                         {(isSearching || (shouldUseIndexSearch && indexLoading)) && (<div className="mb-8 text-center"><Spinner /></div>)}
                         {!isSearching && userSearchResults.length > 0 && (
                             <div className="mb-8">
-                                <h2 className="text-2xl font-bold mb-4 text-gray-800">Users Found</h2>
+                                <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-100">Users Found</h2>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">{userSearchResults.map(userResult => (<UserSearchResultCard key={userResult.id} user={userResult} />))}</div>
                             </div>
                         )}
                         <div className="mb-8">
-                            {(homeState.searchTerm.trim() || (homeState.filterTags?.length > 0)) && <h2 className="text-2xl font-bold mb-4 text-gray-800">Creations Found</h2>}
+                            {(homeState.searchTerm.trim() || (homeState.filterTags?.length > 0)) && <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-100">Creations Found</h2>}
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">{filteredCreations.map(creation => (<CreationCard key={creation.id} creation={creation} onTagClick={handleAddTag}/>))}</div>
                             {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
-                            {shouldUseIndexSearch && !indexHasMore && indexSearchResults.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!loading && !(shouldUseIndexSearch && indexLoading) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 mt-10 text-xl">No creations found. Try a different search!</p>)}
+                            {shouldUseIndexSearch && !indexHasMore && indexSearchResults.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {!loading && !(shouldUseIndexSearch && indexLoading) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No creations found. Try a different search!</p>)}
                         </div>
                     </>
                 )}

@@ -360,14 +360,14 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     return (
         <div className="container mx-auto p-4 mt-8" style={color.style}>
             <div className="max-w-4xl mx-auto">
-                <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md mb-8 relative">
+                <div className="bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-md mb-8 relative">
                     <div className="absolute top-4 right-4 flex items-center space-x-2">
                         {user && user.uid === userId && (
-                            <button onClick={() => navigate('/profile/edit')} className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2 px-4 rounded-lg text-sm">
+                            <button onClick={() => navigate('/profile/edit')} className="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-2 px-4 rounded-lg text-sm">
                                 Edit Profile
                             </button>
                         )}
-                        <button onClick={handleShare} title="Share Profile" className="p-2 rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-800">
+                        <button onClick={handleShare} title="Share Profile" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-100">
                             <Icon path={ICONS.share} className="w-6 h-6" />
                         </button>
                     </div>
@@ -381,7 +381,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         />
                         <h2 className={`text-3xl font-bold ${color.text}`}>{profile?.username || 'User Profile'}</h2>
                         {profile?.country && <p className="text-gray-500 mt-1">{profile.country}</p>}
-                        {profile?.favoriteGame && <p className="text-sm bg-gray-200 text-gray-800 px-2 py-1 rounded-full inline-block mt-2">{profile.favoriteGame.replace(/-/g, ' ')}</p>}
+                        {profile?.favoriteGame && <p className="text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-2 py-1 rounded-full inline-block mt-2">{profile.favoriteGame.replace(/-/g, ' ')}</p>}
 
                         <div className="flex items-center justify-center gap-6 mt-3 text-sm">
                             <span><span className="font-bold">{followerCount}</span> <span className="text-gray-500">Followers</span></span>
@@ -390,7 +390,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
                         <div className="flex items-center justify-center mt-6 space-x-2">
                             {user && user.uid !== userId && (
-                                <button onClick={handleFollow} disabled={isFollowingBusy} className={`font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 ${isFollowing ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'text-white'}`} style={isFollowing ? {} : { backgroundColor: themeHex }}>
+                                <button onClick={handleFollow} disabled={isFollowingBusy} className={`font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 ${isFollowing ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600' : 'text-white'}`} style={isFollowing ? {} : { backgroundColor: themeHex }}>
                                     {isFollowing ? 'Following' : 'Follow'}
                                 </button>
                             )}
@@ -417,7 +417,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         title={social.title}
-                                        className="w-9 h-9 rounded-full bg-gray-200 text-gray-600 hover:text-white flex items-center justify-center transition-colors"
+                                        className="w-9 h-9 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:text-white flex items-center justify-center transition-colors"
                                         style={{ '--hover-bg': themeHex }}
                                         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = themeHex; }}
                                         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
@@ -427,7 +427,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                 ))}
                             </div>
                         )}
-                        {profile?.bio && <p className="text-gray-700 whitespace-pre-wrap">{profile.bio}</p>}
+                        {profile?.bio && <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{profile.bio}</p>}
                     </div>
                 </div>
             </div>
@@ -435,7 +435,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             <div className="flex flex-col lg:flex-row gap-8" style={{ '--theme-color': themeHex }}>
                 <div className="w-full lg:w-3/4">
                     <div className="flex justify-center my-6">
-                        <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                        <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                             {['Creations', 'Showcases'].map(section => (
                                 <button
                                     key={section}
@@ -451,10 +451,10 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                     {activeSection === 'Creations' && (
                         <>
                             <div className="flex justify-center mb-6">
-                                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                                <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                                     <div className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} style={gliderStyle} />
                                     {TABS_WITH_ALL.map((tab, index) => (
-                                        <button key={tab.id} ref={el => tabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>
+                                        <button key={tab.id} ref={el => tabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ selectedGame === tab.id ? 'text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}>
                                             {tab.name}
                                         </button>
                                     ))}
@@ -496,13 +496,13 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         loadingShowcases || showcases === null ? (
                             <div className="py-16"><Spinner /></div>
                         ) : showcases.length === 0 ? (
-                            <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">
+                            <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                                 This creator hasn't been featured in any showcases yet.
                             </p>
                         ) : (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                                 {showcases.map(showcase => (
-                                    <div key={showcase.key} className="bg-white rounded-lg shadow-lg overflow-hidden">
+                                    <div key={showcase.key} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                         <a href={showcase.url} target="_blank" rel="noopener noreferrer" className="relative block h-44 overflow-hidden group">
                                             <img
                                                 src={getYoutubeThumbnailUrl(showcase.url) || 'https://placehold.co/480x270/333333/ffffff?text=Video'}
@@ -547,7 +547,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                     <CommunityMembershipCard key={membership.communityId} membership={membership} />
                                 ))
                             ) : (
-                                <p className="text-gray-500 bg-white p-4 rounded-lg shadow-md">This user is not a member of any communities.</p>
+                                <p className="text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">This user is not a member of any communities.</p>
                             )}
                         </div>
                     </div>

@@ -201,6 +201,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         profileImageUrl,
         themeColor,
         ownerId: auth.currentUser.uid,
+        ownerUsername: userProfile?.username || '',
         ranks: allRanks,
         defaultRankName,
         allowedGames,
