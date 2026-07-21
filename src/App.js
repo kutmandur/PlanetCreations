@@ -393,6 +393,19 @@ const AppContent = () => {
                     }
                     lastRemoteOverlayQrRef.current = serialized;
 
+                    // Ein Stream kann auf einem anderen Gerät oder durch den
+                    // serverseitigen Sweep beendet werden. In diesem Fall muss
+                    // auch ein lokal/goLive gesetzter QR auf diesem Client zum
+                    // Logo zurückwechseln. Der Zeitvergleich verhindert, dass
+                    // ein alter Clear-Befehl einen später neu aktivierten QR löscht.
+                    const clearCommand = data.overlayQrClear || null;
+                    const clearAt = clearCommand?.setAt?.toMillis?.() || 0;
+                    const currentQr = readOverlayQr();
+                    if (currentQr?.creationId && clearAt >= (currentQr.enabledAt || 0) &&
+                        (clearCommand.creationIds || []).includes(currentQr.creationId)) {
+                        setOverlayQr(null);
+                    }
+
                     if ((data.items || []).length > 0) processQueue();
                 }, (error) => console.error('Could not listen for direct install commands:', error));
             } catch (error) {
@@ -431,7 +444,7 @@ const AppContent = () => {
             const session = readLiveSession();
             if (!session) return;
             setLiveSession(null);
-            if (readOverlayQr()?.source === 'goLive') setOverlayQr(null);
+            if (readOverlayQr()?.creationId === session.creationId) setOverlayQr(null);
             try {
                 await httpsCallable(getFunctions(), 'endLive')({ creationId: session.creationId });
             } catch (error) {

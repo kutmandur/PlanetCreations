@@ -1471,10 +1471,12 @@ exports.endLive = functions.https.onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const requestedId = data?.creationId ? requireCreationId(data.creationId) : null;
     const userRef = db.doc(`users/${uid}`);
+    let endedCreationIds = [];
     await db.runTransaction(async (tx) => {
         const userSnap = await tx.get(userRef);
         const pointerId = userSnap.data()?.liveCreationId || null;
         const targetIds = [...new Set([pointerId, requestedId].filter(Boolean))];
+        endedCreationIds = targetIds;
         const clearRefs = [];
         for (const targetId of targetIds) {
             const ref = db.doc(`creations/${targetId}`);
@@ -1484,6 +1486,26 @@ exports.endLive = functions.https.onCall(async (data, context) => {
         for (const ref of clearRefs) tx.update(ref, {liveStream: admin.firestore.FieldValue.delete()});
         if (pointerId) tx.set(userRef, {liveCreationId: admin.firestore.FieldValue.delete()}, {merge: true});
     });
+
+    // Benachrichtigt auch Desktop-Clients, auf denen der QR remote oder manuell
+    // aktiviert wurde. Der Queue-Listener existiert ohnehin für Direct Installs,
+    // daher entstehen auf den Clients keine zusätzlichen Listener/Reads.
+    if (endedCreationIds.length > 0) {
+        const clientQueuesSnap = await db.collection(`clientInstallQueues/${uid}/clients`).get();
+        if (!clientQueuesSnap.empty) {
+            const batch = db.batch();
+            const clearCommand = {
+                creationIds: endedCreationIds,
+                setAt: admin.firestore.Timestamp.now(),
+            };
+            clientQueuesSnap.docs.forEach((clientDoc) => batch.set(clientDoc.ref, {
+                overlayQr: admin.firestore.FieldValue.delete(),
+                overlayQrClear: clearCommand,
+                updatedAt: admin.firestore.Timestamp.now(),
+            }, {merge: true}));
+            await batch.commit();
+        }
+    }
     return {success: true};
 });
 

@@ -225,7 +225,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
                 const videoCount = creationData.videoUrls?.length || 0;
                 const imageCount = creationData.imageUrls?.length || 0;
-                const initialIndex = imageCount > 0 ? videoCount : 0;
+                const hasActiveLiveStream = isLiveStreamActive(creationData.liveStream) && creationData.liveStream?.url;
+                // Galerie-Reihenfolge: Videos → Live → Bilder. Normal startet
+                // sie beim ersten Bild, während LIVE gezielt beim Stream startet.
+                const initialIndex = hasActiveLiveStream ? videoCount : (imageCount > 0 ? videoCount : 0);
                 if (isMounted) setActiveMediaIndex(initialIndex);
 
             } else {
@@ -408,7 +411,18 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const canEdit = isOwner;
     const canDelete = isOwner || (userProfile && ['admin', 'moderator'].includes(userProfile.role));
     const color = getGameColor(creation.game);
-    const mediaItems = [...(creation.videoUrls || []), ...(creation.imageUrls || [])];
+    const liveStream = creation.liveStream;
+    const liveIsActive = isLiveStreamActive(liveStream);
+    const liveMedia = liveIsActive && liveStream?.url ? {
+        type: 'live',
+        url: liveStream.url,
+        platform: liveStream.platform,
+    } : null;
+    const mediaItems = [
+        ...(creation.videoUrls || []).map((url) => ({ type: 'video', url })),
+        ...(liveMedia ? [liveMedia] : []),
+        ...(creation.imageUrls || []).map((url) => ({ type: 'image', url })),
+    ];
     const activeMedia = mediaItems[activeMediaIndex];
     const sortedChangelog = creation.changelog ? [...creation.changelog].sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)) : [];
     const displayUsername = creatorProfile?.username || creation.username;
@@ -417,6 +431,28 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     const isYoutube = (url) => url && (url.includes('youtube.com') || url.includes('youtu.be'));
     const getYoutubeEmbedUrl = (url) => getYoutubeEmbed(url);
+    const isMobilePlayback = typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+    const getLiveEmbedUrl = (stream) => {
+        if (!stream?.url) return null;
+        const autoplay = isMobilePlayback ? '0' : '1';
+        const muted = isMobilePlayback ? 'false' : 'true';
+        if (stream.platform === 'youtube') {
+            const baseUrl = getYoutubeEmbed(stream.url);
+            if (!baseUrl) return null;
+            return `${baseUrl}?autoplay=${autoplay}&mute=${isMobilePlayback ? '0' : '1'}&playsinline=1&origin=${encodeURIComponent(window.location.origin)}`;
+        }
+        if (stream.platform === 'twitch') {
+            try {
+                const channel = new URL(stream.url).pathname.split('/').filter(Boolean)[0];
+                if (!channel) return null;
+                const parent = window.location.hostname || 'planetcreations.net';
+                return `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}&autoplay=${autoplay}&muted=${muted}`;
+            } catch (error) {
+                return null;
+            }
+        }
+        return null;
+    };
 
     const showcaseVideos = [];
     if (creation.assignedVideoUrl) {
@@ -480,8 +516,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     };
 
     // --- Streamer Tools (Owner) + Live-Anzeige (alle Besucher) ---
-    const liveStream = creation.liveStream;
-    const liveIsActive = isLiveStreamActive(liveStream);
     const livePlatformLabel = LIVE_PLATFORMS[liveStream?.platform]?.label || 'stream';
     const qrActiveForThis = overlayQrEntry?.creationId === id;
     const obsConnected = Boolean(obsStatus?.connected);
@@ -538,7 +572,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     const endLive = httpsCallable(functions, 'endLive');
                     await endLive({ creationId: id });
                     if (readLiveSession()?.creationId === id) setLiveSession(null);
-                    if (readOverlayQr()?.creationId === id && readOverlayQr()?.source === 'goLive') setOverlayQr(null);
+                    if (readOverlayQr()?.creationId === id) setOverlayQr(null);
                 } catch (error) {
                     setModalMessage(`Could not end the live session: ${error.message}`);
                 } finally {
@@ -589,10 +623,12 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 <div className="w-full lg:w-2/3">
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                         <div className="bg-black flex justify-center items-center aspect-video relative group">
-                            {activeMedia && isYoutube(activeMedia) ? (
-                                <iframe src={getYoutubeEmbedUrl(activeMedia)} title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
+                            {activeMedia?.type === 'live' && getLiveEmbedUrl(activeMedia) ? (
+                                <iframe src={getLiveEmbedUrl(activeMedia)} title={`${livePlatformLabel} live stream`} frameBorder="0" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className="w-full h-full"></iframe>
+                            ) : activeMedia && isYoutube(activeMedia.url) ? (
+                                <iframe src={getYoutubeEmbedUrl(activeMedia.url)} title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
                             ) : (
-                                <img src={activeMedia} alt="Creation preview" className="max-h-[60vh] object-contain" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/800x450/333333/ffffff?text=Not+found'; }}/>
+                                <img src={activeMedia?.url} alt="Creation preview" className="max-h-[60vh] object-contain" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/800x450/333333/ffffff?text=Not+found'; }}/>
                             )}
                             {mediaItems.length > 1 && (<>
                                 <button onClick={prevMedia} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronLeft} /></button>
@@ -602,8 +638,13 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         {mediaItems.length > 1 && (
                             <div className="flex p-2 bg-gray-100 dark:bg-gray-700 overflow-x-auto">
                                 {mediaItems.map((item, index) => (
-                                    <button key={index} onClick={() => setActiveMediaIndex(index)} className={`w-24 h-16 flex-shrink-0 mx-1 rounded-md overflow-hidden border-2 ${activeMediaIndex === index ? color.border : 'border-transparent'}`}>
-                                        {isYoutube(item) ? (<img src={getYoutubeThumbnail(item)} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />) : (<img src={item} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />)}
+                                    <button key={`${item.type}-${item.url}-${index}`} onClick={() => setActiveMediaIndex(index)} className={`w-24 h-16 flex-shrink-0 mx-1 rounded-md overflow-hidden border-2 ${activeMediaIndex === index ? color.border : 'border-transparent'}`}>
+                                        {item.type === 'live' ? (
+                                            <span className={`w-full h-full flex flex-col items-center justify-center gap-1 text-white ${item.platform === 'twitch' ? 'bg-purple-700' : 'bg-red-600'}`}>
+                                                <Icon path={item.platform === 'twitch' ? ICONS.twitch : ICONS.youtube} className="w-5 h-5" solid />
+                                                <span className="text-xs font-extrabold tracking-wide">LIVE</span>
+                                            </span>
+                                        ) : isYoutube(item.url) ? (<img src={getYoutubeThumbnail(item.url)} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />) : (<img src={item.url} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />)}
                                     </button>
                                 ))}
                             </div>
