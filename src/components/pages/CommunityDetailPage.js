@@ -14,6 +14,7 @@ import MiniCreationCard from '../cards/MiniCreationCard';
 import MemberCard from '../cards/MemberCard';
 import EventCard from '../cards/EventCard';
 import { ICONS, SOCIAL_PLATFORMS, isEventHidden } from '../../utils/helpers';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import Icon from '../ui/Icon';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 
@@ -375,6 +376,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                         try {
                                             await deleteCommunityAsAdmin(community.id);
                                             setModalMessage("Community deleted successfully.");
+                                            scheduleDataRefresh();
                                             navigate('/communitys');
                                         } catch (error) {
                                             setModalMessage(`Error deleting community: ${error.message}`);

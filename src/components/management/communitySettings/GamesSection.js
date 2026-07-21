@@ -5,6 +5,7 @@ import { getGameColor } from '../../../utils/helpers';
 import { getEnabledGameIds } from '../../../utils/gamesRegistry';
 import useGames from '../../../hooks/useGames';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
 // Which games can be submitted, and which one is the default on the community page.
 const GamesSection = ({ community, setModalMessage }) => {
@@ -34,6 +35,7 @@ const GamesSection = ({ community, setModalMessage }) => {
     try {
       await updateDoc(doc(db, 'communitys', community.id), { allowedGames, mainGame });
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);

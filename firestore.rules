@@ -85,7 +85,11 @@ service cloud.firestore {
              // Activity-Score wird nur serverseitig gepflegt (onCreationActivityScore,
              // Admin SDK umgeht Rules) — Clients dürfen ihn nicht manipulieren.
              data.get('activityScore', 0) == existing.get('activityScore', 0) &&
-             data.get('activityAt', null) == existing.get('activityAt', null);
+             data.get('activityAt', null) == existing.get('activityAt', null) &&
+             // Live-Status ebenfalls nur serverseitig (goLive/endLive/Sweep
+             // verifizieren über die Twitch-/YouTube-API) — sonst könnte ein
+             // modifizierter Client sich Live-Badge und Feed-Boost erschleichen.
+             data.get('liveStream', null) == existing.get('liveStream', null);
     }
 
     // Validiert Profile-Daten

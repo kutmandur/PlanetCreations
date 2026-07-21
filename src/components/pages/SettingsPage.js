@@ -10,6 +10,7 @@ import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
 import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
 import NotificationSettings from '../ui/NotificationSettings';
 import PersonalizationSettings from '../ui/PersonalizationSettings';
+import StreamingSettings from '../ui/StreamingSettings';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);
@@ -455,6 +456,8 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                     </label>
                 </div>
             )}
+
+            <StreamingSettings setModalMessage={setModalMessage} />
 
             {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
 

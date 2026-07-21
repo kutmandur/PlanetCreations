@@ -5,6 +5,7 @@ import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, query, where,
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { getGameColor, containsBlacklistedWord, ICONS } from '../../utils/helpers';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 
@@ -355,10 +356,12 @@ const EventForm = ({ user, setModalMessage, blacklist = [] }) => {
                 const eventRef = doc(db, 'events', eventId);
                 await setDoc(eventRef, { ...eventData, createdAt: (await getDoc(eventRef)).data()?.createdAt || serverTimestamp() }, { merge: true });
                 setModalMessage("Event updated successfully!");
+                scheduleDataRefresh();
                 navigate(`/event/${eventId}`);
             } else {
                 const newEventRef = await addDoc(collection(db, 'events'), { ...eventData, createdAt: serverTimestamp() });
                 setModalMessage("Event created successfully!");
+                scheduleDataRefresh();
                 navigate(`/event/${newEventRef.id}`);
             }
         } catch (error) {

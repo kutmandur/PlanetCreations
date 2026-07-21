@@ -8,6 +8,7 @@ import PreloadLink from './PreloadLink';
 import ViewModeToggle from './ViewModeToggle';
 import ThemeToggle from './ThemeToggle';
 import { preloadRoute } from '../../utils/preload';
+import { hardReloadApp } from '../../utils/appRefresh';
 
 import logo from '../../assets/logo.png'; 
 
@@ -144,6 +145,15 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                                                 className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                             >
                                                 Report a Bug
+                                            </button>
+                                        )}
+                                        {isElectron && (
+                                            <button
+                                                onClick={hardReloadApp}
+                                                className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                                title="Reload the app to fetch the latest data"
+                                            >
+                                                Reload App
                                             </button>
                                         )}
                                         <ViewModeToggle onSelect={() => setIsProfileMenuOpen(false)} />

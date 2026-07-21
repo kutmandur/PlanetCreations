@@ -1,4 +1,4 @@
-name: Build & Release Windows App
+name: Build & Release Desktop App
 
 on:
   push:
@@ -7,8 +7,15 @@ on:
 
 jobs:
   release:
-    runs-on: windows-latest
-    
+    strategy:
+      # Ein fehlgeschlagener Plattform-Build soll die anderen nicht abbrechen
+      # (z. B. macOS-Probleme dürfen das Windows-Release nicht blockieren).
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
     permissions:
       contents: write
 
@@ -25,10 +32,18 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # electron-builder baut je Runner sein natives Target (NSIS/DMG/AppImage)
+      # und lädt alle Artefakte in dasselbe GitHub-Draft-Release hoch.
+      # macOS wird unsigniert gebaut (identity: null in package.json) — Erststart
+      # per Rechtsklick > Öffnen; Auto-Update ist auf dem Mac ohne Signierung
+      # nicht möglich (Updates manuell von der Release-Seite laden).
       - name: Build and release Electron app
         run: npm run package
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # Unsignierte Mac-Builds: electron-builder soll nicht nach
+          # Zertifikaten suchen oder Notarisierung versuchen.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           REACT_APP_API_BASE_URL: ${{ secrets.REACT_APP_API_BASE_URL }}
           REACT_APP_FIREBASE_API_KEY: ${{ secrets.REACT_APP_FIREBASE_API_KEY }}
           REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}

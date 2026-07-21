@@ -6,6 +6,7 @@ import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed, isEventHidden } from '../../utils/helpers';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 import EventSharingQrCode from '../ui/EventSharingQrCode';
@@ -280,6 +281,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     const deleteEventAsStaff = httpsCallable(functions, 'deleteEventAsStaff');
                     await deleteEventAsStaff({ eventId: eventId });
                     setModalMessage("Event has been successfully deleted.");
+                    scheduleDataRefresh();
                     navigate(`/community/${community?.slug || event.communityId}`);
                 } catch (error) {
                     setModalMessage(`Error deleting event: ${error.message}`);

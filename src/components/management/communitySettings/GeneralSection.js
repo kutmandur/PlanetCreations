@@ -4,6 +4,7 @@ import { doc, updateDoc, collection, getDocs, writeBatch } from 'firebase/firest
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { containsBlacklistedWord } from '../../../utils/helpers';
 import { SectionCard, Field, SaveBar, inputClass, slugify } from './ui';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
 // General identity: name (admin-only, password-gated) and description.
 const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, setPasswordConfirm }) => {
@@ -27,6 +28,7 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
       if (!community.slug) data.slug = slugify(community.name);
       await updateDoc(ref, data);
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);
@@ -64,6 +66,7 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
 
           await batch.commit();
           setModalMessage('Community updated successfully!');
+          scheduleDataRefresh();
           setDirty(false);
         } catch (error) {
           setModalMessage(`Error saving changes: ${error.message}`);

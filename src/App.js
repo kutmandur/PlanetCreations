@@ -32,6 +32,10 @@ import { GameOverlayWidget, GameOverlayChrome } from './components/ui/GameOverla
 import ErrorBoundary from './components/ErrorBoundary';
 import CookieConsent from './components/modals/CookieConsent';
 import BugReportModal from './components/modals/BugReportModal';
+import GoLiveModal from './components/modals/GoLiveModal';
+import { readLiveSession, setLiveSession } from './utils/liveStream';
+import { readOverlayQr, setOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
+import { registerQueryClient } from './utils/appRefresh';
 import PersonalizationConsentModal from './components/modals/PersonalizationConsentModal';
 import useInterestSync from './hooks/useInterestSync';
 import { loadGamesRegistry, getDefaultGameId, getGame } from './utils/gamesRegistry';
@@ -77,6 +81,9 @@ const queryClient = new QueryClient({
     },
 });
 
+// Ermöglicht scheduleDataRefresh() aus beliebigen Save-Handlern ohne Hook/Props.
+registerQueryClient(queryClient);
+
 const AppContent = () => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -120,6 +127,8 @@ const AppContent = () => {
     const notificationInboxInitializedRef = useRef(false);
     const clientQueueProcessingRef = useRef(false);
     const clientQueueRetryTimerRef = useRef(null);
+    const lastRemoteOverlayQrRef = useRef(null);
+    const [goLivePrompt, setGoLivePrompt] = useState(null);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
     const [updateInfo, setUpdateInfo] = useState(null);
@@ -359,7 +368,32 @@ const AppContent = () => {
 
                 const queueRef = doc(db, 'clientInstallQueues', user.uid, 'clients', identity.clientId);
                 queueUnsubscribe = onSnapshot(queueRef, (snapshot) => {
-                    if ((snapshot.data()?.items || []).length > 0) processQueue();
+                    const data = snapshot.data() || {};
+
+                    // Remote-Overlay-QR (setClientOverlayQr): das Feld auf dem
+                    // Queue-Doc ist das Zustellmedium — 0 Extra-Reads, weil dieser
+                    // Listener sowieso läuft. Angewendet wird nur bei Änderung,
+                    // damit lokale Toggles nicht von jedem Queue-Update
+                    // überschrieben werden; Feld-Abwesenheit räumt ausschließlich
+                    // remote gesetzte QRs ab (manuell/goLive bleiben unberührt).
+                    const remoteQr = data.overlayQr || null;
+                    const serialized = remoteQr ? JSON.stringify({ c: remoteQr.creationId, t: remoteQr.title || '' }) : null;
+                    if (remoteQr?.creationId) {
+                        if (serialized !== lastRemoteOverlayQrRef.current) {
+                            setOverlayQr({
+                                creationId: remoteQr.creationId,
+                                title: remoteQr.title || '',
+                                url: buildCreationShareUrl(remoteQr.creationId),
+                                source: 'remote',
+                                enabledAt: Date.now(),
+                            });
+                        }
+                    } else if (readOverlayQr()?.source === 'remote') {
+                        setOverlayQr(null);
+                    }
+                    lastRemoteOverlayQrRef.current = serialized;
+
+                    if ((data.items || []).length > 0) processQueue();
                 }, (error) => console.error('Could not listen for direct install commands:', error));
             } catch (error) {
                 console.error('Could not register this desktop client:', error);
@@ -382,6 +416,34 @@ const AppContent = () => {
             clientQueueProcessingRef.current = false;
         };
     }, [user, setModalMessage, isGameOverlay]);
+
+    // OBS-Integration (Desktop-Client ab 1.0.23): Stream-Start öffnet das
+    // Go-Live-Popup, Stream-Ende beendet die Live-Session server-seitig.
+    // Ohne Bridge (alter Client / Browser) ist dieser Effekt ein No-op.
+    useEffect(() => {
+        if (isGameOverlay || !user || !window.electronAPI?.onObsStreamStarted) return undefined;
+        const unsubStart = window.electronAPI.onObsStreamStarted((payload) => {
+            if (readLiveSession()) return; // bereits mit einer Creation live
+            setGoLivePrompt({ service: payload?.service || null });
+        });
+        const unsubStop = window.electronAPI.onObsStreamStopped?.(async () => {
+            setGoLivePrompt(null);
+            const session = readLiveSession();
+            if (!session) return;
+            setLiveSession(null);
+            if (readOverlayQr()?.source === 'goLive') setOverlayQr(null);
+            try {
+                await httpsCallable(getFunctions(), 'endLive')({ creationId: session.creationId });
+            } catch (error) {
+                // Netz: der Server-Sweep beendet verwaiste Sessions von selbst.
+                console.warn('Could not end the live session automatically:', error);
+            }
+        });
+        return () => {
+            if (typeof unsubStart === 'function') unsubStart();
+            if (typeof unsubStop === 'function') unsubStop();
+        };
+    }, [isGameOverlay, user]);
 
     // Installed PWA: ask for notification permission automatically on first open.
     // If dismissed, the user can re-enable from Settings or the install dialog.
@@ -452,6 +514,17 @@ const AppContent = () => {
                 </Suspense>
             </PopoverModal>}
             {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
+            {goLivePrompt && user && (
+                <GoLiveModal
+                    user={user}
+                    userProfile={userProfile}
+                    isElectron={Boolean(window.electronAPI?.isElectron)}
+                    obsService={goLivePrompt.service}
+                    initialCreation={null}
+                    onClose={() => setGoLivePrompt(null)}
+                    setModalMessage={setModalMessage}
+                />
+            )}
             
             {updateDownloaded ? (
                 <div className="bg-green-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { db } from '../../../firebase/config';
 import { doc, updateDoc, collection, query, where, getDocs, documentId } from 'firebase/firestore';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
 // Dropdown of the community's synced Discord text channels, with an "off" option.
 const ChannelSelect = ({ channels, value, onChange }) => (
@@ -42,6 +43,7 @@ const DiscordSection = ({ community, setModalMessage }) => {
       }
       await updateDoc(doc(db, 'communitys', community.id), { discordServerId: id });
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setServerDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);
@@ -64,6 +66,7 @@ const DiscordSection = ({ community, setModalMessage }) => {
         discordShowcaseChannelId: showcaseChannelId || null,
       });
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setChannelsDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);

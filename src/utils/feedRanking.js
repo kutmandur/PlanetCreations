@@ -8,9 +8,15 @@
 // wörtlich, was sie versprechen: 30 % "New" ⇒ ~30 % der Karten sind echte
 // Recency-Picks. Trockene Pools geben ihren Anteil an die übrigen ab.
 
+import { isLiveStreamActive } from './liveStream';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_MS = 30 * DAY_MS;
 const YEAR_MS = 365 * DAY_MS;
+
+// Sortier-Bonus für Creations, an denen der Creator gerade live baut:
+// hebt sie innerhalb jedes Pools an (Komponenten-Scores sind 0..1).
+export const LIVE_POOL_BOOST = 0.2;
 
 // Seeded-Ziehung aus den besten N verbleibenden Einträgen eines Pools —
 // so rotiert auch innerhalb eines Pools pro Würfelung die Auswahl.
@@ -156,10 +162,11 @@ export function rankCreations(creations, ctx = {}) {
         return { c, parts };
     });
 
-    // Pools: absteigend nach Komponenten-Score (+ kleiner "finished"-Nudge in
-    // der Sortierung), Zugehörigkeit erst ab MIN_POOL_SCORE echtem Signal.
-    // Discovery enthält alles — der Fallback-Pool der rotierenden Long-Tail-Picks.
-    const nudge = (s) => (s.c.status === 'finished' ? 0.05 : 0);
+    // Pools: absteigend nach Komponenten-Score (+ kleiner "finished"-Nudge und
+    // Live-Boost in der Sortierung), Zugehörigkeit erst ab MIN_POOL_SCORE echtem
+    // Signal. Discovery enthält alles — der Fallback-Pool der Long-Tail-Picks.
+    const nudge = (s) => (s.c.status === 'finished' ? 0.05 : 0)
+        + (isLiveStreamActive(s.c.liveStream, now) ? LIVE_POOL_BOOST : 0);
     const pools = {};
     for (const key of WEIGHT_KEYS) {
         pools[key] = scored

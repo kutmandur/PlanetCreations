@@ -4,6 +4,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { SOCIAL_PLATFORMS } from '../../../utils/helpers';
 import Icon from '../../ui/Icon';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
+import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
 // Clickable social icons shown on the community banner.
 const SocialSection = ({ community, setModalMessage }) => {
@@ -32,6 +33,7 @@ const SocialSection = ({ community, setModalMessage }) => {
     try {
       await updateDoc(doc(db, 'communitys', community.id), { socialLinks: cleanedLinks });
       setModalMessage('Changes saved successfully!');
+      scheduleDataRefresh();
       setDirty(false);
     } catch (error) {
       setModalMessage(`Error saving changes: ${error.message}`);

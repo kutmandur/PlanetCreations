@@ -66,6 +66,58 @@ const fitName = (ctx, text, maxWidth, maxHeight, maxFont = 88, minFont = 24) => 
     return { lines, fontSize: minFont, lineHeight };
 };
 
+// Komponiert das volle Sharing-Bild (Template + QR + Name) auf ein Canvas und
+// gibt es zurück. Von der Komponente unten UND vom Spiel-Overlay genutzt
+// (GameOverlayWidget zeigt dasselbe assemblierte Bild statt eines nackten QR).
+export const composeSharingQrCanvas = async (url, name) => {
+    if (document.fonts?.ready) { try { await document.fonts.ready; } catch (e) { /* ignore */ } }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = TEMPLATE_SIZE;
+    canvas.height = TEMPLATE_SIZE;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas context unavailable');
+
+    const bg = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = template;
+    });
+    ctx.clearRect(0, 0, TEMPLATE_SIZE, TEMPLATE_SIZE);
+    ctx.drawImage(bg, 0, 0, TEMPLATE_SIZE, TEMPLATE_SIZE);
+
+    const qrDataUrl = await QRCode.toDataURL(url, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: QR.size,
+        color: { dark: '#000000', light: '#ffffff' },
+    });
+    const qrImg = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = qrDataUrl;
+    });
+    ctx.drawImage(qrImg, QR.cx - QR.size / 2, QR.cy - QR.size / 2, QR.size, QR.size);
+
+    const label = (name || '').trim();
+    if (label) {
+        const { lines, fontSize, lineHeight } = fitName(ctx, label, NAME_BAND.width, NAME_BAND.height);
+        ctx.fillStyle = NAME_COLOR;
+        ctx.font = `700 ${fontSize}px ${FONT_STACK}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const bandCenterY = NAME_BAND.top + NAME_BAND.height / 2;
+        const totalH = lines.length * lineHeight;
+        lines.forEach((line, i) => {
+            const y = bandCenterY - totalH / 2 + lineHeight * (i + 0.5);
+            ctx.fillText(line, NAME_BAND.cx, y);
+        });
+    }
+    return canvas;
+};
+
 const SharingQrCode = ({
     url,
     name,
@@ -92,55 +144,7 @@ const SharingQrCode = ({
         const compose = async () => {
             setStatus('loading');
             try {
-                if (document.fonts?.ready) { try { await document.fonts.ready; } catch (e) { /* ignore */ } }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = TEMPLATE_SIZE;
-                canvas.height = TEMPLATE_SIZE;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) throw new Error('2D canvas context unavailable');
-
-                const bg = await new Promise((resolve, reject) => {
-                    const img = new Image();
-                    img.onload = () => resolve(img);
-                    img.onerror = reject;
-                    img.src = template;
-                });
-                if (cancelled) return;
-                ctx.clearRect(0, 0, TEMPLATE_SIZE, TEMPLATE_SIZE);
-                ctx.drawImage(bg, 0, 0, TEMPLATE_SIZE, TEMPLATE_SIZE);
-
-                const qrDataUrl = await QRCode.toDataURL(url, {
-                    errorCorrectionLevel: 'H',
-                    margin: 2,
-                    width: QR.size,
-                    color: { dark: '#000000', light: '#ffffff' },
-                });
-                if (cancelled) return;
-                const qrImg = await new Promise((resolve, reject) => {
-                    const im = new Image();
-                    im.onload = () => resolve(im);
-                    im.onerror = reject;
-                    im.src = qrDataUrl;
-                });
-                if (cancelled) return;
-                ctx.drawImage(qrImg, QR.cx - QR.size / 2, QR.cy - QR.size / 2, QR.size, QR.size);
-
-                const label = (name || '').trim();
-                if (label) {
-                    const { lines, fontSize, lineHeight } = fitName(ctx, label, NAME_BAND.width, NAME_BAND.height);
-                    ctx.fillStyle = NAME_COLOR;
-                    ctx.font = `700 ${fontSize}px ${FONT_STACK}`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    const bandCenterY = NAME_BAND.top + NAME_BAND.height / 2;
-                    const totalH = lines.length * lineHeight;
-                    lines.forEach((line, i) => {
-                        const y = bandCenterY - totalH / 2 + lineHeight * (i + 0.5);
-                        ctx.fillText(line, NAME_BAND.cx, y);
-                    });
-                }
-
+                const canvas = await composeSharingQrCanvas(url, name);
                 if (!cancelled) {
                     offscreenRef.current = canvas;
                     setPreviewUrl(canvas.toDataURL('image/png'));

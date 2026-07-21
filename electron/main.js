@@ -12,6 +12,8 @@ const log = require('electron-log');
 const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
+const { OBSIntegration } = require('./modules/OBSIntegration');
+const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
 
@@ -30,10 +32,18 @@ let isGameOverlayExpanded = false;
 let pendingMainWebRefresh = false;
 let isQuitting = false;
 let hasShownTrayHint = false;
+let streamingIntegration = null;
+// Manueller Overlay-Schalter: zeigt das Overlay unabhängig von der
+// PC2-Prozesserkennung — auf macOS/Linux der einzige Weg (kein tasklist.exe),
+// auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
+let overlayForcedVisible = false;
 const activeNotifications = new Set();
 const GAME_PROCESS_NAME = 'PlanetCoaster2.exe';
 const OVERLAY_MIN_SIZE = 56;
-const OVERLAY_MAX_SIZE = 180;
+// 640 statt 180: Im QR-Modus zeigt der Puck das volle Sharing-Template, in dem
+// der QR nur ~37% der Bildbreite ausmacht — Streamer müssen ihn groß genug
+// ziehen können, damit er vom Stream abscanbar bleibt.
+const OVERLAY_MAX_SIZE = 640;
 const OVERLAY_DEFAULT_SIZE = 88;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const PRODUCTION_WEB_ORIGIN = 'https://planetcreations.net';
@@ -151,9 +161,10 @@ function readOverlaySettings() {
             y: Number.isFinite(stored.y) ? Math.round(stored.y) : null,
             size: Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, Number(stored.size) || OVERLAY_DEFAULT_SIZE)),
             panelBounds: stored.panelBounds || null,
+            forcedVisible: stored.forcedVisible === true,
         };
     } catch (error) {
-        return { x: null, y: null, size: OVERLAY_DEFAULT_SIZE, panelBounds: null };
+        return { x: null, y: null, size: OVERLAY_DEFAULT_SIZE, panelBounds: null, forcedVisible: false };
     }
 }
 
@@ -164,6 +175,104 @@ function writeOverlaySettings(patch) {
     } catch (error) {
         log.warn('Could not save game overlay settings:', error);
     }
+}
+
+// --- Streaming-Integration (OBS ODER Streamlabs Desktop, wählbar) ---
+// Beide Adapter teilen sich Event-Interface und IPC-Kanäle; hier liegen
+// Konfiguration und Lifecycle. OBS: obs-websocket (Port 4455, Passwort).
+// Streamlabs: eigene JSON-RPC-API (Port 59650, API-Token).
+
+function getStreamingSettingsPath() {
+    return path.join(app.getPath('userData'), 'streaming-settings.json');
+}
+
+function readStreamingSettings() {
+    const defaults = { provider: 'obs', enabled: false, obsPort: 4455, obsPassword: '', slPort: 59650, slToken: '' };
+    try {
+        const stored = JSON.parse(fs.readFileSync(getStreamingSettingsPath(), 'utf8'));
+        const validPort = (value, fallback) =>
+            (Number.isInteger(value) && value > 0 && value <= 65535 ? value : fallback);
+        return {
+            provider: stored.provider === 'streamlabs' ? 'streamlabs' : 'obs',
+            enabled: stored.enabled === true,
+            obsPort: validPort(stored.obsPort, defaults.obsPort),
+            obsPassword: typeof stored.obsPassword === 'string' ? stored.obsPassword : '',
+            slPort: validPort(stored.slPort, defaults.slPort),
+            slToken: typeof stored.slToken === 'string' ? stored.slToken : '',
+        };
+    } catch (error) {
+        return defaults;
+    }
+}
+
+function writeStreamingSettings(next) {
+    try {
+        fs.writeFileSync(getStreamingSettingsPath(), JSON.stringify(next, null, 2));
+    } catch (error) {
+        log.warn('Could not save streaming settings:', error);
+    }
+}
+
+function createStreamingIntegration() {
+    const common = {
+        log,
+        onEvent: (name, payload) => broadcastToAppWindows(`obs-${name}`, payload),
+    };
+    if (readStreamingSettings().provider === 'streamlabs') {
+        return new StreamlabsIntegration({
+            ...common,
+            getConfig: () => {
+                const settings = readStreamingSettings();
+                return { enabled: settings.enabled, port: settings.slPort, token: settings.slToken };
+            },
+        });
+    }
+    return new OBSIntegration({
+        ...common,
+        getConfig: () => {
+            const settings = readStreamingSettings();
+            return { enabled: settings.enabled, port: settings.obsPort, password: settings.obsPassword };
+        },
+    });
+}
+
+function getStreamingStatus() {
+    const settings = readStreamingSettings();
+    const runtime = streamingIntegration ? streamingIntegration.getRuntimeStatus() :
+        { connected: false, streaming: false, service: null };
+    return {
+        supported: true,
+        provider: settings.provider,
+        enabled: settings.enabled,
+        obsPort: settings.obsPort,
+        slPort: settings.slPort,
+        hasPassword: Boolean(settings.obsPassword),
+        hasToken: Boolean(settings.slToken),
+        ...runtime,
+    };
+}
+
+async function setStreamingConfig(patch) {
+    const current = readStreamingSettings();
+    const provider = patch?.provider === 'streamlabs' ? 'streamlabs' : 'obs';
+    const port = Number.isInteger(patch?.port) && patch.port > 0 && patch.port <= 65535 ? patch.port : null;
+    const next = { ...current, provider, enabled: patch?.enabled === true };
+    if (provider === 'obs') {
+        if (port) next.obsPort = port;
+        // undefined = "Passwort/Token unverändert lassen" (die Settings-UI
+        // schickt das Feld nur mit, wenn der Nutzer es angefasst hat).
+        if (typeof patch?.password === 'string') next.obsPassword = patch.password.slice(0, 200);
+    } else {
+        if (port) next.slPort = port;
+        if (typeof patch?.token === 'string') next.slToken = patch.token.trim().slice(0, 200);
+    }
+    writeStreamingSettings(next);
+
+    if (streamingIntegration) await streamingIntegration.stop();
+    streamingIntegration = createStreamingIntegration();
+    if (next.enabled) streamingIntegration.start();
+    else broadcastToAppWindows('obs-status-changed', streamingIntegration.getRuntimeStatus());
+    return getStreamingStatus();
 }
 
 function keepBoundsOnScreen(bounds) {
@@ -264,7 +373,7 @@ function isPlanetCoaster2Running() {
 }
 
 async function updateGameOverlayVisibility() {
-    const running = await isPlanetCoaster2Running();
+    const running = overlayForcedVisible || await isPlanetCoaster2Running();
     if (running) {
         const overlay = createGameOverlayWindow();
         if (!overlay.isVisible()) overlay.showInactive();
@@ -273,9 +382,25 @@ async function updateGameOverlayVisibility() {
     }
 }
 
+function setOverlayForcedVisible(value) {
+    overlayForcedVisible = value === true;
+    writeOverlaySettings({ forcedVisible: overlayForcedVisible });
+    updateGameOverlayVisibility();
+    refreshTrayMenu();
+    broadcastToAppWindows('overlay-forced-changed', overlayForcedVisible);
+    return overlayForcedVisible;
+}
+
 function startGameProcessMonitor() {
     updateGameOverlayVisibility();
     gameProcessTimer = setInterval(updateGameOverlayVisibility, 4000);
+}
+
+// Sendet ein Event an alle App-Fenster (Hauptfenster + Spiel-Overlay).
+function broadcastToAppWindows(channel, payload) {
+    for (const window of [mainWindow, gameOverlayWindow]) {
+        if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
+    }
 }
 
 function getAppIconPath() {
@@ -295,23 +420,37 @@ function showMainWindow() {
     if (process.platform === 'darwin') app.dock?.show();
 }
 
+function buildTrayMenu() {
+    return Menu.buildFromTemplate([
+        { label: 'PlanetCreations is running in the background', enabled: false },
+        { type: 'separator' },
+        { label: 'Open', click: showMainWindow },
+        {
+            label: 'Show streaming overlay',
+            type: 'checkbox',
+            checked: overlayForcedVisible,
+            click: (item) => setOverlayForcedVisible(item.checked),
+        },
+        {
+            label: 'Quit',
+            click: () => {
+                isQuitting = true;
+                app.quit();
+            },
+        },
+    ]);
+}
+
+function refreshTrayMenu() {
+    if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu());
+}
+
 function createTray() {
     if (tray && !tray.isDestroyed()) return;
     try {
         tray = new Tray(getAppIconPath());
         tray.setToolTip('PlanetCreations Client');
-        tray.setContextMenu(Menu.buildFromTemplate([
-            { label: 'PlanetCreations is running in the background', enabled: false },
-            { type: 'separator' },
-            { label: 'Open', click: showMainWindow },
-            {
-                label: 'Quit',
-                click: () => {
-                    isQuitting = true;
-                    app.quit();
-                },
-            },
-        ]));
+        tray.setContextMenu(buildTrayMenu());
         tray.on('click', showMainWindow);
         tray.on('balloon-click', showMainWindow);
     } catch (error) {
@@ -762,6 +901,14 @@ ipcMain.handle('show-system-notification', (event, payload) => {
     return showSystemNotification(payload);
 });
 
+// Manueller Reload aus der Navbar: umgeht den HTTP-Cache, damit auch eine
+// stale index.html der gehosteten UI (IONOS-Cache) frisch geladen wird.
+ipcMain.handle('reload-window', (event) => {
+    requireTrustedIpcSender(event, true);
+    event.sender.reloadIgnoringCache();
+    return true;
+});
+
 ipcMain.handle('get-launch-at-login', (event) => {
     requireTrustedIpcSender(event, true);
     return getLaunchAtLoginStatus();
@@ -779,6 +926,22 @@ ipcMain.handle('report-hosted-ui-ready', (event, capabilities) => {
 ipcMain.handle('set-launch-at-login', (event, enabled) => {
     requireTrustedIpcSender(event, true);
     return setLaunchAtLogin(enabled);
+});
+ipcMain.handle('get-obs-status', (event) => {
+    requireTrustedIpcSender(event, true);
+    return getStreamingStatus();
+});
+ipcMain.handle('set-obs-config', (event, config) => {
+    requireTrustedIpcSender(event, true);
+    return setStreamingConfig(config);
+});
+ipcMain.handle('get-overlay-forced', (event) => {
+    requireTrustedIpcSender(event, true);
+    return overlayForcedVisible;
+});
+ipcMain.handle('set-overlay-forced', (event, value) => {
+    requireTrustedIpcSender(event, true);
+    return setOverlayForcedVisible(value === true);
 });
 ipcMain.on('overlay-drag-start', (event, point) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
@@ -1128,14 +1291,18 @@ ipcMain.handle('get-media-status', (event, savePath) => getMediaSetStatus(savePa
 
 app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
+    overlayForcedVisible = readOverlaySettings().forcedVisible;
     createTray();
     createWindow({ openOnline: isAutoStart || useHostedUiInDev });
     startGameProcessMonitor();
+    streamingIntegration = createStreamingIntegration();
+    streamingIntegration.start();
 });
 app.on('before-quit', () => {
     isQuitting = true;
     if (gameProcessTimer) clearInterval(gameProcessTimer);
     if (updateCheckTimer) clearInterval(updateCheckTimer);
+    if (streamingIntegration) streamingIntegration.stop();
 });
 app.on('window-all-closed', () => {
     if (!tray || isQuitting) app.quit();

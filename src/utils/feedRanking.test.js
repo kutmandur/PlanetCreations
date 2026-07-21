@@ -219,6 +219,32 @@ describe('rankCreations (pool/slot model)', () => {
         expect(plainRanked[0].__feedDebug).toBeUndefined();
     });
 
+    it('live boost lifts a live creation into the draw window earlier (LIVE_POOL_BOOST)', () => {
+        const weights = { recency: 0, popularity: 100, activity: 0, affinity: 0, discovery: 0 };
+        // 30 alte Creations mit absteigender Popularität: c29 ist die schwächste
+        // und ohne Boost erst nach 10 Picks im Ziehungsfenster (POOL_WINDOW 20).
+        const set = Array.from({ length: 30 }, (_, i) =>
+            makeCreation(`c${i}`, { createdAt: ts(NOW - 2 * YEAR), likes: 1000 - i * 10 }));
+        const withLive = (liveStream) => set.map((c) => (c.id === 'c29' ? { ...c, liveStream } : c));
+        // Mittelwert über feste Seeds → deterministisch, aber robust gegen die
+        // seeded-zufällige Fenster-Ziehung.
+        const avgPos = (creations) => {
+            let sum = 0;
+            for (let seed = 1; seed <= 40; seed++) {
+                sum += rankCreations(creations, { ...ctx, seed, weights }).findIndex((c) => c.id === 'c29');
+            }
+            return sum / 40;
+        };
+        const base = avgPos(set);
+        const boosted = avgPos(withLive({ platform: 'twitch', expiresAt: ts(NOW + 60 * 60 * 1000) }));
+        expect(boosted).toBeLessThan(base);
+        // Abgelaufener Live-Status bekommt keinen Boost — identisches Ranking.
+        for (let seed = 1; seed <= 5; seed++) {
+            expect(rankCreations(withLive({ platform: 'twitch', expiresAt: ts(NOW - 1000) }), { ...ctx, seed, weights }).map((c) => c.id))
+                .toEqual(rankCreations(set, { ...ctx, seed, weights }).map((c) => c.id));
+        }
+    });
+
     it('handles empty input and zero-signal sets without errors', () => {
         expect(rankCreations([], ctx)).toEqual([]);
         const a = makeCreation('a');

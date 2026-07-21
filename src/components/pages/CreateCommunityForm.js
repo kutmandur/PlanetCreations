@@ -5,6 +5,7 @@ import { collection, addDoc, doc, writeBatch, query, where, getDocs } from 'fire
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { containsBlacklistedWord, ICONS } from '../../utils/helpers';
+import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import InfoBox from '../ui/InfoBox';
@@ -227,6 +228,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
       await batch.commit();
 
       setModalMessage('Community created successfully!');
+      scheduleDataRefresh();
       navigate(`/community/${slug}`);
 
     } catch (error) {
