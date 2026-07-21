@@ -13,7 +13,7 @@ const PROVIDERS = {
         defaultPort: 59650,
         secretLabel: 'API Token',
         secretHint: 'Required',
-        instructions: 'In Streamlabs Desktop, open Settings > Remote Control, click the QR code, then "Show details" and copy the API Token.',
+        instructions: 'In Streamlabs Desktop, open Settings > Remote Control, show the QR code, then copy the IP address and API token from "Show details".',
     },
 };
 
@@ -28,6 +28,7 @@ const StreamingSettings = ({ setModalMessage }) => {
     const [status, setStatus] = useState(null);
     const [provider, setProvider] = useState('obs');
     const [enabled, setEnabled] = useState(false);
+    const [host, setHost] = useState('127.0.0.1');
     const [port, setPort] = useState(PROVIDERS.obs.defaultPort);
     const [portDirty, setPortDirty] = useState(false);
     const [secret, setSecret] = useState('');
@@ -47,6 +48,7 @@ const StreamingSettings = ({ setModalMessage }) => {
                 const loadedProvider = result.provider === 'streamlabs' ? 'streamlabs' : 'obs';
                 setProvider(loadedProvider);
                 setEnabled(Boolean(result.enabled));
+                setHost(result.slHost || '127.0.0.1');
                 setPort(loadedProvider === 'streamlabs'
                     ? (result.slPort || PROVIDERS.streamlabs.defaultPort)
                     : (result.obsPort || PROVIDERS.obs.defaultPort));
@@ -74,6 +76,7 @@ const StreamingSettings = ({ setModalMessage }) => {
         setProvider(nextProvider);
         setSecret('');
         setSecretDirty(false);
+        if (nextProvider === 'streamlabs') setHost(status?.slHost || '127.0.0.1');
         if (!portDirty) {
             const saved = nextProvider === 'streamlabs' ? status?.slPort : status?.obsPort;
             setPort(saved || PROVIDERS[nextProvider].defaultPort);
@@ -86,6 +89,7 @@ const StreamingSettings = ({ setModalMessage }) => {
             const result = await window.electronAPI.setObsConfig({
                 provider,
                 enabled,
+                host: provider === 'streamlabs' ? host : undefined,
                 port: Number(port) || providerInfo.defaultPort,
                 // Nicht angefasstes Feld = gespeicherten Wert behalten.
                 password: provider === 'obs' && secretDirty ? secret : undefined,
@@ -155,9 +159,65 @@ const StreamingSettings = ({ setModalMessage }) => {
                 ))}
             </div>
 
-            <p className="text-sm text-gray-500 mb-4">{providerInfo.instructions}</p>
+            <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:p-5">
+                <h3 className="text-lg font-bold text-gray-800 text-center mb-4">
+                    How to connect {providerInfo.label}
+                </h3>
+                {provider === 'obs' ? (
+                    <ol className="space-y-3 text-sm text-gray-700">
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">1</span>
+                            <span>Open <strong>OBS Studio</strong>, then select <strong>Tools → WebSocket Server Settings</strong> from the top menu.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">2</span>
+                            <span>Enable <strong>Enable WebSocket server</strong>. OBS 28 or newer already includes this feature.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">3</span>
+                            <span>Copy the displayed <strong>Server Port</strong> below. The default is <strong>4455</strong>.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">4</span>
+                            <span>If authentication is enabled, copy the WebSocket password as well. Leave the password empty only when OBS authentication is disabled.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">5</span>
+                            <span>Click <strong>Apply</strong> in OBS, keep OBS running, then choose <strong>Save & Connect</strong> here.</span>
+                        </li>
+                    </ol>
+                ) : (
+                    <ol className="space-y-3 text-sm text-gray-700">
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">1</span>
+                            <span>Open <strong>Streamlabs Desktop</strong> and click the <strong>Settings</strong> cog in the lower-left corner.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">2</span>
+                            <span>Open <strong>Remote Control</strong> and click the QR code or its <strong>Show</strong> button.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">3</span>
+                            <span>Below the QR code, select <strong>Show details</strong>. Streamlabs now displays the IP address, port and API token required below.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">4</span>
+                            <span>Copy only the numeric <strong>IP address</strong>, without <code>http://</code>, <code>ws://</code> or the port. Then copy the <strong>Port</strong> and complete <strong>API Token</strong> into their own fields.</span>
+                        </li>
+                        <li className="flex gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">5</span>
+                            <span>Keep Remote Control enabled and Streamlabs running. Close the Streamlabs settings window, then choose <strong>Save & Connect</strong> here.</span>
+                        </li>
+                    </ol>
+                )}
+                <p className="mt-4 text-xs text-gray-500 text-center">
+                    {provider === 'streamlabs'
+                        ? 'The API token grants local control of Streamlabs. Keep it private and never share it publicly.'
+                        : 'PlanetCreations connects only to OBS on this computer; your streaming account password is never requested.'}
+                </p>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+            <div className={`grid grid-cols-1 ${provider === 'streamlabs' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-4 items-end`}>
                 <label className="flex items-center gap-3 cursor-pointer sm:col-span-1">
                     <input
                         type="checkbox"
@@ -167,29 +227,66 @@ const StreamingSettings = ({ setModalMessage }) => {
                     />
                     <span className="font-semibold text-gray-700">Enable</span>
                 </label>
-                <div>
-                    <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-port">Port</label>
-                    <input
-                        id="streaming-port"
-                        type="number"
-                        min="1"
-                        max="65535"
-                        value={port}
-                        onChange={(e) => { setPort(e.target.value); setPortDirty(true); }}
-                        className="w-full p-2 border rounded-lg"
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-secret">{providerInfo.secretLabel}</label>
-                    <input
-                        id="streaming-secret"
-                        type="password"
-                        value={secret}
-                        onChange={(e) => { setSecret(e.target.value); setSecretDirty(true); }}
-                        placeholder={hasStoredSecret ? '(unchanged)' : providerInfo.secretHint}
-                        className="w-full p-2 border rounded-lg"
-                    />
-                </div>
+                {provider === 'obs' ? <>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-port">Port</label>
+                        <input
+                            id="streaming-port"
+                            type="number"
+                            min="1"
+                            max="65535"
+                            value={port}
+                            onChange={(e) => { setPort(e.target.value); setPortDirty(true); }}
+                            className="w-full p-2 border rounded-lg"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-secret">{providerInfo.secretLabel}</label>
+                        <input
+                            id="streaming-secret"
+                            type="password"
+                            value={secret}
+                            onChange={(e) => { setSecret(e.target.value); setSecretDirty(true); }}
+                            placeholder={hasStoredSecret ? '(unchanged)' : providerInfo.secretHint}
+                            className="w-full p-2 border rounded-lg"
+                        />
+                    </div>
+                </> : <>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streamlabs-host">IP address</label>
+                        <input
+                            id="streamlabs-host"
+                            type="text"
+                            value={host}
+                            onChange={(e) => setHost(e.target.value)}
+                            placeholder="192.168.1.100"
+                            className="w-full p-2 border rounded-lg text-center"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-port">Port</label>
+                        <input
+                            id="streaming-port"
+                            type="number"
+                            min="1"
+                            max="65535"
+                            value={port}
+                            onChange={(e) => { setPort(e.target.value); setPortDirty(true); }}
+                            className="w-full p-2 border rounded-lg text-center"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-600 mb-1" htmlFor="streaming-secret">API Token</label>
+                        <input
+                            id="streaming-secret"
+                            type="password"
+                            value={secret}
+                            onChange={(e) => { setSecret(e.target.value); setSecretDirty(true); }}
+                            placeholder={hasStoredSecret ? '(unchanged)' : 'Required'}
+                            className="w-full p-2 border rounded-lg"
+                        />
+                    </div>
+                </>}
             </div>
             <button
                 onClick={handleSave}

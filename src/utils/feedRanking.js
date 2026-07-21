@@ -14,10 +14,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_MS = 30 * DAY_MS;
 const YEAR_MS = 365 * DAY_MS;
 
-// Sortier-Bonus für Creations, an denen der Creator gerade live baut:
-// hebt sie innerhalb jedes Pools an (Komponenten-Scores sind 0..1).
-export const LIVE_POOL_BOOST = 0.2;
-
 // Seeded-Ziehung aus den besten N verbleibenden Einträgen eines Pools —
 // so rotiert auch innerhalb eines Pools pro Würfelung die Auswahl.
 const POOL_WINDOW = 20;
@@ -34,17 +30,19 @@ const LOAD_SEED = Math.floor(Math.random() * 0xffffffff);
 
 // Slider-Werte sind relative Anteile (0–100); vor der Slot-Vergabe auf Summe 1 normiert.
 export const DEFAULT_WEIGHTS = {
-    recency: 30,
+    live: 10,
+    recency: 25,
     popularity: 25,
     activity: 15,
     affinity: 20,
-    discovery: 10,
+    discovery: 5,
 };
 
 export const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS);
 
 // Anzeige-Labels für die Pools (Admin-Debug-Badge)
 export const POOL_LABELS = {
+    live: 'Live',
     recency: 'New',
     popularity: 'Popular',
     activity: 'Active',
@@ -153,6 +151,7 @@ export function rankCreations(creations, ctx = {}) {
         const popRaw = Math.log10(1 + Math.max(0, (c.likes || 0) - (c.dislikes || 0)) + (c.views || 0) / 50);
         const decayedAs = decayActivityScore(c.activityScore, toMillis(c.activityAt), now);
         const parts = {
+            live: isLiveStreamActive(c.liveStream, now) ? 1 : 0,
             recency: Math.pow(2, -ageDays / 7),
             popularity: maxPop > 0 ? popRaw / maxPop : 0,
             activity: maxActivity > 0 ? Math.log1p(decayedAs) / Math.log1p(maxActivity) : 0,
@@ -162,11 +161,10 @@ export function rankCreations(creations, ctx = {}) {
         return { c, parts };
     });
 
-    // Pools: absteigend nach Komponenten-Score (+ kleiner "finished"-Nudge und
-    // Live-Boost in der Sortierung), Zugehörigkeit erst ab MIN_POOL_SCORE echtem
+    // Pools: absteigend nach Komponenten-Score (+ kleiner "finished"-Nudge),
+    // Zugehörigkeit erst ab MIN_POOL_SCORE echtem
     // Signal. Discovery enthält alles — der Fallback-Pool der Long-Tail-Picks.
-    const nudge = (s) => (s.c.status === 'finished' ? 0.05 : 0)
-        + (isLiveStreamActive(s.c.liveStream, now) ? LIVE_POOL_BOOST : 0);
+    const nudge = (s) => (s.c.status === 'finished' ? 0.05 : 0);
     const pools = {};
     for (const key of WEIGHT_KEYS) {
         pools[key] = scored

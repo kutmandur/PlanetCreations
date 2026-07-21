@@ -2,6 +2,7 @@ import React from 'react';
 import { WEIGHT_KEYS, normalizeWeights, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 
 const LABELS = {
+    live: 'Live creations',
     recency: 'New creations',
     popularity: 'Popular creations',
     activity: 'Actively updated',
