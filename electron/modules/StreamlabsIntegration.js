@@ -1,8 +1,6 @@
-// Streamlabs-Desktop-Integration. Streamlabs ist ein OBS-Fork OHNE das
-// obs-websocket-Plugin — es hat eine eigene Remote-Control-API: JSON-RPC 2.0
-// über WebSocket (SockJS-Raw-Endpoint /api/websocket, Standard-Port 59650),
-// Auth per API-Token (Streamlabs → Settings → Remote Control → QR anklicken →
-// "Show details" → API Token). Läuft komplett lokal.
+// Streamlabs-Desktop-Integration über dessen SockJS-Remote-Control-API.
+// IP, Port und Token werden in Streamlabs unter Settings > Remote Control >
+// Show details angezeigt. SockJS kapselt JSON-RPC-Nachrichten in Array-Frames.
 //
 // Gleiches Event-Interface wie OBSIntegration, damit main.js beide Adapter
 // austauschbar betreiben kann:
@@ -47,7 +45,8 @@ class StreamlabsIntegration {
                 reject(new Error(`Streamlabs request ${method} timed out.`));
             }, REQUEST_TIMEOUT_MS);
             this.pending.set(id, { resolve, reject, timeout });
-            this.socket.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: { resource, args } }));
+            const request = JSON.stringify({ jsonrpc: '2.0', id, method, params: { resource, args } });
+            this.socket.send(JSON.stringify([request]));
         });
     }
 
@@ -71,6 +70,18 @@ class StreamlabsIntegration {
         const event = message.result;
         if (event?._type === 'EVENT' && event.resourceId === 'StreamingService.streamingStatusChange') {
             this.handleStreamingStatus(event.data);
+        }
+    }
+
+    handleSockJsFrame(raw) {
+        const frame = raw.toString();
+        if (frame === 'o' || frame === 'h') return;
+        if (!frame.startsWith('a')) return;
+        try {
+            const messages = JSON.parse(frame.slice(1));
+            if (Array.isArray(messages)) messages.forEach((message) => this.handleMessage(message));
+        } catch (error) {
+            this.log.warn('Could not decode Streamlabs SockJS frame:', error.message);
         }
     }
 
@@ -106,10 +117,11 @@ class StreamlabsIntegration {
     async connect() {
         const config = this.getConfig();
         if (!config.enabled || this.stopped || this.socket) return;
-        const socket = new WebSocket(`ws://127.0.0.1:${config.port}/api/websocket`);
+        const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
+        const socket = new WebSocket(`ws://${host}:${config.port}/api/websocket`);
         this.socket = socket;
 
-        socket.on('message', (raw) => this.handleMessage(raw));
+        socket.on('message', (raw) => this.handleSockJsFrame(raw));
         socket.on('error', () => { /* close-Handler übernimmt das Aufräumen */ });
         socket.on('close', () => {
             const wasConnected = this.connected;
@@ -136,7 +148,7 @@ class StreamlabsIntegration {
                 this.log.info('Connected to Streamlabs Desktop.');
                 this.emitStatus();
             } catch (error) {
-                // Falscher Token oder API nicht bereit — leise weiter versuchen.
+                // Falsche IP, falscher Token oder API noch nicht bereit.
                 this.log.warn('Streamlabs connection failed:', error.message);
                 try { socket.close(); } catch (closeError) { /* noop */ }
             }

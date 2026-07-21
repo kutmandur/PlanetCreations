@@ -3,7 +3,7 @@ import { db } from '../../firebase/config';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteField, query, where, onSnapshot } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, getIdToken, sendEmailVerification } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { getGameColor } from '../../utils/helpers';
+import { getGameColor, ICONS, SOCIAL_PLATFORMS } from '../../utils/helpers';
 import { joinCommunity } from '../../firebase/community';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
@@ -11,6 +11,7 @@ import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
 import NotificationSettings from '../ui/NotificationSettings';
 import PersonalizationSettings from '../ui/PersonalizationSettings';
 import StreamingSettings from '../ui/StreamingSettings';
+import Icon from '../ui/Icon';
 
 const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
     const [loading, setLoading] = useState(false);
@@ -32,6 +33,30 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [launchAtLogin, setLaunchAtLoginState] = useState(false);
     const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
     const [isUpdatingLaunchAtLogin, setIsUpdatingLaunchAtLogin] = useState(false);
+    const [activeSettingsId, setActiveSettingsId] = useState('account');
+    const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
+
+    const isDesktopClient = Boolean(window.electronAPI?.getObsStatus);
+    const discordPlatform = SOCIAL_PLATFORMS.find((platform) => platform.id === 'discord');
+    const settingsCategories = [
+        { id: 'account', label: 'Account', hint: 'Email & password', icon: ICONS.user, tint: 'bg-gray-500' },
+        ...(user ? [
+            { id: 'discord', label: 'Discord', hint: 'Account & rank sync', icon: discordPlatform?.icon || ICONS.users, solid: true, tint: 'bg-indigo-500' },
+            { id: 'notifications', label: 'Notifications', hint: 'Inbox & push alerts', icon: ICONS.bell, tint: 'bg-sky-500' },
+        ] : []),
+        ...(isDesktopClient ? [
+            { id: 'desktop', label: 'Desktop & Streaming', hint: 'App, OBS & Streamlabs', icon: ICONS.desktop, tint: 'bg-emerald-500' },
+        ] : []),
+        ...(user ? [
+            { id: 'personalization', label: 'Personalization', hint: 'Feed recommendations', icon: ICONS.star, tint: 'bg-amber-500' },
+            { id: 'danger', label: 'Danger Zone', hint: 'Delete your account', icon: ICONS.trash, tint: 'bg-red-500' },
+        ] : []),
+    ];
+
+    const openSettingsCategory = (id) => {
+        setActiveSettingsId(id);
+        setMobileSettingsOpen(true);
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -323,8 +348,49 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     };
 
     return (
-        <div className="max-w-4xl mx-auto mt-10 p-4 sm:p-8 space-y-8" style={color.style}>
-            <h1 className="text-4xl font-bold text-center text-gray-800">Account Settings</h1>
+        <div className="max-w-6xl mx-auto mt-10 p-4 sm:p-8" style={color.style}>
+            <h1 className="text-4xl font-bold text-center text-gray-800 mb-8">Settings</h1>
+
+            <div className="lg:flex lg:gap-6 lg:items-start">
+                <nav className={`${mobileSettingsOpen ? 'hidden' : 'block'} lg:block lg:w-72 lg:flex-shrink-0`}>
+                    <div className="bg-white rounded-2xl shadow-md p-2">
+                        {settingsCategories.map((category) => {
+                            const isActive = category.id === activeSettingsId;
+                            return (
+                                <button
+                                    key={category.id}
+                                    type="button"
+                                    onClick={() => openSettingsCategory(category.id)}
+                                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-colors mb-1 last:mb-0
+                                        ${isActive ? 'lg:bg-[--game-color] lg:text-white' : 'hover:bg-gray-100 text-gray-800'}`}
+                                >
+                                    <span className={`w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center text-white ${category.tint}`}>
+                                        <Icon path={category.icon} solid={category.solid === true} className="w-5 h-5" />
+                                    </span>
+                                    <span className="flex-grow min-w-0">
+                                        <span className="block font-semibold leading-tight">{category.label}</span>
+                                        <span className={`block text-xs truncate ${isActive ? 'lg:text-white/80 text-gray-400' : 'text-gray-400'}`}>
+                                            {category.hint}
+                                        </span>
+                                    </span>
+                                    <Icon path={ICONS.chevronRight} className="w-4 h-4 flex-shrink-0 lg:hidden text-gray-300" />
+                                </button>
+                            );
+                        })}
+                    </div>
+                </nav>
+
+                <section className={`${mobileSettingsOpen ? 'block' : 'hidden'} lg:block flex-1 min-w-0`}>
+                    <button
+                        type="button"
+                        onClick={() => setMobileSettingsOpen(false)}
+                        className="lg:hidden flex items-center gap-1 game-text font-semibold mb-3"
+                    >
+                        <Icon path={ICONS.chevronLeft} className="w-5 h-5" />
+                        Settings
+                    </button>
+
+                    <div className={activeSettingsId === 'account' ? 'space-y-8' : 'hidden'}>
 
             {user && !user.emailVerified && (
                  <div className="bg-white p-6 rounded-lg shadow-md">
@@ -379,6 +445,9 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 </form>
             </div>
 
+                    </div>
+
+                    <div className={activeSettingsId === 'discord' ? 'space-y-8' : 'hidden'}>
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Discord Integration</h2>
                 <p className="text-gray-600 mb-4">Link your Discord account to sync roles and find communities your friends are in.</p>
@@ -428,8 +497,13 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 </div>
             </div>
 
-            {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
+                    </div>
 
+                    <div className={activeSettingsId === 'notifications' ? 'space-y-8' : 'hidden'}>
+                        {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
+                    </div>
+
+                    <div className={activeSettingsId === 'desktop' ? 'space-y-8' : 'hidden'}>
             {launchAtLoginSupported && (
                 <div className="bg-white p-6 rounded-lg shadow-md">
                     <h2 className="text-2xl font-bold mb-2">Desktop App</h2>
@@ -459,8 +533,13 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
 
             <StreamingSettings setModalMessage={setModalMessage} />
 
-            {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
+                    </div>
 
+                    <div className={activeSettingsId === 'personalization' ? 'space-y-8' : 'hidden'}>
+                        {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
+                    </div>
+
+                    <div className={activeSettingsId === 'account' ? 'mt-8 space-y-8' : 'hidden'}>
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Influencer Application</h2>
                 <p className="text-gray-600 mb-4">Apply to become an official Influencer. You must have at least one social media link in your profile to apply. You can apply once every 30 days.</p>
@@ -483,6 +562,9 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 />
             )}
 
+                    </div>
+
+                    <div className={activeSettingsId === 'danger' ? 'space-y-8' : 'hidden'}>
             <div className="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
                 <h2 className="text-2xl font-bold mb-2 text-red-700">Delete Account</h2>
                 <p className="text-red-600 mb-4">This action is permanent and cannot be undone. All your creations and profile data will be lost.</p>
@@ -504,6 +586,9 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 >
                     {loading ? 'Deleting...' : 'Delete My Account'}
                 </button>
+            </div>
+                    </div>
+                </section>
             </div>
         </div>
     );

@@ -7,3 +7,18 @@
   RewriteCond %{REQUEST_FILENAME} !-l
   RewriteRule . /index.html [L]
 </IfModule>
+
+<IfModule mod_headers.c>
+  # App shell must always be revalidated so new deploys are picked up
+  # immediately by browsers AND the Electron client (which otherwise
+  # caches a stale index.html that still points at the old JS bundle).
+  <FilesMatch "^(index\.html|asset-manifest\.json|manifest\.json|service-worker\.js)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+  # Content-hashed assets are immutable — safe to cache for a long time.
+  <FilesMatch "\.[0-9a-f]{8,}\.(js|css|woff2?|ttf|eot|png|jpe?g|gif|svg|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>

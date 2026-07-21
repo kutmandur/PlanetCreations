@@ -180,14 +180,14 @@ function writeOverlaySettings(patch) {
 // --- Streaming-Integration (OBS ODER Streamlabs Desktop, wählbar) ---
 // Beide Adapter teilen sich Event-Interface und IPC-Kanäle; hier liegen
 // Konfiguration und Lifecycle. OBS: obs-websocket (Port 4455, Passwort).
-// Streamlabs: eigene JSON-RPC-API (Port 59650, API-Token).
+// Streamlabs: SockJS-Remote-Control-API (IP, Port 59650 und API-Token).
 
 function getStreamingSettingsPath() {
     return path.join(app.getPath('userData'), 'streaming-settings.json');
 }
 
 function readStreamingSettings() {
-    const defaults = { provider: 'obs', enabled: false, obsPort: 4455, obsPassword: '', slPort: 59650, slToken: '' };
+    const defaults = { provider: 'obs', enabled: false, obsPort: 4455, obsPassword: '', slHost: '127.0.0.1', slPort: 59650, slToken: '' };
     try {
         const stored = JSON.parse(fs.readFileSync(getStreamingSettingsPath(), 'utf8'));
         const validPort = (value, fallback) =>
@@ -197,6 +197,7 @@ function readStreamingSettings() {
             enabled: stored.enabled === true,
             obsPort: validPort(stored.obsPort, defaults.obsPort),
             obsPassword: typeof stored.obsPassword === 'string' ? stored.obsPassword : '',
+            slHost: typeof stored.slHost === 'string' && stored.slHost.trim() ? stored.slHost.trim() : defaults.slHost,
             slPort: validPort(stored.slPort, defaults.slPort),
             slToken: typeof stored.slToken === 'string' ? stored.slToken : '',
         };
@@ -223,7 +224,7 @@ function createStreamingIntegration() {
             ...common,
             getConfig: () => {
                 const settings = readStreamingSettings();
-                return { enabled: settings.enabled, port: settings.slPort, token: settings.slToken };
+                return { enabled: settings.enabled, host: settings.slHost, port: settings.slPort, token: settings.slToken };
             },
         });
     }
@@ -245,6 +246,7 @@ function getStreamingStatus() {
         provider: settings.provider,
         enabled: settings.enabled,
         obsPort: settings.obsPort,
+        slHost: settings.slHost,
         slPort: settings.slPort,
         hasPassword: Boolean(settings.obsPassword),
         hasToken: Boolean(settings.slToken),
@@ -263,6 +265,10 @@ async function setStreamingConfig(patch) {
         // schickt das Feld nur mit, wenn der Nutzer es angefasst hat).
         if (typeof patch?.password === 'string') next.obsPassword = patch.password.slice(0, 200);
     } else {
+        if (typeof patch?.host === 'string') {
+            const host = patch.host.trim().slice(0, 255);
+            if (/^[a-zA-Z0-9.:[\]_-]+$/.test(host)) next.slHost = host;
+        }
         if (port) next.slPort = port;
         if (typeof patch?.token === 'string') next.slToken = patch.token.trim().slice(0, 200);
     }

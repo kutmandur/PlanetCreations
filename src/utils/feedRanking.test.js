@@ -32,7 +32,7 @@ const makeCreation = (id, overrides = {}) => ({
 
 describe('normalizeWeights', () => {
     it('normalizes to sum 1', () => {
-        const w = normalizeWeights({ recency: 50, popularity: 50, activity: 0, affinity: 0, discovery: 0 });
+        const w = normalizeWeights({ live: 0, recency: 50, popularity: 50, activity: 0, affinity: 0, discovery: 0 });
         expect(w.recency).toBeCloseTo(0.5);
         expect(w.popularity).toBeCloseTo(0.5);
         expect(w.activity).toBe(0);
@@ -44,7 +44,7 @@ describe('normalizeWeights', () => {
         const def = normalizeWeights(DEFAULT_WEIGHTS);
         expect(normalizeWeights(null)).toEqual(def);
         expect(normalizeWeights({ recency: -5 })).toEqual(def);
-        const zeros = normalizeWeights({ recency: 0, popularity: 0, activity: 0, affinity: 0, discovery: 0 });
+        const zeros = normalizeWeights({ live: 0, recency: 0, popularity: 0, activity: 0, affinity: 0, discovery: 0 });
         expect(zeros).toEqual(def);
     });
 });
@@ -131,7 +131,7 @@ describe('rankCreations (pool/slot model)', () => {
         const idle = makeCreation('idle', { createdAt: ts(NOW - YEAR) });
         const ranked = rankCreations([idle, active], {
             ...ctx,
-            weights: { recency: 0, popularity: 0, activity: 100, affinity: 0, discovery: 0 },
+            weights: { live: 0, recency: 0, popularity: 0, activity: 100, affinity: 0, discovery: 0 },
         });
         expect(ranked[0].id).toBe('active');
         expect(ranked).toHaveLength(2); // idle kommt über den Rest-Fallback
@@ -143,7 +143,7 @@ describe('rankCreations (pool/slot model)', () => {
         const ranked = rankCreations([other, match], {
             ...ctx,
             interestMap: { coaster: 10 },
-            weights: { recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
+            weights: { live: 0, recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
         });
         expect(ranked[0].id).toBe('match');
     });
@@ -156,7 +156,7 @@ describe('rankCreations (pool/slot model)', () => {
         const ranked = rankCreations([...recent, ...popular], {
             ...ctx,
             debug: true,
-            weights: { recency: 50, popularity: 50, activity: 0, affinity: 0, discovery: 0 },
+            weights: { live: 0, recency: 50, popularity: 50, activity: 0, affinity: 0, discovery: 0 },
         });
         expect(ranked).toHaveLength(20);
         const fromRecency = ranked.filter((c) => c.__feedDebug.pool === 'recency').length;
@@ -182,7 +182,7 @@ describe('rankCreations (pool/slot model)', () => {
         const ranked = rankCreations(set, {
             ...ctx,
             interestMap: {},
-            weights: { recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
+            weights: { live: 0, recency: 0, popularity: 0, activity: 0, affinity: 100, discovery: 0 },
         });
         expect(ranked).toHaveLength(8); // Rest-Fallback nach createdAt
         expect(ranked[0].id).toBe('c0'); // neueste zuerst
@@ -201,7 +201,7 @@ describe('rankCreations (pool/slot model)', () => {
     it('window draw: recency-only weights pick everything from the recency pool, order varies per seed', () => {
         const set = Array.from({ length: 20 }, (_, i) =>
             makeCreation(`c${i}`, { createdAt: ts(NOW - (i + 1) * DAY) }));
-        const weights = { recency: 100, popularity: 0, activity: 0, affinity: 0, discovery: 0 };
+        const weights = { live: 0, recency: 100, popularity: 0, activity: 0, affinity: 0, discovery: 0 };
         const a = rankCreations(set, { ...ctx, seed: 1, weights, debug: true });
         expect(a.every((c) => c.__feedDebug.pool === 'recency')).toBe(true);
         const b = rankCreations(set, { ...ctx, seed: 9, weights });
@@ -214,34 +214,35 @@ describe('rankCreations (pool/slot model)', () => {
         expect(debugRanked[0].__feedDebug).toBeDefined();
         expect(Object.keys(DEFAULT_WEIGHTS)).toContain(debugRanked[0].__feedDebug.pool);
         expect(Object.keys(debugRanked[0].__feedDebug.parts)).toEqual(
-            ['recency', 'popularity', 'activity', 'affinity', 'discovery']);
+            ['live', 'recency', 'popularity', 'activity', 'affinity', 'discovery']);
         const plainRanked = rankCreations([hit], { ...ctx });
         expect(plainRanked[0].__feedDebug).toBeUndefined();
     });
 
-    it('live boost lifts a live creation into the draw window earlier (LIVE_POOL_BOOST)', () => {
-        const weights = { recency: 0, popularity: 100, activity: 0, affinity: 0, discovery: 0 };
-        // 30 alte Creations mit absteigender Popularität: c29 ist die schwächste
-        // und ohne Boost erst nach 10 Picks im Ziehungsfenster (POOL_WINDOW 20).
-        const set = Array.from({ length: 30 }, (_, i) =>
-            makeCreation(`c${i}`, { createdAt: ts(NOW - 2 * YEAR), likes: 1000 - i * 10 }));
-        const withLive = (liveStream) => set.map((c) => (c.id === 'c29' ? { ...c, liveStream } : c));
-        // Mittelwert über feste Seeds → deterministisch, aber robust gegen die
-        // seeded-zufällige Fenster-Ziehung.
-        const avgPos = (creations) => {
-            let sum = 0;
-            for (let seed = 1; seed <= 40; seed++) {
-                sum += rankCreations(creations, { ...ctx, seed, weights }).findIndex((c) => c.id === 'c29');
-            }
-            return sum / 40;
-        };
-        const base = avgPos(set);
-        const boosted = avgPos(withLive({ platform: 'twitch', expiresAt: ts(NOW + 60 * 60 * 1000) }));
-        expect(boosted).toBeLessThan(base);
-        // Abgelaufener Live-Status bekommt keinen Boost — identisches Ranking.
+    it('uses active streams as a dedicated, adjustable live pool', () => {
+        const weights = { live: 100, recency: 0, popularity: 0, activity: 0, affinity: 0, discovery: 0 };
+        const active = { platform: 'twitch', expiresAt: ts(NOW + 60 * 60 * 1000) };
+        const expired = { platform: 'twitch', expiresAt: ts(NOW - 1000) };
+        const ranked = rankCreations([
+            makeCreation('normal'),
+            makeCreation('live-a', { liveStream: active }),
+            makeCreation('expired', { liveStream: expired }),
+            makeCreation('live-b', { liveStream: active }),
+        ], { ...ctx, weights, debug: true });
+        expect(new Set(ranked.slice(0, 2).map((c) => c.id))).toEqual(new Set(['live-a', 'live-b']));
+        expect(ranked.slice(0, 2).every((c) => c.__feedDebug.pool === 'live')).toBe(true);
+        expect(ranked.find((c) => c.id === 'expired').__feedDebug.pool).not.toBe('live');
+    });
+
+    it('does not boost live creations inside other pools when live is set to zero', () => {
+        const weights = { live: 0, recency: 0, popularity: 100, activity: 0, affinity: 0, discovery: 0 };
+        const base = [makeCreation('popular', { likes: 100 }), makeCreation('weak', { likes: 1 })];
+        const withLive = base.map((c) => c.id === 'weak'
+            ? { ...c, liveStream: { platform: 'twitch', expiresAt: ts(NOW + 60 * 60 * 1000) } }
+            : c);
         for (let seed = 1; seed <= 5; seed++) {
-            expect(rankCreations(withLive({ platform: 'twitch', expiresAt: ts(NOW - 1000) }), { ...ctx, seed, weights }).map((c) => c.id))
-                .toEqual(rankCreations(set, { ...ctx, seed, weights }).map((c) => c.id));
+            expect(rankCreations(withLive, { ...ctx, seed, weights }).map((c) => c.id))
+                .toEqual(rankCreations(base, { ...ctx, seed, weights }).map((c) => c.id));
         }
     });
 
