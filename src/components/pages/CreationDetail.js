@@ -412,6 +412,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 const installResult = await window.electronAPI.installQueuedCreation({
                     creationId: id,
                     downloadUrl: response.data.downloadUrl,
+                    title: creation.title,
+                    previewUrl: creation.imageUrls?.[0] || '',
                 });
                 if (!installResult?.success) throw new Error(installResult?.message || 'The creation could not be installed.');
                 setModalMessage(`Successfully installed '${installResult.installedFileName}'.`);

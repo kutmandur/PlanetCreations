@@ -64,6 +64,26 @@ html.dark .creation-form-wizard select {
 html.dark :where(.hover\:bg-gray-50, .hover\:bg-gray-100, .hover\:bg-gray-200):hover { background-color: #4b5563; }
 html.dark :where(.hover\:text-black, .hover\:text-gray-800, .hover\:text-gray-900):hover { color: #fff; }
 
+/* Offline manager: its original palette was dark-only. These scoped mappings give
+   the desktop workspace a light appearance without changing its established dark
+   mode or leaking styles into the public website. */
+html:not(.dark) .offline-manager { background-color: #f3f4f6; color: #111827; }
+html:not(.dark) .offline-manager :where(.bg-gray-900) { background-color: #e5e7eb; }
+html:not(.dark) .offline-manager :where(.bg-gray-800) { background-color: #f3f4f6; }
+html:not(.dark) .offline-manager :where(.bg-gray-700) { background-color: #fff; }
+html:not(.dark) .offline-manager :where(.bg-gray-600) { background-color: #e5e7eb; }
+html:not(.dark) .offline-manager :where(.text-white) { color: #111827; }
+html:not(.dark) .offline-manager :where(.text-gray-300) { color: #4b5563; }
+html:not(.dark) .offline-manager :where(.text-gray-400, .text-gray-500) { color: #6b7280; }
+html:not(.dark) .offline-manager :where(.border-gray-600) { border-color: #d1d5db; }
+html:not(.dark) .offline-manager :where(.hover\:bg-gray-600):hover { background-color: #e5e7eb; }
+html:not(.dark) .offline-manager :where(.hover\:text-white):hover { color: #111827; }
+html:not(.dark) .offline-manager input:not([type='checkbox']):not([type='radio']),
+html:not(.dark) .offline-manager select,
+html:not(.dark) .offline-manager textarea { background-color: #fff; border-color: #d1d5db; color: #111827; }
+html:not(.dark) .offline-manager .offline-active-tab,
+html:not(.dark) .offline-manager :where(.bg-blue-500, .bg-blue-600, .bg-green-600, .bg-red-500, .bg-red-600, .bg-yellow-500, .bg-yellow-600, .bg-purple-600) { color: #fff; }
+
 /* PlanetCreations in-game companion overlay. */
 html.game-overlay-window,
 html.game-overlay-window body,

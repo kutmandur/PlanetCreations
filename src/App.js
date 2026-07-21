@@ -136,6 +136,11 @@ const AppContent = () => {
     }, [isGameOverlay]);
 
     useEffect(() => {
+        if (!window.electronAPI?.isHostedWebView) return;
+        window.electronAPI.reportHostedUiReady?.({ bridgeVersion: 1, gameOverlay: true }).catch(() => {});
+    }, []);
+
+    useEffect(() => {
         if (isOfflineMode) {
             document.documentElement.style.overflow = 'hidden';
         } else {
@@ -307,9 +312,13 @@ const AppContent = () => {
                             let installResult;
                             try {
                                 const urlResult = await getBackupDownloadUrl({ creationId: command.creationId });
+                                const creationSnapshot = await getDoc(doc(db, 'creations', command.creationId));
+                                const creationData = creationSnapshot.exists() ? creationSnapshot.data() : {};
                                 installResult = await window.electronAPI.installQueuedCreation({
                                     creationId: command.creationId,
                                     downloadUrl: urlResult.data.downloadUrl,
+                                    title: creationData.title || '',
+                                    previewUrl: creationData.imageUrls?.[0] || '',
                                 });
                             } catch (error) {
                                 installResult = { success: false, permanent: false, message: error.message };

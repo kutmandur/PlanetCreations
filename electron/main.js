@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
+const { fileURLToPath, pathToFileURL } = require('url');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
@@ -11,10 +12,11 @@ const log = require('electron-log');
 const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
-const { createBackup, listAllBackups, restoreBackup, installCreationPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
+const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
 
 const isDev = !app.isPackaged;
+const useHostedUiInDev = isDev && process.env.PLANETCREATIONS_USE_HOSTED_UI === '1';
 const AUTO_START_ARG = '--autostart';
 const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
@@ -22,7 +24,10 @@ let mainWindow;
 let tray;
 let gameOverlayWindow;
 let gameProcessTimer;
+let updateCheckTimer;
 let overlayDragState = null;
+let isGameOverlayExpanded = false;
+let pendingMainWebRefresh = false;
 let isQuitting = false;
 let hasShownTrayHint = false;
 const activeNotifications = new Set();
@@ -30,9 +35,108 @@ const GAME_PROCESS_NAME = 'PlanetCoaster2.exe';
 const OVERLAY_MIN_SIZE = 56;
 const OVERLAY_MAX_SIZE = 180;
 const OVERLAY_DEFAULT_SIZE = 88;
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const PRODUCTION_WEB_ORIGIN = 'https://planetcreations.net';
 
-function getReactAppUrl() {
-    return isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`;
+function getBundledAppUrl() {
+    return isDev ? 'http://localhost:3000' : pathToFileURL(path.join(__dirname, '../build/index.html')).toString();
+}
+
+function getHostedAppUrl() {
+    return isDev && !useHostedUiInDev ? 'http://localhost:3000' : PRODUCTION_WEB_ORIGIN;
+}
+
+function isAllowedAppUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.origin === PRODUCTION_WEB_ORIGIN || parsed.origin === 'https://www.planetcreations.net') return true;
+        if (isDev && parsed.origin === 'http://localhost:3000') return true;
+        if (parsed.protocol !== 'file:') return false;
+        const filePath = path.resolve(fileURLToPath(parsed));
+        const allowedRoots = [path.resolve(__dirname, '../build'), path.resolve(__dirname, '../public')];
+        return allowedRoots.some((root) => filePath === root || filePath.startsWith(`${root}${path.sep}`));
+    } catch (error) {
+        return false;
+    }
+}
+
+function isHostedAppUrl(rawUrl) {
+    try {
+        const origin = new URL(rawUrl).origin;
+        return origin === PRODUCTION_WEB_ORIGIN || origin === 'https://www.planetcreations.net';
+    } catch (error) {
+        return false;
+    }
+}
+
+function openSafeExternalUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+        shell.openExternal(parsed.toString());
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+function secureAppWindow(browserWindow) {
+    browserWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+        if (isAllowedAppUrl(navigationUrl)) return;
+        event.preventDefault();
+        openSafeExternalUrl(navigationUrl);
+    });
+    browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+        openSafeExternalUrl(url);
+        return { action: 'deny' };
+    });
+}
+
+function isTrustedIpcSender(event, allowHosted = false) {
+    const senderUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || '';
+    if (!isAllowedAppUrl(senderUrl)) return false;
+    return allowHosted || !isHostedAppUrl(senderUrl);
+}
+
+function requireTrustedIpcSender(event, allowHosted = false) {
+    if (!isTrustedIpcSender(event, allowHosted)) throw new Error('IPC request rejected for an untrusted page.');
+}
+
+function loadHostedAppWithFallback(browserWindow, hashRoute = '/', { requireOverlayCapability = false } = {}) {
+    const hostedUrl = `${getHostedAppUrl()}#${hashRoute}`;
+    const fallbackUrl = `${getBundledAppUrl()}#${hashRoute}`;
+    let usingFallback = false;
+    let capabilityTimer = null;
+    const loadFallback = (reason) => {
+        if (usingFallback || browserWindow.isDestroyed()) return;
+        usingFallback = true;
+        if (capabilityTimer) clearTimeout(capabilityTimer);
+        log.warn(`Hosted UI unavailable (${reason}); loading bundled fallback.`);
+        browserWindow.loadURL(fallbackUrl).catch((error) => log.error('Bundled UI fallback failed:', error));
+    };
+    const handleLoadFailure = (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+        if (!isMainFrame || usingFallback || !isHostedAppUrl(validatedUrl)) return;
+        loadFallback(`${errorCode}: ${errorDescription}`);
+    };
+    if (browserWindow.__hostedFallbackListener) {
+        browserWindow.webContents.removeListener('did-fail-load', browserWindow.__hostedFallbackListener);
+    }
+    browserWindow.__hostedFallbackListener = handleLoadFailure;
+    browserWindow.webContents.on('did-fail-load', handleLoadFailure);
+    browserWindow.webContents.__hostedUiCapabilities = null;
+    if (requireOverlayCapability) {
+        browserWindow.webContents.once('did-finish-load', () => {
+            if (!isHostedAppUrl(browserWindow.webContents.getURL())) return;
+            capabilityTimer = setTimeout(() => {
+                if (browserWindow.webContents.__hostedUiCapabilities?.gameOverlay !== true) {
+                    loadFallback('hosted UI does not advertise overlay support');
+                }
+            }, 2500);
+        });
+    }
+    const loadPromise = browserWindow.loadURL(hostedUrl);
+    loadPromise.catch((error) => loadFallback(error.message));
+    return loadPromise;
 }
 
 function getOverlaySettingsPath() {
@@ -104,12 +208,14 @@ function createGameOverlayWindow() {
             additionalArguments: ['--game-overlay'],
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
             backgroundThrottling: false,
         },
     });
     gameOverlayWindow.setMenu(null);
+    secureAppWindow(gameOverlayWindow);
     gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
-    gameOverlayWindow.loadURL(`${getReactAppUrl()}#/`);
+    loadHostedAppWithFallback(gameOverlayWindow, '/', { requireOverlayCapability: true });
     gameOverlayWindow.on('closed', () => { gameOverlayWindow = null; });
     return gameOverlayWindow;
 }
@@ -118,6 +224,7 @@ function setOverlayExpanded(expanded) {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed()) return false;
     const settings = readOverlaySettings();
     if (expanded) {
+        isGameOverlayExpanded = true;
         const compact = gameOverlayWindow.getBounds();
         writeOverlaySettings({ x: compact.x, y: compact.y, size: compact.width });
         const area = screen.getDisplayMatching(compact).workArea;
@@ -135,6 +242,7 @@ function setOverlayExpanded(expanded) {
         gameOverlayWindow.webContents.send('overlay-mode-changed', true);
         gameOverlayWindow.focus();
     } else {
+        isGameOverlayExpanded = false;
         const panelBounds = gameOverlayWindow.getBounds();
         writeOverlaySettings({ panelBounds });
         const compactBounds = keepBoundsOnScreen({ x: settings.x ?? panelBounds.x, y: settings.y ?? panelBounds.y, width: settings.size, height: settings.size });
@@ -215,6 +323,10 @@ function createTray() {
 function hideMainWindowToTray() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.hide();
+    if (pendingMainWebRefresh && isHostedAppUrl(mainWindow.webContents.getURL())) {
+        pendingMainWebRefresh = false;
+        mainWindow.webContents.reloadIgnoringCache();
+    }
     if (process.platform === 'darwin') app.dock?.hide();
     if (!hasShownTrayHint && tray && process.platform === 'win32') {
         tray.displayBalloon({
@@ -327,6 +439,29 @@ async function checkForUpdatesViaAPI() {
         }
     } catch (error) {
         log.error('Manual update check failed:', error);
+    }
+}
+
+function startDailyUpdateChecks() {
+    if (isDev) return;
+    if (updateCheckTimer) clearInterval(updateCheckTimer);
+    updateCheckTimer = setInterval(() => {
+        log.info('Running scheduled daily update check...');
+        autoUpdater.checkForUpdates().catch((error) => {
+            // The updater also emits an error event, which runs the GitHub API fallback.
+            log.warn('Scheduled update check failed:', error);
+        });
+        refreshHostedWebViews();
+    }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+function refreshHostedWebViews() {
+    if (mainWindow && !mainWindow.isDestroyed() && isHostedAppUrl(mainWindow.webContents.getURL())) {
+        if (mainWindow.isVisible()) pendingMainWebRefresh = true;
+        else mainWindow.webContents.reloadIgnoringCache();
+    }
+    if (gameOverlayWindow && !gameOverlayWindow.isDestroyed() && isHostedAppUrl(gameOverlayWindow.webContents.getURL()) && !isGameOverlayExpanded) {
+        gameOverlayWindow.webContents.reloadIgnoringCache();
     }
 }
 
@@ -549,19 +684,22 @@ function createWindow({ openOnline = false } = {}) {
           preload: path.join(__dirname, 'preload.js'),
           contextIsolation: true,
           nodeIntegration: false,
+          sandbox: true,
           backgroundThrottling: false,
         },
     });
 
     mainWindow.setMenu(null);
+    secureAppWindow(mainWindow);
     const splashPath = isDev ? path.join(__dirname, '../public/splash.html') : path.join(__dirname, '../build/splash.html');
-    const reactAppUrl = getReactAppUrl();
-    if (openOnline) mainWindow.loadURL(reactAppUrl);
+    const bundledAppUrl = getBundledAppUrl();
+    if (openOnline) loadHostedAppWithFallback(mainWindow, '/');
     else mainWindow.loadFile(splashPath);
     
     ipcMain.on('select-mode', (event, mode) => {
-        if (mode === 'online') mainWindow.loadURL(reactAppUrl);
-        else if (mode === 'offline') mainWindow.loadURL(`${reactAppUrl}#/client/dashboard`);
+        if (!isTrustedIpcSender(event) || event.sender !== mainWindow?.webContents) return;
+        if (mode === 'online') loadHostedAppWithFallback(mainWindow, '/');
+        else if (mode === 'offline') mainWindow.loadURL(`${bundledAppUrl}#/client/dashboard`);
     });
 
     if (isDev) mainWindow.webContents.openDevTools();
@@ -579,6 +717,7 @@ function createWindow({ openOnline = false } = {}) {
     mainWindow.once('ready-to-show', () => {
         if (!isDev) {
             autoUpdater.checkForUpdates();
+            startDailyUpdateChecks();
         }
     });
 
@@ -607,22 +746,41 @@ autoUpdater.on('update-available', () => {
 autoUpdater.on('update-downloaded', () => {
     mainWindow.webContents.send('update-downloaded');
 });
-ipcMain.on('restart-app', () => {
+ipcMain.on('restart-app', (event) => {
+    if (!isTrustedIpcSender(event, true)) return;
     isQuitting = true;
     autoUpdater.quitAndInstall();
 });
 
 // --- IPC LISTENER ---
 ipcMain.handle('open-external-link', (event, url) => {
-    shell.openExternal(url);
+    requireTrustedIpcSender(event, true);
+    return openSafeExternalUrl(url);
 });
 
 ipcMain.handle('show-system-notification', (event, payload) => {
+    requireTrustedIpcSender(event, true);
     return showSystemNotification(payload);
 });
 
-ipcMain.handle('get-launch-at-login', () => getLaunchAtLoginStatus());
-ipcMain.handle('set-launch-at-login', (event, enabled) => setLaunchAtLogin(enabled));
+ipcMain.handle('get-launch-at-login', (event) => {
+    requireTrustedIpcSender(event, true);
+    return getLaunchAtLoginStatus();
+});
+ipcMain.handle('report-hosted-ui-ready', (event, capabilities) => {
+    requireTrustedIpcSender(event, true);
+    const senderUrl = event.senderFrame?.url || event.sender.getURL();
+    if (!isHostedAppUrl(senderUrl)) return false;
+    event.sender.__hostedUiCapabilities = {
+        bridgeVersion: Number.isInteger(capabilities?.bridgeVersion) ? capabilities.bridgeVersion : 0,
+        gameOverlay: capabilities?.gameOverlay === true,
+    };
+    return true;
+});
+ipcMain.handle('set-launch-at-login', (event, enabled) => {
+    requireTrustedIpcSender(event, true);
+    return setLaunchAtLogin(enabled);
+});
 ipcMain.on('overlay-drag-start', (event, point) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
     if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
@@ -667,10 +825,16 @@ ipcMain.handle('set-overlay-expanded', (event, expanded) => {
     overlayDragState = null;
     return setOverlayExpanded(Boolean(expanded));
 });
-ipcMain.handle('get-client-identity', () => getClientIdentity());
+ipcMain.handle('get-client-identity', (event) => {
+    requireTrustedIpcSender(event, true);
+    return getClientIdentity();
+});
 ipcMain.handle('install-queued-creation', async (event, payload) => {
+    requireTrustedIpcSender(event, true);
     const creationId = typeof payload?.creationId === 'string' ? payload.creationId.trim() : '';
     const downloadUrl = typeof payload?.downloadUrl === 'string' ? payload.downloadUrl : '';
+    const title = typeof payload?.title === 'string' ? payload.title.trim().slice(0, 200) : '';
+    const previewUrl = typeof payload?.previewUrl === 'string' ? payload.previewUrl : '';
     if (!creationId || creationId.length > 128) {
         return { success: false, permanent: true, message: 'The creation ID is invalid.' };
     }
@@ -678,7 +842,9 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
     let tempPath = null;
     try {
         tempPath = await downloadR2PackageToTemp(downloadUrl);
-        return await installCreationPackage(app, tempPath, creationId, getFrontierPathForInstall());
+        const workshopPath = await archiveWorkshopPackage(app, tempPath, creationId, { title, previewUrl });
+        const result = await installCreationPackage(app, workshopPath, creationId, getFrontierPathForInstall());
+        return { ...result, workshopPath };
     } catch (error) {
         log.error(`Direct install failed for creation ${creationId}:`, error);
         return { success: false, permanent: false, message: error.message };
@@ -688,6 +854,11 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
         }
     }
 });
+
+ipcMain.handle('install-workshop-package', async (_event, packagePath) =>
+    installWorkshopPackage(app, packagePath, getFrontierPathForInstall()));
+ipcMain.handle('uninstall-workshop-package', async (_event, packagePath) =>
+    uninstallWorkshopPackage(app, packagePath));
 
 ipcMain.handle('get-stored-path', () => getStoredPath());
 
@@ -757,6 +928,7 @@ ipcMain.handle('import-backup-from-path', (event, filePath) => {
 });
 
 ipcMain.handle('list-all-local-creations-and-backups', (event) => {
+    requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
     if (!storedPath) {
         return {}; 
@@ -801,6 +973,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
 });
 
 ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => {
+    requireTrustedIpcSender(event, true);
     if (!filePath) {
         return { success: false, message: 'No file path provided.' };
     }
@@ -879,6 +1052,7 @@ ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => 
 });
 
 ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentType) => {
+    requireTrustedIpcSender(event, true);
     try {
         if (!filePath || path.extname(filePath).toLowerCase() !== '.planetcreations' || !fs.existsSync(filePath)) {
             return { success: false, message: 'The prepared backup file is missing or invalid.' };
@@ -955,12 +1129,13 @@ ipcMain.handle('get-media-status', (event, savePath) => getMediaSetStatus(savePa
 app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
     createTray();
-    createWindow({ openOnline: isAutoStart });
+    createWindow({ openOnline: isAutoStart || useHostedUiInDev });
     startGameProcessMonitor();
 });
 app.on('before-quit', () => {
     isQuitting = true;
     if (gameProcessTimer) clearInterval(gameProcessTimer);
+    if (updateCheckTimer) clearInterval(updateCheckTimer);
 });
 app.on('window-all-closed', () => {
     if (!tray || isQuitting) app.quit();

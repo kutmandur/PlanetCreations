@@ -50,8 +50,8 @@ const SubHeader = ({ gameTabs, activeGame, setActiveGame, gameTabRefs, gameGlide
 
     return (
         <div className="flex-shrink-0">
-            <div className="p-2 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner"><div ref={gameGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{gameTabs.map((tab, index) => (<button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setActiveGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeGame === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
-            <div className="p-4 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 p-1 rounded-full mx-auto"><div ref={fileTypeGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{fileTypeTabs.map((tab, index) => (<button key={tab.id} ref={el => fileTypeTabRefs.current[index] = el} onClick={() => setActiveTab(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-semibold text-sm ${ activeTab === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
+            <div className="p-2 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner"><div ref={gameGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{gameTabs.map((tab, index) => (<button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setActiveGame(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium ${ activeGame === tab.id ? 'text-white offline-active-tab' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
+            <div className="p-4 flex items-center justify-center"><div className="relative flex items-center bg-gray-900 p-1 rounded-full mx-auto"><div ref={fileTypeGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />{fileTypeTabs.map((tab, index) => (<button key={tab.id} ref={el => fileTypeTabRefs.current[index] = el} onClick={() => setActiveTab(tab.id)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-semibold text-sm ${ activeTab === tab.id ? 'text-white offline-active-tab' : 'text-gray-300 hover:text-white'}`}>{tab.name}</button>))}</div></div>
         </div>
     );
 };
@@ -72,7 +72,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
         return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
     }
     return (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4 items-start">
             {files.map(file => {
                 const displayName = file.name.includes('-') ? file.name.split('-')[0] : file.name.replace(/\.[^/.]+$/, "");
                 const isInstalled = viewMode === 'media' && mediaStatus && mediaStatus[file.path] === 'installed';
@@ -85,9 +85,9 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                 const isSelected = viewMode === 'backup' && selectedItems && selectedItems.has(file.path);
 
                 return (
-                    <div key={file.path} className={`rounded-lg p-3 flex items-center justify-between transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-l-4 border-green-500' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                    <div key={file.path} className={`rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
                         {viewMode === 'backup' && (
-                            <div className="mr-4 flex-shrink-0">
+                            <div className="self-end flex-shrink-0">
                                 <input
                                     type="checkbox"
                                     className="h-5 w-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500"
@@ -96,27 +96,26 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                 />
                             </div>
                         )}
-                        <div className="flex items-center overflow-hidden flex-grow">
-                            <Icon path={ICONS.cog} className="w-6 h-6 text-gray-400 mr-4 flex-shrink-0" />
-                            <div className="truncate">
-                                <p className="font-semibold text-white truncate" title={file.name}>{displayName}</p>
+                        <div className="flex flex-col items-center overflow-hidden w-full flex-grow text-center">
+                            <div className="truncate w-full">
+                                <p className="font-semibold text-white truncate text-lg" title={file.name}>{displayName}</p>
                                 <p className="text-sm text-gray-500 truncate">{file.name}</p>
                             </div>
                         </div>
-                        <div className="flex items-center space-x-6 flex-shrink-0 ml-4">
-                            <div className="text-center text-sm w-24">
+                        <div className="grid grid-cols-2 gap-2 w-full mt-4">
+                            <div className="text-center text-sm bg-gray-800 rounded-lg p-2">
                                 <p className="text-gray-400 text-xs">Size</p>
                                 <p className="font-semibold text-white">{formatBytes(file.size)}</p>
                             </div>
-                            <div className="text-center text-sm w-32">
+                            <div className="text-center text-sm bg-gray-800 rounded-lg p-2">
                                 <p className="text-gray-400 text-xs">Last Modified</p>
                                 <p className="font-semibold text-white">{new Date(file.modifiedAt).toLocaleString()}</p>
                             </div>
-                            <div className="text-center text-sm w-32">
+                            <div className="text-center text-sm bg-gray-800 rounded-lg p-2 col-span-2">
                                 <p className="text-gray-400 text-xs">Last Backup</p>
                                 <p className="font-semibold text-white">{lastBackupDate ? lastBackupDate.toLocaleString() : 'N/A'}</p>
                             </div>
-                            <div className="flex space-x-2 items-center w-auto">
+                            <div className="flex flex-wrap gap-2 items-center justify-center col-span-2 mt-2">
                                 {viewMode === 'backup' && (
                                     <button onClick={() => onBackupClick(file)} disabled={isBackingUp} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm w-20 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
                                         {isBackingUp ? '...' : 'Backup'}
@@ -133,7 +132,10 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                         <button onClick={() => onDeleteMediaClick(file)} disabled={!hasMedia} title="Delete associated media" className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
                                             Delete Media
                                         </button>
-                                        <ToggleSwitch isToggled={isInstalled} onToggle={() => isInstalled ? onUninstallMedia(file) : onInstallMedia(file)} />
+                                        <div className="flex items-center gap-2 bg-gray-800 rounded-full px-3 py-1.5">
+                                            <span className={`text-xs font-semibold ${isInstalled ? 'text-green-400' : 'text-gray-400'}`}>{isInstalled ? 'Installed' : 'Not installed'}</span>
+                                            <ToggleSwitch isToggled={isInstalled} onToggle={() => isInstalled ? onUninstallMedia(file) : onInstallMedia(file)} />
+                                        </div>
                                     </>
                                 )}
                             </div>
@@ -292,6 +294,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
     const [sortOption, setSortOption] = useState('date_desc');
     const [deleteModalState, setDeleteModalState] = useState({ isOpen: false, backup: null });
     const [selectedBackups, setSelectedBackups] = useState({});
+    const [workshopPreviews, setWorkshopPreviews] = useState({});
     const { activeGame, activeTab } = subHeaderProps;
     
     const SORT_OPTIONS = [ { value: 'date_desc', label: 'Date (Newest)' }, { value: 'date_asc', label: 'Date (Oldest)' }, { value: 'name_asc', label: 'Name (A-Z)' }, { value: 'name_desc', label: 'Name (Z-A)' }, { value: 'count_desc', label: 'Backup Count (Most)' }, { value: 'count_asc', label: 'Backup Count (Fewest)' }, ];
@@ -304,6 +307,13 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 const backups = await window.electronAPI.listAllBackups();
                 if (isMounted) {
                     setAllBackups(backups);
+                    const previewEntries = Object.values(backups).flat()
+                        .filter(backup => backup.category === 'Workshop' && backup.previewPath);
+                    const loadedPreviews = await Promise.all(previewEntries.map(async (backup) => {
+                        try { return [backup.filePath, await window.electronAPI.readFileAsDataURL(backup.previewPath)]; }
+                        catch (error) { return [backup.filePath, null]; }
+                    }));
+                    setWorkshopPreviews(Object.fromEntries(loadedPreviews));
                 }
             } catch(e){ console.error(e); }
         }
@@ -443,6 +453,29 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         }
     };
     
+    const handleWorkshopInstall = async (backup) => {
+        setGlobalLoader({ isLoading: true, message: `Installing ${backup.originalFileName}...` });
+        try {
+            const result = await window.electronAPI.installWorkshopPackage(backup.filePath);
+            alert(result.success ? `Installed ${result.installedFileName || backup.originalFileName}.` : `Installation failed: ${result.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+            fetchBackups();
+        }
+    };
+
+    const handleWorkshopUninstall = async (backup) => {
+        if (!window.confirm(`Uninstall "${backup.originalFileName}" from the game?\n\nThe archived workshop package will be kept.`)) return;
+        setGlobalLoader({ isLoading: true, message: `Uninstalling ${backup.originalFileName}...` });
+        try {
+            const result = await window.electronAPI.uninstallWorkshopPackage(backup.filePath);
+            alert(result.message);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+            fetchBackups();
+        }
+    };
+
     if (loading) return <div className="flex h-full items-center justify-center"><Spinner /></div>;
     const hasBackups = processedBackups && processedBackups.length > 0;
 
@@ -454,7 +487,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 searchTerm={searchTerm} setSearchTerm={setSearchTerm} 
                 sortOption={sortOption} setSortOption={setSortOption} 
                 sortOptions={SORT_OPTIONS} 
-                showRestoreSelected={true}
+                showRestoreSelected={activeView !== 'workshop'}
                 onRestoreSelected={handleRestoreSelected}
                 selectedCount={Object.keys(selectedBackups).length}
             />
@@ -462,20 +495,28 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 {!hasBackups ? (
                     <div className="flex h-full items-center justify-center"><p className="text-gray-400">No backups found for this category.</p></div>
                 ) : (
-                    <div className="space-y-4">
+                    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 items-start ${activeView === 'restore' ? 'xl:grid-cols-3 2xl:grid-cols-4' : 'lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6'}`}>
                         {processedBackups.map(({saveName, backups}) => (
-                            <div key={saveName} className="bg-gray-700 rounded-lg p-3">
-                                <h3 className="font-bold text-lg text-white mb-2">{saveName} ({backups.length})</h3>
+                            <div key={saveName} className="bg-gray-700 rounded-xl overflow-hidden shadow-lg border border-gray-600 hover:border-gray-500 transition-colors">
+                                {activeView === 'workshop' && (
+                                    <div className="h-32 bg-gray-900 flex items-center justify-center overflow-hidden">
+                                        {workshopPreviews[backups[0]?.filePath] ?
+                                            <img src={workshopPreviews[backups[0].filePath]} alt="" className="w-full h-full object-cover" /> :
+                                            <Icon path={ICONS.cog} className="w-12 h-12 text-gray-600" />}
+                                    </div>
+                                )}
+                                <div className="p-3">
+                                <h3 className={`font-bold text-white text-center truncate ${activeView === 'restore' ? 'text-xl my-4' : 'text-base mb-3'}`} title={backups[0]?.workshopTitle || saveName}>{backups[0]?.workshopTitle || saveName}</h3>
                                 <div className="space-y-2">
                                     {backups.map(backup => (
-                                        <div key={backup.backupDate} className="bg-gray-800 rounded-md p-2 flex justify-between items-center">
-                                            <div className="flex items-center">
-                                                <input 
+                                        <div key={backup.backupDate} className="bg-gray-800 rounded-lg p-2.5">
+                                            <div className="flex items-start">
+                                                {activeView !== 'workshop' && <input
                                                     type="checkbox" 
                                                     className="h-5 w-5 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500 mr-4"
                                                     checked={selectedBackups[saveName]?.filePath === backup.filePath}
                                                     onChange={() => handleToggleBackupSelection(saveName, backup)}
-                                                />
+                                                />}
                                                 <div className="flex items-center space-x-2">
                                                     {backup.isSigned && (
                                                         <div title={`Signed by: ${backup.signerUsername}`}>
@@ -485,14 +526,18 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                                                     <div>
                                                         <p className="text-xs font-semibold text-white">{new Date(backup.backupDate).toLocaleString()}</p>
                                                         <p className="text-xs text-gray-400 italic">{backup.note || "No note"}</p>
+                                                        {activeView === 'workshop' && <p className={`text-xs font-semibold mt-1 ${backup.installStatus === 'installed' ? 'text-green-400' : backup.installStatus === 'modified' ? 'text-yellow-400' : 'text-gray-400'}`}>{backup.installStatus === 'installed' ? 'Installed' : backup.installStatus === 'modified' ? 'Installed · game file changed' : 'Not installed'}</p>}
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="flex space-x-2">
-                                                <button onClick={() => handleDeleteClick(backup)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-xs">Delete</button>
+                                            <div className="flex flex-wrap justify-center gap-2 mt-3">
+                                                {activeView === 'workshop' && backup.installStatus === 'not-installed' && <button onClick={() => handleWorkshopInstall(backup)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-xs">Install</button>}
+                                                {activeView === 'workshop' && backup.installStatus !== 'not-installed' && <button onClick={() => handleWorkshopUninstall(backup)} className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-1 px-3 rounded text-xs">Uninstall</button>}
+                                                <button onClick={() => handleDeleteClick(backup)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-xs">{activeView === 'workshop' ? 'Delete Package' : 'Delete'}</button>
                                             </div>
                                         </div>
                                     ))}
+                                </div>
                                 </div>
                             </div>
                         ))}
@@ -875,7 +920,7 @@ const ClientDashboard = ({ user }) => {
     };
     
     return (
-        <div className="h-full flex flex-col bg-gray-800 text-white overflow-hidden" style={activeGameColor.style}>
+        <div className="offline-manager h-full flex flex-col bg-gray-800 text-white overflow-hidden" style={activeGameColor.style}>
             {globalLoader.isLoading && <GlobalLoader message={globalLoader.message} />}
             
             <div className="p-4 flex justify-between items-center flex-shrink-0">
@@ -884,7 +929,7 @@ const ClientDashboard = ({ user }) => {
                     <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div ref={mainGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
                         {MAIN_TABS.map((tab, index) => (
-                            <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => setActiveView(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeView === tab.id ? 'text-white' : 'text-gray-300 hover:text-white'}`}>
+                            <button key={tab.id} ref={el => mainTabRefs.current[index] = el} onClick={() => setActiveView(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${ activeView === tab.id ? 'text-white offline-active-tab' : 'text-gray-300 hover:text-white'}`}>
                                 {tab.name}
                             </button>
                         ))}

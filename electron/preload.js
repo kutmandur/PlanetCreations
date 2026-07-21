@@ -1,52 +1,60 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
-  isElectron: true, 
+const TRUSTED_WEB_ORIGINS = new Set([
+  'https://planetcreations.net',
+  'https://www.planetcreations.net',
+]);
 
-  // --- Update-Funktionen ---
-  onUpdateInfoAvailable: (callback) => ipcRenderer.on('update-info-available', (_event, updateInfo) => callback(updateInfo)),
+let currentOrigin = '';
+try { currentOrigin = window.location.origin; } catch (error) { /* local splash */ }
+const isTrustedHostedView = TRUSTED_WEB_ORIGINS.has(currentOrigin);
+
+const listen = (channel, callback, transform = (_event, ...args) => args) => {
+  const listener = (...args) => callback(...transform(...args));
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+};
+
+// Minimal bridge available to the trusted hosted website. Every privileged main-
+// process handler independently validates the sender as a second security layer.
+const hostedApi = {
+  isElectron: true,
+  isHostedWebView: isTrustedHostedView,
+  isGameOverlay: process.argv.includes('--game-overlay'),
+  reportHostedUiReady: (capabilities) => ipcRenderer.invoke('report-hosted-ui-ready', capabilities),
+
+  onUpdateInfoAvailable: (callback) => listen('update-info-available', callback, (_event, info) => [info]),
   openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
-  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_event, ...args) => callback(...args)),
-  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
+  onUpdateAvailable: (callback) => listen('update-available', callback, (_event, ...args) => args),
+  onUpdateDownloaded: (callback) => listen('update-downloaded', callback, (_event, ...args) => args),
   restartApp: () => ipcRenderer.send('restart-app'),
 
-  // --- Hintergrundbetrieb und native Benachrichtigungen ---
   showSystemNotification: (payload) => ipcRenderer.invoke('show-system-notification', payload),
   getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
-  isGameOverlay: process.argv.includes('--game-overlay'),
+  getClientIdentity: () => ipcRenderer.invoke('get-client-identity'),
+  installQueuedCreation: (payload) => ipcRenderer.invoke('install-queued-creation', payload),
+  onNavigateToRoute: (callback) => listen('navigate-to-route', callback, (_event, route) => [route]),
+  onBackupImportStatus: (callback) => listen('backup-import-status', callback, (_event, status) => [status]),
+
+  listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),
+  prepareBackupForUpload: (filePath, idToken) => ipcRenderer.invoke('prepare-backup-for-upload', filePath, idToken),
+  uploadBackupFile: (filePath, uploadUrl, contentType) => ipcRenderer.invoke('upload-backup-file', filePath, uploadUrl, contentType),
+
   startOverlayDrag: (point) => ipcRenderer.send('overlay-drag-start', point),
   moveOverlay: (point) => ipcRenderer.send('overlay-drag-move', point),
   endOverlayDrag: () => ipcRenderer.send('overlay-drag-end'),
   resizeOverlay: (direction) => ipcRenderer.send('overlay-resize', direction),
   setOverlayExpanded: (expanded) => ipcRenderer.invoke('set-overlay-expanded', expanded),
-  onOverlayModeChanged: (callback) => {
-    const listener = (_event, expanded) => callback(expanded);
-    ipcRenderer.on('overlay-mode-changed', listener);
-    return () => ipcRenderer.removeListener('overlay-mode-changed', listener);
-  },
-  getClientIdentity: () => ipcRenderer.invoke('get-client-identity'),
-  installQueuedCreation: (payload) => ipcRenderer.invoke('install-queued-creation', payload),
-  onNavigateToRoute: (callback) => {
-    const listener = (_event, route) => callback(route);
-    ipcRenderer.on('navigate-to-route', listener);
-    return () => ipcRenderer.removeListener('navigate-to-route', listener);
-  },
+  onOverlayModeChanged: (callback) => listen('overlay-mode-changed', callback, (_event, expanded) => [expanded]),
+};
 
-  // --- Auto-Import Funktionen ---
-  onFileImportTriggered: (callback) => ipcRenderer.on('import-file-triggered', (_event, filePath) => callback(filePath)),
-  importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
-  onBackupImportStatus: (callback) => ipcRenderer.on('backup-import-status', (_event, status) => callback(status)),
-  onBackupsUpdated: (callback) => ipcRenderer.on('backups-updated', (_event) => callback()), // NEU: Listener für Refresh
-
-  // --- NEUE FUNKTIONEN FÜR DAS MODAL ---
-  listAllLocalCreationsAndBackups: () => ipcRenderer.invoke('list-all-local-creations-and-backups'),
-  prepareBackupForUpload: (filePath, idToken) => ipcRenderer.invoke('prepare-backup-for-upload', filePath, idToken),
-  uploadBackupFile: (filePath, uploadUrl, contentType) => ipcRenderer.invoke('upload-backup-file', filePath, uploadUrl, contentType),
-
-
-  // --- Kern-Funktionen ---
+const localApi = {
+  ...hostedApi,
   selectMode: (mode) => ipcRenderer.send('select-mode', mode),
+  onFileImportTriggered: (callback) => listen('import-file-triggered', callback, (_event, filePath) => [filePath]),
+  importBackupFromPath: (filePath) => ipcRenderer.invoke('import-backup-from-path', filePath),
+  onBackupsUpdated: (callback) => listen('backups-updated', callback, () => []),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   getStoredPath: () => ipcRenderer.invoke('get-stored-path'),
   readFileAsDataURL: (filePath) => ipcRenderer.invoke('read-file-as-data-url', filePath),
@@ -60,6 +68,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createBackup: (filePath, note, isSigned, idToken) => ipcRenderer.invoke('create-backup', filePath, note, isSigned, idToken),
   listAllBackups: () => ipcRenderer.invoke('list-all-backups'),
   restoreBackup: (backupFilePath, originalFilePath) => ipcRenderer.invoke('restore-backup', backupFilePath, originalFilePath),
+  installWorkshopPackage: (packagePath) => ipcRenderer.invoke('install-workshop-package', packagePath),
+  uninstallWorkshopPackage: (packagePath) => ipcRenderer.invoke('uninstall-workshop-package', packagePath),
   deleteBackup: (filePath) => ipcRenderer.invoke('delete-backup', filePath),
   backupAllCreations: (files, note, isSigned, idToken) => ipcRenderer.invoke('backup-all-creations', files, note, isSigned, idToken),
   scanAllMediaFiles: () => ipcRenderer.invoke('scan-all-media-files'),
@@ -68,4 +78,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installMedia: (savePath, options) => ipcRenderer.invoke('install-media', savePath, options),
   uninstallMedia: (savePath) => ipcRenderer.invoke('uninstall-media', savePath),
   getMediaStatus: (savePath) => ipcRenderer.invoke('get-media-status', savePath),
-});
+};
+
+contextBridge.exposeInMainWorld('electronAPI', isTrustedHostedView ? hostedApi : localApi);
