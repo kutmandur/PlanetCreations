@@ -12,6 +12,63 @@ html {
   overflow-y: scroll;
 }
 
+/* Dark-mode base: sensible page background + default text color so the whole app is
+   dark and readable even where individual components don't yet carry dark: variants.
+   Toggled via the .dark class on <html> (see src/utils/theme.js). */
+html.dark body {
+  background-color: #0f172a; /* slate-900 */
+  color: #e5e7eb;           /* gray-200 */
+}
+
+/* Legacy surface fallback. A large part of the UI predates dark: variants; these
+   mappings make those screens usable immediately while explicit component-level
+   variants can still override them because they have the same specificity and are
+   emitted earlier by Tailwind. Brand/status colors are deliberately untouched. */
+html.dark :where(.bg-white, .bg-gray-50) { background-color: #1f2937; }
+html.dark :where(.bg-gray-100) { background-color: #111827; }
+html.dark :where(.bg-gray-200) { background-color: #374151; }
+html.dark :where(.bg-gray-300) { background-color: #4b5563; }
+
+html.dark :where(.text-black, .text-gray-900, .text-gray-800) { color: #f3f4f6; }
+html.dark :where(.text-gray-700) { color: #e5e7eb; }
+html.dark :where(.text-gray-600) { color: #d1d5db; }
+html.dark :where(.text-gray-500) { color: #9ca3af; }
+
+html.dark :where(.border-gray-100, .border-gray-200, .border-gray-300, .border-gray-400) { border-color: #4b5563; }
+
+html.dark input:not([type='checkbox']):not([type='radio']),
+html.dark textarea,
+html.dark select {
+  background-color: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder { color: #9ca3af; }
+
+/* Creation wizard fields blend into their card in both themes. Their borders and
+   surrounding controls already provide the visual affordance. */
+.creation-form-wizard input:not([type='checkbox']):not([type='radio']),
+.creation-form-wizard textarea,
+.creation-form-wizard select,
+html.dark .creation-form-wizard input:not([type='checkbox']):not([type='radio']),
+html.dark .creation-form-wizard textarea,
+html.dark .creation-form-wizard select {
+  background-color: transparent;
+}
+
+.creation-form-wizard label.block {
+  text-align: center;
+}
+
+html.dark :where(.hover\:bg-gray-50, .hover\:bg-gray-100, .hover\:bg-gray-200):hover { background-color: #4b5563; }
+html.dark :where(.hover\:text-black, .hover\:text-gray-800, .hover\:text-gray-900):hover { color: #fff; }
+/* Smooth the switch between themes for common surfaces. */
+body, body * {
+  transition-property: background-color, border-color;
+  transition-duration: 150ms;
+}
+
 /* Spiel-Farb-Utilities: Die Farbe kommt aus CSS-Variablen, die getGameColor(id).style
    am Wrapper setzt (CSS-Variablen vererben an alle Nachfahren). Bewusst NICHT in
    @layer utilities, damit Tailwind sie nie purged. */

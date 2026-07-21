@@ -45,7 +45,7 @@ const CommunityFilterBar = ({
                     placeholder={placeholder}
                     value={searchTerm}
                     onChange={(e) => onSearchChange(e.target.value)}
-                    className="w-full p-3 pl-10 pr-10 bg-gray-200 rounded-full focus:outline-none focus:ring-2"
+                    className="w-full p-3 pl-10 pr-10 bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-full focus:outline-none focus:ring-2"
                     style={{ '--tw-ring-color': 'var(--theme-color)' }}
                 />
                 <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -62,45 +62,45 @@ const CommunityFilterBar = ({
             <div className="relative" ref={filterMenuRef}>
                 <button
                     onClick={() => setIsFilterVisible(!isFilterVisible)}
-                    className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? 'bg-[--theme-color] text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                    className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? 'bg-[--theme-color] text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
                 >
                     <Icon path={ICONS.filter} className="w-6 h-6" />
                 </button>
                 {isFilterVisible && (
-                    <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl p-4 z-20 border">
+                    <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 z-20 border dark:border-gray-700">
                         <h4 className="font-bold mb-3 border-b pb-2">Filter{sortOptions ? ' & Sort' : ''}</h4>
                         <div className="space-y-4">
                             {sortOptions && (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Sort by</label>
-                                    <select value={filters.sort} onChange={(e) => onFilterChange('sort', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Sort by</label>
+                                    <select value={filters.sort} onChange={(e) => onFilterChange('sort', e.target.value)} className="mt-1 block w-full p-2 border dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 dark:text-gray-100">
                                         {sortOptions.map(opt => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
                                     </select>
                                 </div>
                             )}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Status</label>
-                                <select value={filters.status} onChange={(e) => onFilterChange('status', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Status</label>
+                                <select value={filters.status} onChange={(e) => onFilterChange('status', e.target.value)} className="mt-1 block w-full p-2 border dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 dark:text-gray-100">
                                     {statusOptions.map(opt => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
                                 </select>
                             </div>
                             {ranks.length > 0 && (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Creator Rank</label>
-                                    <select value={filters.rank} onChange={(e) => onFilterChange('rank', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Creator Rank</label>
+                                    <select value={filters.rank} onChange={(e) => onFilterChange('rank', e.target.value)} className="mt-1 block w-full p-2 border dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 dark:text-gray-100">
                                         <option value="all">All Ranks</option>
                                         {ranks.map(rank => (<option key={rank.name} value={rank.name.toLowerCase()}>{rank.name}</option>))}
                                     </select>
                                 </div>
                             )}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Tag</label>
-                                <input type="text" placeholder="e.g. Coaster" value={filters.tag} onChange={(e) => onFilterChange('tag', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm" />
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Tag</label>
+                                <input type="text" placeholder="e.g. Coaster" value={filters.tag} onChange={(e) => onFilterChange('tag', e.target.value)} className="mt-1 block w-full p-2 border dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400" />
                             </div>
                             {availableDlcs.length > 0 && (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Required DLC</label>
-                                    <select value={filters.dlc} onChange={(e) => onFilterChange('dlc', e.target.value)} className="mt-1 block w-full p-2 border rounded-md shadow-sm bg-white">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Required DLC</label>
+                                    <select value={filters.dlc} onChange={(e) => onFilterChange('dlc', e.target.value)} className="mt-1 block w-full p-2 border dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 dark:text-gray-100">
                                         <option value="all">All DLCs</option>
                                         {availableDlcs.map(dlc => (<option key={dlc} value={dlc}>{dlc}</option>))}
                                     </select>

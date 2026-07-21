@@ -199,7 +199,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     if (loadError && !event) {
         return (
             <div className="text-center p-8">
-                <h2 className="text-2xl font-bold text-gray-800">Couldn't load this event</h2>
+                <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Couldn't load this event</h2>
                 <p className="mt-2 text-gray-600">Please check your connection and try again.</p>
                 <button onClick={() => window.location.reload()} className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg">Retry</button>
             </div>
@@ -210,7 +210,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     if (isEventHidden(event) && !canManageEvent) {
         return (
             <div className="text-center p-8">
-                <h2 className="text-2xl font-bold text-gray-800">This event isn't public yet</h2>
+                <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">This event isn't public yet</h2>
                 <p className="mt-2 text-gray-600">Check back once the event has started.</p>
             </div>
         );
@@ -374,7 +374,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
             <div className="p-8 rounded-lg shadow-md flex flex-col gap-8 ring-4" style={{ backgroundColor: hexToRgba(themeColor, 0.2), '--tw-ring-color': themeColor }}>
                 <div className="text-center w-full">
                     <h1 className="text-4xl font-bold mb-2">{String(event.title)}</h1>
-                    <div className="text-gray-600 mb-6">
+                    <div className="text-gray-600 dark:text-gray-300 mb-6">
                         <p className="text-xl font-semibold">{eventCountdown}</p>
                         {votingEnabled && event.separateVoteTime && voteCountdown && (
                             <p className="text-lg font-medium mt-1">{voteCountdown}</p>
@@ -382,14 +382,14 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                         <p className="text-xs mt-1">({formatDate(event.startDate)} to {formatDate(event.endDate)})</p>
                     </div>
                     <h2 className="text-2xl font-bold mt-8 mb-4 border-b pb-2">Description</h2>
-                    <p className="text-gray-700 whitespace-pre-wrap text-center">{String(event.description)}</p>
+                    <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap text-center">{String(event.description)}</p>
                 </div>
 
                 <div className="flex flex-col md:flex-row gap-8">
                     {mediaItems.length > 0 && (
                         <div className="w-full md:w-2/3">
                             <h2 className="text-2xl font-bold mb-4 border-b pb-2 text-center">Gallery</h2>
-                            <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+                            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                 <div className="bg-black flex justify-center items-center aspect-video relative group">
                                     {activeMedia && isYoutube(activeMedia) ? (
                                         <iframe src={getYoutubeEmbedUrl(activeMedia)} title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
@@ -402,7 +402,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                                     </>)}
                                 </div>
                                 {mediaItems.length > 1 && (
-                                    <div className="flex p-2 bg-gray-100 overflow-x-auto">
+                                    <div className="flex p-2 bg-gray-100 dark:bg-gray-700 overflow-x-auto">
                                         {mediaItems.map((item, index) => (
                                             <button key={index} onClick={() => setActiveMediaIndex(index)} className={`w-24 h-16 flex-shrink-0 mx-1 rounded-md overflow-hidden border-2 ${activeMediaIndex === index ? 'border-blue-500' : 'border-transparent'}`}>
                                                 {isYoutube(item) ? (<img src={getYoutubeThumbnail(item)} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />) : (<img src={item} alt={`Thumbnail ${index + 1}`} className="w-full h-full object-cover" />)}
@@ -415,10 +415,10 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     )}
                     <div className={`w-full ${mediaItems.length > 0 ? 'md:w-1/3' : 'md:w-full'} text-center`}>
                         <h2 className="text-2xl font-bold mb-4 border-b pb-2">Rules</h2>
-                        <ul className="text-gray-700 whitespace-pre-wrap text-left list-disc list-inside space-y-2">
+                        <ul className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap text-left list-disc list-inside space-y-2">
                             {event.rules?.map(rule => (<li key={rule.id}>{rule.text}</li>))}
                         </ul>
-                        {(!event.rules || event.rules.length === 0) && (<p className="text-gray-500">No specific rules have been set for this event.</p>)}
+                        {(!event.rules || event.rules.length === 0) && (<p className="text-gray-500 dark:text-gray-400">No specific rules have been set for this event.</p>)}
                         {canManageEvent && (
                             <div className="mt-8 pt-6 border-t max-w-xs mx-auto">
                                 <EventSharingQrCode eventId={eventId} eventName={event.title} />
@@ -432,26 +432,26 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
             {showResultsSection && (
                 <div className="mt-12">
                     {(!resultsLive && visibleResultCreations.length === 0) ? (
-                        <div className="text-center bg-white p-8 rounded-lg shadow-md">
+                        <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-md">
                             <h2 className="text-2xl font-bold">🏁 The event has ended</h2>
-                            <p className="mt-2 text-gray-600">The organizers are preparing the results — check back soon!</p>
+                            <p className="mt-2 text-gray-600 dark:text-gray-300">The organizers are preparing the results — check back soon!</p>
                         </div>
                     ) : (
                         <div>
                             <h2 className="text-3xl font-bold text-center mb-2">{resultsLive ? '🏆 Results' : '🏆 Results (so far)'}</h2>
                             {!resultsLive && (
-                                <p className="text-center text-gray-500 mb-6">More results will be revealed as the organizers publish each video.</p>
+                                <p className="text-center text-gray-500 dark:text-gray-400 mb-6">More results will be revealed as the organizers publish each video.</p>
                             )}
 
                             {/* Video-Gruppen mit Video */}
                             {liveGroups.filter(g => g.videoUrl).length > 0 && (
                                 <div className="grid gap-6 grid-cols-1 md:grid-cols-2 max-w-4xl mx-auto mb-8 mt-6">
                                     {liveGroups.filter(g => g.videoUrl).map(g => (
-                                        <div key={g.id} className="bg-white rounded-lg shadow-md overflow-hidden">
-                                            <div className="aspect-video">
+                                        <div key={g.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+<div className="aspect-video">
                                                 <iframe src={getYoutubeEmbedUrl(g.videoUrl)} title={g.name} frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
                                             </div>
-                                            <p className="p-3 font-bold text-gray-800">{g.name}</p>
+                                            <p className="p-3 font-bold text-gray-800 dark:text-gray-100">{g.name}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -463,14 +463,14 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                                     const globalIdx = resultsOrderedCreations.findIndex(c => c.id === creation.id);
                                     const medal = globalIdx === 0 ? '🥇' : globalIdx === 1 ? '🥈' : globalIdx === 2 ? '🥉' : `${globalIdx + 1}.`;
                                     return (
-                                        <div key={creation.id} className={`flex items-center gap-3 p-3 rounded-lg shadow border bg-white ${globalIdx === 0 && resultsLive ? 'ring-2 ring-yellow-400 bg-yellow-50' : ''}`}>
+                                        <div key={creation.id} className={`flex items-center gap-3 p-3 rounded-lg shadow border dark:border-gray-700 bg-white dark:bg-gray-800 ${globalIdx === 0 && resultsLive ? 'ring-2 ring-yellow-400 bg-yellow-50 dark:bg-yellow-900/30' : ''}`}>
                                             <span className="w-9 text-xl text-center flex-shrink-0">{medal}</span>
-                                            <button onClick={() => handleCreationClick(creation.id)} className="font-semibold text-gray-800 hover:text-blue-600 truncate text-left flex-grow" title={creation.title}>
-                                                {creation.title} <span className="font-normal text-gray-500">by {creation.username}</span>
+                                            <button onClick={() => handleCreationClick(creation.id)} className="font-semibold text-gray-800 dark:text-gray-100 hover:text-blue-600 truncate text-left flex-grow" title={creation.title}>
+                                                {creation.title} <span className="font-normal text-gray-500 dark:text-gray-400">by {creation.username}</span>
                                             </button>
-                                            {votingEnabled && <span className="text-sm text-gray-600 whitespace-nowrap" title="Votes">🗳 {voteCounts[creation.id] || 0}</span>}
+                                            {votingEnabled && <span className="text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap" title="Votes">🗳 {voteCounts[creation.id] || 0}</span>}
                                             {Object.keys(eventReactionCounts).length > 0 && (
-                                                <span className="text-sm text-gray-600 whitespace-nowrap" title="Discord reactions">💬 {eventReactionCounts[creation.id] || 0}</span>
+                                                <span className="text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap" title="Discord reactions">💬 {eventReactionCounts[creation.id] || 0}</span>
                                             )}
                                         </div>
                                     );
@@ -485,11 +485,11 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                 <div className="flex flex-col md:flex-row justify-center items-center mb-8 text-center relative">
                     <h2 className="text-3xl font-bold">Event Submissions</h2>
                     <div className="md:absolute md:right-0 flex items-center gap-4 mt-4 md:mt-0">
-                        <select value={rankFilter} onChange={(e) => setRankFilter(e.target.value)} className="bg-white border border-gray-300 rounded-lg p-2">
+                        <select value={rankFilter} onChange={(e) => setRankFilter(e.target.value)} className="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-100 rounded-lg p-2">
                             <option value="all">All Ranks</option>
                             {community?.ranks?.map(rank => <option key={rank.name} value={rank.name}>{rank.name}</option>)}
                         </select>
-                        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-white border border-gray-300 rounded-lg p-2">
+                        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-100 rounded-lg p-2">
                             <option value="createdAt">Newest</option>
                             <option value="createdAt_asc">Oldest</option>
                             <option value="alphabetical">Alphabetical</option>
@@ -527,7 +527,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                         })}
                     </div>
                 ) : (
-                    <p className="text-center text-gray-500 bg-white p-8 rounded-lg shadow-md">No creations have been submitted to this event yet.</p>
+                    <p className="text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 p-8 rounded-lg shadow-md">No creations have been submitted to this event yet.</p>
                 )}
             </div>
             {isSubmissionModalOpen && (

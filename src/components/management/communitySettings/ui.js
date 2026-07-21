@@ -3,14 +3,14 @@ import Spinner from '../../ui/Spinner';
 
 // Shared styling for text/url inputs across all settings sections.
 export const inputClass =
-  "w-full p-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-gray-400 transition";
+  "w-full p-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-gray-400 transition dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:focus:ring-gray-500";
 
 // White rounded card that holds a single settings section (right pane / mobile detail).
 export const SectionCard = ({ title, description, children }) => (
-  <div className="bg-white rounded-2xl shadow-md p-6 sm:p-8">
+  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-md p-6 sm:p-8">
     <div className="mb-6">
-      <h3 className="text-2xl font-bold text-gray-800">{title}</h3>
-      {description && <p className="text-sm text-gray-500 mt-1">{description}</p>}
+      <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100">{title}</h3>
+      {description && <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{description}</p>}
     </div>
     <div className="space-y-6">{children}</div>
   </div>
@@ -19,15 +19,15 @@ export const SectionCard = ({ title, description, children }) => (
 // Labelled field wrapper: bold label + optional helper text + control.
 export const Field = ({ label, hint, children }) => (
   <div>
-    {label && <label className="block text-gray-700 font-semibold mb-1.5">{label}</label>}
-    {hint && <p className="text-sm text-gray-500 mb-2">{hint}</p>}
+    {label && <label className="block text-gray-700 dark:text-gray-200 font-semibold mb-1.5">{label}</label>}
+    {hint && <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">{hint}</p>}
     {children}
   </div>
 );
 
 // Right-aligned save button; disabled until there are unsaved changes.
 export const SaveBar = ({ dirty, saving, onSave, label = 'Save' }) => (
-  <div className="flex justify-end pt-6 border-t border-gray-100">
+  <div className="flex justify-end pt-6 border-t border-gray-100 dark:border-gray-700">
     <button
       type="button"
       onClick={onSave}

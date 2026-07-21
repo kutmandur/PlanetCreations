@@ -241,7 +241,7 @@ const SharingQrCode = ({
             <button
                 onClick={handleDownload}
                 disabled={status !== 'ready'}
-                className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-semibold disabled:opacity-50"
+                className="w-full mt-3 py-2 px-4 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold disabled:opacity-50 transition-colors"
             >
                 Download QR Code
             </button>

@@ -69,7 +69,7 @@ const EventCard = ({ event, community, userProfile, showStatus }) => {
     return (
         <Link to={`/event/${event.id}`}>
             <article 
-                className="rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ring-4"
+                className="rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ring-4 dark:bg-gray-800"
                 style={{ 
                     backgroundColor: hexToRgba(themeColor, 0.2),
                     '--tw-ring-color': themeColor 
@@ -89,13 +89,13 @@ const EventCard = ({ event, community, userProfile, showStatus }) => {
                 </div>
 
                 <div className="p-4 flex flex-col flex-grow">
-                    <h3 className="text-xl font-bold mb-2 truncate" title={event.title}>{event.title}</h3>
-                    
-                    <p className="text-gray-700 flex-grow text-sm mb-4 h-10 overflow-hidden">
+                    <h3 className="text-xl font-bold mb-2 truncate dark:text-gray-100" title={event.title}>{event.title}</h3>
+
+                    <p className="text-gray-700 dark:text-gray-300 flex-grow text-sm mb-4 h-10 overflow-hidden">
                         {event.description}
                     </p>
-                    
-                    <div className="flex justify-center items-center mt-auto pt-2 border-t text-sm font-semibold text-gray-700" style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
+
+                    <div className="flex justify-center items-center mt-auto pt-2 border-t text-sm font-semibold text-gray-700 dark:text-gray-200" style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
                         <span>{countdown}</span>
                     </div>
                 </div>

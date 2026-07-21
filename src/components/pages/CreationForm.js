@@ -6,7 +6,7 @@ import {
 import { db, auth } from '../../firebase/config';
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
-import { getDefaultGameId, getGame } from '../../utils/gamesRegistry';
+import { getDefaultGameId, getGame, getShareCodeLabel } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
@@ -32,16 +32,16 @@ const DlcSelector = ({ gameDlcs, selectedDlcs, onDlcChange, color }) => {
 
     return (
         <div className="relative" ref={dropdownRef}>
-            <label className="block text-gray-700 font-bold mb-2">Required DLCs (Optional)</label>
+            <label className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2 text-center">Required DLCs (Optional)</label>
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className={`w-full p-3 border rounded-lg flex justify-between items-center text-left bg-white focus:ring-2 ${color.ring}`}
+                className={`relative w-full h-12 px-10 border rounded-lg flex justify-center items-center text-center bg-white focus:ring-2 ${color.ring}`}
             >
                 <span className="text-gray-700">
                     {selectedDlcs.length === 0 ? 'Select required DLCs...' : `${selectedDlcs.length} DLC(s) selected`}
                 </span>
-                <Icon path={ICONS.chevronDown} className="w-5 h-5 text-gray-400" />
+                <Icon path={ICONS.chevronDown} className="absolute right-3 w-5 h-5 text-gray-400" />
             </button>
 
             {isOpen && (
@@ -68,7 +68,7 @@ const DlcSelector = ({ gameDlcs, selectedDlcs, onDlcChange, color }) => {
 };
 
 // --- Sub-component: CommunityCustomFields ---
-const CommunityCustomFields = ({ communities, customData, setCustomData }) => {
+const CommunityCustomFields = ({ communities, customData, setCustomData, embedded = false }) => {
     const handleCustomDataChange = (communityId, fieldId, type, value, option) => {
         setCustomData(prevData => {
             const communityData = prevData[communityId] || {};
@@ -100,8 +100,8 @@ const CommunityCustomFields = ({ communities, customData, setCustomData }) => {
     return (
         <div className="space-y-6">
             {communities.map(community => (
-                <div key={community.id} className="p-4 border rounded-lg">
-                    <h4 className="font-bold text-lg mb-3 border-b pb-2">{community.name} - Custom Info</h4>
+                <div key={community.id} className={embedded ? '' : 'p-4 border rounded-lg'}>
+                    {!embedded && <h4 className="font-bold text-lg mb-3 border-b pb-2">{community.name} - Custom Info</h4>}
                     <div className="space-y-4">
                         {(community.customCreationFields || []).map(field => (
                             <div key={field.id}>
@@ -115,6 +115,51 @@ const CommunityCustomFields = ({ communities, customData, setCustomData }) => {
                     </div>
                 </div>
             ))}
+        </div>
+    );
+};
+
+const CreationCommunityCard = ({ community, selected, onSelect, customData, setCustomData }) => {
+    const ranks = community.membership?.roles || [];
+    const displayedRanks = (ranks.length > 0 ? ranks : ['Member']).map(role => {
+        const definition = (community.ranks || []).find(rank => rank.name?.toLowerCase() === role.toLowerCase());
+        return definition || { name: role, color: '#D1D5DB' };
+    });
+    const hasCustomFields = (community.customCreationFields || []).length > 0;
+    const themeColor = community.themeColor || '#6B7280';
+    const contrastText = (hex) => {
+        if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#111827';
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return ((r * 299 + g * 587 + b * 114) / 1000) >= 145 ? '#111827' : '#ffffff';
+    };
+
+    return (
+        <div className={`rounded-xl border-2 overflow-hidden transition-all duration-300 ${selected ? 'shadow-lg' : 'border-gray-200 dark:border-gray-700'}`} style={selected ? { borderColor: themeColor } : {}}>
+            <button type="button" onClick={() => onSelect(community.id)} aria-pressed={selected} className="relative block w-full text-center bg-white dark:bg-gray-800">
+                <div className="relative h-28 overflow-hidden">
+                    <img src={community.bannerImageUrl || 'https://placehold.co/600x220/333333/ffffff?text=Community'} alt="" className="w-full h-full object-cover" />
+                    <span className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center border-2 border-white shadow font-bold transition-colors ${selected ? 'bg-blue-600 text-white' : 'bg-black/40 text-transparent'}`} aria-hidden="true">✓</span>
+                </div>
+                <div className="p-3">
+                    <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 truncate" title={community.name}>{community.name}</h3>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mt-2 mb-1.5">Your ranks</p>
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                        {displayedRanks.map(rank => (
+                            <span key={rank.name} className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize" style={{ backgroundColor: rank.color || '#D1D5DB', color: contrastText(rank.color || '#D1D5DB') }}>
+                                {rank.name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </button>
+            {selected && hasCustomFields && (
+                <div className="p-4 bg-white dark:bg-gray-800 border-t dark:border-gray-700 animate-fade-in">
+                    <p className="font-bold text-center text-gray-700 dark:text-gray-200 mb-4">Community-specific information</p>
+                    <CommunityCustomFields communities={[community]} customData={customData} setCustomData={setCustomData} embedded />
+                </div>
+            )}
         </div>
     );
 };
@@ -161,7 +206,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [gameDlcs, setGameDlcs] = useState([]);
     const [userCommunities, setUserCommunities] = useState([]);
     const [selectedCommunities, setSelectedCommunities] = useState([]);
-    const [communityConfigs, setCommunityConfigs] = useState([]);
     const [customFieldData, setCustomFieldData] = useState({});
     const [allTags, setAllTags] = useState([]);
     const [suggestedTags, setSuggestedTags] = useState([]);
@@ -177,6 +221,10 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [removeExistingBackup, setRemoveExistingBackup] = useState(false);
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
     const [isPreparingUpload, setIsPreparingUpload] = useState(false);
+    const [activeStep, setActiveStep] = useState('details');
+    const [mobileOpen, setMobileOpen] = useState(false);
+    const [completedSteps, setCompletedSteps] = useState([]);
+    const [isChangingStep, setIsChangingStep] = useState(false);
 
 
     const IMAGE_LIMIT = 25;
@@ -186,7 +234,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const tabRefs = useRef([]);
     const categoryTabRefs = useRef([]);
     const [gliderStyle, setGliderStyle] = useState({});
-    const [categoryGliderStyle, setCategoryGliderStyle] = useState({});
+    const [categoryGliderStyle, setCategoryGliderStyle] = useState({ opacity: 0 });
     const color = getGameColor(game);
 
     const TABS = useGames();
@@ -262,9 +310,30 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 const snapshot = await getDocs(membershipsRef);
                 if (snapshot.empty) { setUserCommunities([]); return; }
                 const communityIds = snapshot.docs.map(doc => doc.id);
+                const memberships = new Map(snapshot.docs.map(membershipDoc => [membershipDoc.id, membershipDoc.data()]));
                 const communityQuery = query(collection(db, 'communitys'), where(documentId(), 'in', communityIds));
                 const communityDocs = await getDocs(communityQuery);
-                const communities = communityDocs.docs.map(cDoc => ({ id: cDoc.id, ...cDoc.data() }));
+                const legacyMembershipIds = communityDocs.docs
+                    .filter(cDoc => {
+                        const membership = memberships.get(cDoc.id) || {};
+                        return cDoc.data().ownerId !== user.uid && !Array.isArray(membership.roles) && !membership.role;
+                    })
+                    .map(cDoc => cDoc.id);
+                const legacyMemberDocs = await Promise.all(legacyMembershipIds.map(communityId => getDoc(doc(db, 'communitys', communityId, 'members', user.uid))));
+                const legacyMembers = new Map(legacyMembershipIds.map((communityId, index) => [communityId, legacyMemberDocs[index].exists() ? legacyMemberDocs[index].data() : {}]));
+                const communities = communityDocs.docs.map(cDoc => {
+                    const communityData = cDoc.data();
+                    const membershipData = memberships.get(cDoc.id) || {};
+                    const memberData = (Array.isArray(membershipData.roles) || membershipData.role)
+                        ? membershipData
+                        : (legacyMembers.get(cDoc.id) || membershipData);
+                    const roles = Array.isArray(memberData.roles)
+                        ? memberData.roles
+                        : (memberData.role ? [memberData.role] : []);
+                    const normalizedRoles = roles.map(role => String(role).toLowerCase());
+                    if (communityData.ownerId === user.uid && !normalizedRoles.includes('owner')) normalizedRoles.unshift('owner');
+                    return { id: cDoc.id, ...communityData, membership: { ...memberData, roles: normalizedRoles } };
+                });
                 setUserCommunities(communities);
             };
             fetchCommunities();
@@ -289,13 +358,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             return !community.allowedGames || community.allowedGames.includes(game);
         }));
     }, [game, userCommunities]);
-
-    useEffect(() => {
-        const configs = userCommunities.filter(community =>
-            selectedCommunities.includes(community.id) && community.customCreationFields?.length > 0
-        );
-        setCommunityConfigs(configs);
-    }, [selectedCommunities, userCommunities]);
 
     useEffect(() => {
         const fetchTags = async () => {
@@ -342,18 +404,22 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     }, [game, TABS, updateCategory]);
 
     useEffect(() => {
-        const gameCategories = CATEGORIES[game] || [];
-        if (gameCategories.length > 0) {
-            setTimeout(() => {
-                const activeCatIndex = gameCategories.findIndex(cat => cat === category);
-                const activeCatRef = categoryTabRefs.current[activeCatIndex];
-                if (activeCatRef) {
-                    setCategoryGliderStyle({ left: activeCatRef.offsetLeft, width: activeCatRef.offsetWidth, opacity: 1 });
-                }
-            }, 50);
-        } else {
-            setCategoryGliderStyle({ opacity: 0 });
-        }
+        const updateCategoryGlider = () => {
+            const gameCategories = CATEGORIES[game] || [];
+            const activeIndex = gameCategories.findIndex(cat => cat === category);
+            const activeButton = categoryTabRefs.current[activeIndex];
+            if (activeButton) {
+                setCategoryGliderStyle({ left: activeButton.offsetLeft, width: activeButton.offsetWidth, opacity: 1 });
+            } else {
+                setCategoryGliderStyle({ opacity: 0 });
+            }
+        };
+        const timer = setTimeout(updateCategoryGlider, 50);
+        window.addEventListener('resize', updateCategoryGlider);
+        return () => {
+            clearTimeout(timer);
+            window.removeEventListener('resize', updateCategoryGlider);
+        };
     }, [game, category, CATEGORIES]);
 
     const handleDlcChange = (dlcName) => {
@@ -494,8 +560,26 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     };
 
 
+    const hasAtLeastOneValidTag = () => tags
+        .split(',')
+        .map(tag => tag.trim())
+        .some(tag => tag && !containsBlacklistedWord(tag, blacklist));
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (!title.trim() || !description.trim() || !category || !hasAtLeastOneValidTag()) {
+            setActiveStep('details');
+            setMobileOpen(true);
+            setModalMessage('Please complete the title, description, creation type and add at least one tag.');
+            return;
+        }
+        if (!shareCode.trim()) {
+            setActiveStep('savegame');
+            setMobileOpen(true);
+            setModalMessage('Please enter a share code.');
+            return;
+        }
         
         if (isUploading) {
             setModalMessage("Please wait for the backup upload to finish.");
@@ -504,6 +588,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
         // Custom Media Link wird später via window.open geöffnet — nur http(s) zulassen.
         if (customMediaLink.trim() && !isSafeHttpUrl(customMediaLink)) {
+            setActiveStep('savegame');
+            setMobileOpen(true);
             setModalMessage("The Custom Media Link must be a valid http(s) URL.");
             return;
         }
@@ -667,10 +753,87 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const selectedTags = tags.split(',').map(t => t.trim()).filter(Boolean);
 
+    const WIZARD_STEPS = [
+        { id: 'details', label: 'Details' },
+        { id: 'savegame', label: 'Savegame' },
+        { id: 'media', label: 'Gallery' },
+        { id: 'sharing', label: 'Communitys' },
+    ];
+    const activeStepIndex = WIZARD_STEPS.findIndex(step => step.id === activeStep);
+    const isLastStep = activeStepIndex === WIZARD_STEPS.length - 1;
+    const activeStepLabel = WIZARD_STEPS[activeStepIndex]?.label || '';
+
+    const goToStep = (stepId) => {
+        setActiveStep(stepId);
+        setMobileOpen(true);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const isStepValid = (stepId) => {
+        if (stepId === 'details') return !!(title.trim() && description.trim() && category && hasAtLeastOneValidTag());
+        if (stepId === 'savegame') return !!shareCode.trim() && (!customMediaLink.trim() || isSafeHttpUrl(customMediaLink));
+        return true;
+    };
+
+    const goNext = (event) => {
+        event?.preventDefault();
+        event?.stopPropagation();
+        if (isChangingStep) return;
+        if (activeStep === 'details' && (!title.trim() || !description.trim() || !category || !hasAtLeastOneValidTag())) {
+            setCompletedSteps(prev => prev.filter(step => step !== activeStep));
+            setModalMessage('Please complete the title, description, creation type and add at least one tag before continuing.');
+            return;
+        }
+        if (activeStep === 'savegame' && !shareCode.trim()) {
+            setCompletedSteps(prev => prev.filter(step => step !== activeStep));
+            setModalMessage('Please enter a share code before continuing.');
+            return;
+        }
+        if (activeStep === 'savegame' && customMediaLink.trim() && !isSafeHttpUrl(customMediaLink)) {
+            setCompletedSteps(prev => prev.filter(step => step !== activeStep));
+            setModalMessage('The Custom Media Link must be a valid http(s) URL.');
+            return;
+        }
+        setCompletedSteps(prev => prev.includes(activeStep) ? prev : [...prev, activeStep]);
+        const nextStep = WIZARD_STEPS[activeStepIndex + 1];
+        if (nextStep) {
+            setIsChangingStep(true);
+            goToStep(nextStep.id);
+            window.setTimeout(() => setIsChangingStep(false), 400);
+        }
+    };
+
+    const renderTags = () => (
+        <div>
+            <label className="block text-gray-700 font-bold mb-2">Tags <span className="text-red-500">*</span></label>
+            <div className={`w-full p-3 border rounded-lg focus-within:ring-2 ${color.ring}`}>
+                <div className="flex flex-wrap gap-2 mb-2">
+                    {selectedTags.map(tag => {
+                        const isBlacklisted = containsBlacklistedWord(tag, blacklist);
+                        return (
+                            <div key={tag} className={`flex items-center text-sm font-medium px-2.5 py-1 rounded-full ${isBlacklisted ? 'bg-red-200 text-red-800 line-through' : 'bg-gray-200 text-gray-800'}`}>
+                                <span>{tag}</span>
+                                <button type="button" onClick={() => handleRemoveTag(tag)} className={`ml-2 ${isBlacklisted ? 'text-red-600 hover:text-red-800' : 'text-gray-500 hover:text-gray-800'}`}>{!isBlacklisted && <>&times;</>}</button>
+                            </div>
+                        );
+                    })}
+                </div>
+                <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} disabled={selectedTags.length >= TAG_LIMIT} className="w-full bg-transparent focus:outline-none disabled:cursor-not-allowed" placeholder={selectedTags.length >= TAG_LIMIT ? `Maximum of ${TAG_LIMIT} tags reached.` : 'Add tags with spacebar...'} />
+                {suggestedTags.length > 0 && (
+                    <div className="mt-2 pt-2 border-t flex flex-wrap gap-2">
+                        {suggestedTags.map(tag => (
+                            <button key={tag.id} type="button" onClick={() => { handleAddTag(tag.id); setTagInput(''); }} className={`text-sm ${color.bg} ${color.hoverBg} text-white px-2.5 py-1 rounded-full transition-colors`}>{tag.id}</button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
     if (loading && !creationToEditId) return <Spinner />;
 
     return (
-        <div className="max-w-4xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg" style={color.style}>
+        <div className="max-w-5xl mx-auto mt-10 px-4" style={color.style}>
             <SelectBackupModal
                 isOpen={isBackupModalOpen}
                 onClose={() => setIsBackupModalOpen(false)}
@@ -678,58 +841,103 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 game={game}
             />
 
-            <h2 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'New Creation'}</h2>
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <h1 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'Create New Creation'}</h1>
+            <form onSubmit={handleSubmit}>
+                <div className="lg:flex lg:gap-6 lg:items-start">
+                    <nav className={`${mobileOpen ? 'hidden' : 'block'} lg:block lg:w-64 lg:flex-shrink-0`}>
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-md p-2">
+                            {WIZARD_STEPS.map((step, index) => {
+                                const active = step.id === activeStep;
+                                const completed = completedSteps.includes(step.id) && isStepValid(step.id);
+                                return (
+                                    <button key={step.id} type="button" onClick={() => goToStep(step.id)} style={active ? { backgroundColor: color.hex, color: '#fff' } : {}} className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left mb-1 last:mb-0 transition-colors ${active ? '' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+                                        <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-xs font-bold ${completed ? 'bg-green-500 text-white' : active ? 'bg-white/20' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300'}`}>{completed ? '✓' : index + 1}</span>
+                                        <span className="flex-grow min-w-0 font-semibold text-sm truncate">{step.label}</span>
+                                        <Icon path={ICONS.chevronRight} className={`w-4 h-4 flex-shrink-0 lg:hidden ${active ? 'text-white' : 'text-gray-300'}`} />
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </nav>
+                    <section className={`${mobileOpen ? 'block' : 'hidden'} lg:block flex-1 min-w-0 mt-4 lg:mt-0`}>
+                        <button type="button" onClick={() => setMobileOpen(false)} className="lg:hidden flex items-center gap-1 font-semibold mb-3" style={{ color: color.hex }}><Icon path={ICONS.chevronLeft} className="w-5 h-5" />All sections</button>
+                        <div className="creation-form-wizard bg-white dark:bg-gray-800 rounded-2xl shadow-md p-6 sm:p-8 space-y-6">
+                            <div className="relative flex items-center justify-center">
+                                <h2 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100">{activeStepLabel}</h2>
+                                <span className="absolute right-0 text-sm text-gray-400">{activeStepIndex + 1} / {WIZARD_STEPS.length}</span>
+                            </div>
+                {activeStep === 'details' && (<>
                 <div className="flex justify-center my-6">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                    <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} style={gliderStyle} />
                         {TABS.map((tab, index) => (
-                            <button key={tab.id} type="button" ref={el => tabRefs.current[index] = el} onClick={() => setGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${game === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
+                            <button key={tab.id} type="button" ref={el => tabRefs.current[index] = el} onClick={() => setGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${game === tab.id ? 'text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}>{tab.name}</button>
                         ))}
                     </div>
                 </div>
                 <div className="flex justify-center mb-6">
-                    <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                        <div className="absolute h-full rounded-full bg-white transition-all duration-500 ease-in-out shadow" style={categoryGliderStyle} />
+                    <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner w-full max-w-full overflow-hidden">
+                        <div className="absolute top-1 bottom-1 rounded-full bg-white dark:bg-gray-500 shadow transition-all duration-500 ease-in-out" style={categoryGliderStyle} />
                         {(CATEGORIES[game] || []).map((cat, index) => (
-                            <button key={cat} type="button" ref={el => categoryTabRefs.current[index] = el} onClick={() => setCategory(cat)} className={`relative z-10 py-2 px-6 rounded-full transition-colors duration-300 font-medium text-sm whitespace-nowrap ${category === cat ? color.text : 'text-gray-500 hover:text-gray-800'}`}>{cat}</button>
+                            <button key={cat} ref={el => categoryTabRefs.current[index] = el} type="button" title={cat} onClick={() => setCategory(cat)} className={`relative z-10 flex-1 min-w-0 py-2 px-1 sm:px-2 rounded-full transition-colors duration-300 font-medium text-xs sm:text-sm truncate ${category === cat ? `${color.text} dark:text-white` : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100'}`}>{cat}</button>
                         ))}
                     </div>
                 </div>
                 <div>
-                    <label className="block text-gray-700 font-bold mb-2 text-center">Options</label>
                     <div className="flex justify-center flex-wrap gap-4">
-                        <div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Status</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setStatus(status === 'wip' ? 'finished' : 'wip')}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${status === 'wip' ? 'bg-orange-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${status === 'wip' ? 'text-white' : 'text-gray-700'}`}>WIP</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${status === 'finished' ? 'text-white' : 'text-gray-700'}`}>Finished</span></div></div>
                         {getGame(game)?.platforms?.includes('console') && (<div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Platform</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setPlatform(platform === 'pc' ? 'console' : 'pc')}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${platform === 'pc' ? 'bg-blue-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'pc' ? 'text-white' : 'text-gray-700'}`}>PC</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${platform === 'console' ? 'text-white' : 'text-gray-700'}`}>Console</span></div></div>)}
                         {getGame(game)?.modsSupported && (<div className="flex flex-col items-center"><span className="text-sm font-medium text-gray-600 mb-1">Mods</span><div className="relative w-52 h-12 flex items-center bg-gray-200 rounded-full cursor-pointer p-1" onClick={() => setUsesMods(!usesMods)}><div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${!usesMods ? 'bg-red-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`}></div><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${!usesMods ? 'text-white' : 'text-gray-700'}`}>No Mods</span><span className={`w-1/2 text-center z-10 font-semibold transition-colors duration-300 ${usesMods ? 'text-white' : 'text-gray-700'}`}>Using Mods</span></div></div>)}
                     </div>
                 </div>
-                <DlcSelector gameDlcs={gameDlcs} selectedDlcs={requiredDlcs} onDlcChange={handleDlcChange} color={color} />
-                <div>
-                    <label className="block text-gray-700 font-bold mb-2">Title</label>
-                    <HighlightableTextarea value={title} onChange={(e) => setTitle(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} required />
+                <div className="flex flex-col sm:flex-row sm:justify-between gap-y-4 items-end">
+                    <div className="w-full sm:w-1/4">
+                        <span className="block text-sm font-bold text-gray-700 dark:text-gray-200 mb-2 text-center">Status</span>
+                        <div className="relative w-full h-12 flex items-center bg-gray-200 dark:bg-gray-700 rounded-full cursor-pointer p-1" onClick={() => setStatus(status === 'wip' ? 'finished' : 'wip')}>
+                            <div className={`absolute w-1/2 h-10 rounded-full shadow-inner transition-all duration-300 ease-in-out ${status === 'wip' ? 'bg-orange-500 left-1' : 'bg-green-500 left-1/2 -ml-1'}`} />
+                            <span className={`w-1/2 text-center z-10 text-sm font-semibold transition-colors duration-300 ${status === 'wip' ? 'text-white' : 'text-gray-700 dark:text-gray-300'}`}>WIP</span>
+                            <span className={`w-1/2 text-center z-10 text-sm font-semibold transition-colors duration-300 ${status === 'finished' ? 'text-white' : 'text-gray-700 dark:text-gray-300'}`}>Finished</span>
+                        </div>
+                    </div>
+                    <div className="w-full sm:w-[56.25%]">
+                        <DlcSelector gameDlcs={gameDlcs} selectedDlcs={requiredDlcs} onDlcChange={handleDlcChange} color={color} />
+                    </div>
                 </div>
                 <div>
-                    <label className="block text-gray-700 font-bold mb-2">Description</label>
-                    <HighlightableTextarea value={description} onChange={(e) => setDescription(e.target.value)} blacklist={blacklist} rows="5" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} required />
+                    <label className="block text-gray-700 font-bold mb-2">Title <span className="text-red-500">*</span></label>
+                    <HighlightableTextarea value={title} onChange={(e) => setTitle(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
+                </div>
+                <div>
+                    <label className="block text-gray-700 font-bold mb-2">Description <span className="text-red-500">*</span></label>
+                    <HighlightableTextarea value={description} onChange={(e) => setDescription(e.target.value)} blacklist={blacklist} rows="5" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
                 </div>
                 {creationToEditId && (<div><label className="block text-gray-700 font-bold mb-2">Changelog (What's new?)</label><textarea value={changelogEntry} onChange={(e) => setChangelogEntry(e.target.value)} rows="3" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} placeholder="e.g., Added new lighting..." ></textarea></div>)}
+                {renderTags()}
                 
                 {/* Savegame-Upload nur im Desktop-Client — im Browser komplett ausgeblendet */}
+                </>)}
+                {activeStep === 'savegame' && (<>
+                <div>
+                    <label className="block text-gray-700 font-bold mb-2">{getShareCodeLabel(game)} <span className="text-red-500">*</span></label>
+                    <HighlightableTextarea value={shareCode} onChange={(e) => setShareCode(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
+                </div>
+                <div>
+                    <label className="block text-gray-700 font-bold mb-2">Custom Media Link</label>
+                    <input type="url" value={customMediaLink} onChange={(e) => setCustomMediaLink(e.target.value)} className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
+                </div>
                 {window.electronAPI?.isElectron && (
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Add savegame file</label>
-                    <div className={`p-4 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
+                    <div className={`p-2 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
 
                         {isPreparingUpload && (
-                            <div className="flex flex-col items-center justify-center text-gray-600 py-4">
+                            <div className="flex items-center justify-center gap-2 text-gray-600 py-2">
                                 <Spinner />
-                                <p className="mt-2 font-semibold">Preparing upload...</p>
+                                <p className="font-semibold">Preparing upload...</p>
                             </div>
                         )}
 
                         {!isPreparingUpload && !backupInfo && !isUploading && (
-                            <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
+                            <button type="button" onClick={handleAttachFileClick} className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-semibold text-white transition-colors ${color.bg} ${color.hoverBg}`}>
                                 <Icon path={ICONS.upload} className="w-5 h-5" />
                                 Add savegame file
                             </button>
@@ -758,18 +966,20 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                             </div>
                         )}
 
-                        <div className="mt-3 text-xs text-gray-500 bg-gray-100 p-3 rounded-lg">
-                            <p className="font-semibold mb-1 text-gray-700">Why add a savegame?</p>
-                            <ul className="list-disc list-inside space-y-1">
-                                <li>Client Users can one click import your creation to their game.</li>
-                                <li>If you connected custom media to the creation in the client and provide a download link for the custom media backup, the media can be one click installed by others.</li>
-                            </ul>
-                        </div>
+                        <p className="mt-2 text-xs text-center text-gray-500">Optional — lets desktop-client users import your creation with one click.</p>
                     </div>
                 </div>
                 )}
+                {!window.electronAPI?.isElectron && (
+                    <div className="text-center py-3 px-4 border rounded-lg">
+                        <Icon path={ICONS.upload} className="w-8 h-8 mx-auto text-gray-400 mb-1" />
+                        <p className="font-semibold text-gray-700 dark:text-gray-200">Savegame uploads are available in the desktop client.</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Adding a savegame is optional. You can continue without attaching one.</p>
+                    </div>
+                )}
+                </>)}
 
-
+                {activeStep === 'media' && (<>
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Image URLs</label>
                     <div className="p-3 border rounded-lg">
@@ -832,47 +1042,44 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                 </div>
                             )}
                         </Droppable>
-                    </DragDropContext>
+                     </DragDropContext>
                 )}
 
-                <div>
-                    <label className="block text-gray-700 font-bold mb-2">Share Code</label>
-                    <HighlightableTextarea value={shareCode} onChange={(e) => setShareCode(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} required />
-                </div>
-                <div><label className="block text-gray-700 font-bold mb-2">Custom Media Link</label><input type="url" value={customMediaLink} onChange={(e) => setCustomMediaLink(e.target.value)} className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} /></div>
-                
-                <div>
-                    <label className="block text-gray-700 font-bold mb-2">Tags</label>
-                    <div className={`w-full p-3 border rounded-lg focus-within:ring-2 ${color.ring}`}>
-                        <div className="flex flex-wrap gap-2 mb-2">
-                            {selectedTags.map(tag => {
-                                const isBlacklisted = containsBlacklistedWord(tag, blacklist);
-                                return (
-                                    <div key={tag} className={`flex items-center text-sm font-medium px-2.5 py-1 rounded-full ${isBlacklisted ? 'bg-red-200 text-red-800 line-through' : 'bg-gray-200 text-gray-800'}`}>
-                                        <span>{tag}</span>
-                                        <button type="button" onClick={() => handleRemoveTag(tag)} className={`ml-2 ${isBlacklisted ? 'text-red-600 hover:text-red-800' : 'text-gray-500 hover:text-gray-800'}`}>{!isBlacklisted && <>&times;</>}</button>
-                                    </div>
-                                );
-                            })}
+                </>)}
+                {activeStep === 'sharing' && (<>
+                {visibleCommunities.length > 0 && (
+                    <div>
+                        <label className="block text-gray-700 font-bold mb-3 text-center">Assign to Communities</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-1 items-start">
+                            {visibleCommunities.map(community => (
+                                <CreationCommunityCard
+                                    key={community.id}
+                                    community={community}
+                                    selected={selectedCommunities.includes(community.id)}
+                                    onSelect={handleCommunitySelect}
+                                    customData={customFieldData}
+                                    setCustomData={setCustomFieldData}
+                                />
+                            ))}
                         </div>
-                        <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} disabled={selectedTags.length >= TAG_LIMIT} className="w-full bg-transparent focus:outline-none disabled:cursor-not-allowed" placeholder={selectedTags.length >= TAG_LIMIT ? `Maximum of ${TAG_LIMIT} tags reached.` : "Add tags with spacebar..."} />
-                        {suggestedTags.length > 0 && (
-                            <div className="mt-2 pt-2 border-t flex flex-wrap gap-2">
-                                {suggestedTags.map(tag => (
-                                    <button key={tag.id} type="button" onClick={() => { handleAddTag(tag.id); setTagInput(''); }} className={`text-sm ${color.bg} ${color.hoverBg} text-white px-2.5 py-1 rounded-full transition-colors`}>
-                                        {tag.id}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
                     </div>
-                </div>
+                )}
+                </>)}
 
-                {visibleCommunities.length > 0 && (<div><label className="block text-gray-700 font-bold mb-2">Assign to Communities</label><div className="p-3 border rounded-lg flex flex-wrap gap-2">{visibleCommunities.map(c => <button key={c.id} type="button" onClick={() => handleCommunitySelect(c.id)} className={`flex items-center text-sm font-medium px-3 py-1.5 rounded-full transition-colors ${selectedCommunities.includes(c.id) ? 'bg-blue-600 text-white ring-2 ring-offset-1 ring-blue-600' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}><span>{c.name}</span></button>)}</div></div>)}
-                {communityConfigs.length > 0 && (<CommunityCustomFields communities={communityConfigs} customData={customFieldData} setCustomData={setCustomFieldData} />)}
-                <div className="flex space-x-4 pt-4">
-                    <button type="submit" disabled={loading || isUploading} className={`w-full ${color.bg} ${color.hoverBg} text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition-colors`}>{loading ? <Spinner size="small" /> : (creationToEditId ? 'Save Changes' : 'Submit Creation')}</button>
-                    <button type="button" onClick={() => navigate(-1)} className="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors">Cancel</button>
+                <div className="flex justify-between items-center gap-4 pt-6 border-t dark:border-gray-700">
+                    <button type="button" onClick={() => navigate(-1)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2.5 px-5 rounded-xl">Cancel</button>
+                    {isLastStep ? (
+                        <button type="submit" disabled={loading || isUploading || isChangingStep} style={{ backgroundColor: color.hex }} className="text-white font-bold py-2.5 px-6 rounded-xl disabled:opacity-50 hover:brightness-95">
+                            {loading ? 'Saving...' : (creationToEditId ? 'Save Changes' : 'Create Creation')}
+                        </button>
+                    ) : (
+                        <button type="button" onClick={goNext} disabled={isChangingStep} style={{ backgroundColor: color.hex }} className="text-white font-bold py-2.5 px-6 rounded-xl hover:brightness-95 disabled:opacity-50 flex items-center gap-2">
+                            Next <Icon path={ICONS.chevronRight} className="w-5 h-5" />
+                        </button>
+                    )}
+                </div>
+                        </div>
+                    </section>
                 </div>
             </form>
         </div>

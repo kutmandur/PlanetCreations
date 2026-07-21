@@ -60,7 +60,7 @@ service cloud.firestore {
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
     function isValidCreationCreate(data) {
-      return data.keys().hasAll(['title', 'game', 'category', 'userId']) &&
+      return data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              (
                exists(/databases/$(database)/documents/meta/games)
@@ -72,7 +72,7 @@ service cloud.firestore {
              hasNoServerBackupFields(data) &&
              (!('likes' in data.keys()) || data.likes == 0) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             (!('tags' in data.keys()) || (data.tags is list && data.tags.size() <= 20));
+             data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
     }
 
     // Validiert Creation-Daten bei Update (verhindert Likes-Manipulation durch normale User)
@@ -81,7 +81,7 @@ service cloud.firestore {
              data.userId == existing.userId &&
              data.game == existing.game &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             (!('tags' in data.keys()) || (data.tags is list && data.tags.size() <= 20)) &&
+             data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20 &&
              // Activity-Score wird nur serverseitig gepflegt (onCreationActivityScore,
              // Admin SDK umgeht Rules) — Clients dürfen ihn nicht manipulieren.
              data.get('activityScore', 0) == existing.get('activityScore', 0) &&

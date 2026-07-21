@@ -1,11 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { getYoutubeThumbnailUrl } from '../../utils/helpers';
+import { useYoutubeChannelFeed } from '../../hooks/youtubeChannelFeed';
 import Spinner from '../ui/Spinner';
 import CommunityFilterBar from '../management/CommunityFilterBar';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 
 // Kleine Creation-Vorschau mit Titel + Ersteller als Overlay über dem Bild
 const CreationPreviewTile = ({ creation }) => {
@@ -23,9 +21,10 @@ const CreationPreviewTile = ({ creation }) => {
     );
 };
 
-// Video-Karte: großes YouTube-Thumbnail mit Play-Overlay, öffnet das Video
+// Video-Karte: großes YouTube-Thumbnail mit Play-Overlay, öffnet das Video.
+// aspect-video (16:9) statt fester Höhe, damit das Thumbnail nicht beschnitten wird.
 const VideoThumb = ({ url, children }) => (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="relative block h-44 overflow-hidden group">
+    <a href={url} target="_blank" rel="noopener noreferrer" className="relative block aspect-video overflow-hidden group">
         <img
             src={getYoutubeThumbnailUrl(url) || 'https://placehold.co/480x270/333333/ffffff?text=Video'}
             alt="Video thumbnail"
@@ -49,20 +48,9 @@ const CommunityVideosTab = ({ community, creations, events }) => {
 
     const [activeSubTab, setActiveSubTab] = useState(subTabs[0]);
 
-    // Kanal-Videos über den Cloud-Function-Proxy laden (YouTube-RSS ist im
-    // Browser CORS-blockiert); serverseitig 15 min gecacht
-    const { data: channelFeed, isLoading: feedLoading, error: feedError } = useQuery({
-        queryKey: ['youtubeChannelFeed', youtubeChannelUrl],
-        queryFn: async () => {
-            const response = await fetch(`${API_BASE_URL}/youtubeChannelFeed?url=${encodeURIComponent(youtubeChannelUrl)}`);
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-            return result;
-        },
-        enabled: !!youtubeChannelUrl,
-        staleTime: 15 * 60 * 1000,
-        retry: 1,
-    });
+    // Kanal-Videos über den geteilten Hook laden (Prefetch passiert bereits beim
+    // Laden der Community-Seite, daher meist sofort aus dem Cache verfügbar).
+    const { data: channelFeed, isLoading: feedLoading, error: feedError } = useYoutubeChannelFeed(youtubeChannelUrl);
 
     // Showcases: Creations mit derselben showcaseVideoUrl gehören zu einem Showcase
     const showcases = useMemo(() => {
@@ -137,24 +125,17 @@ const CommunityVideosTab = ({ community, creations, events }) => {
         }),
         [eventVideos, eventFilter, searchTerm]);
 
-    const counts = { Youtube: channelFeed?.videos?.length || 0, Showcases: showcases.length, Events: eventVideos.length };
-
     return (
         <div>
             <div className="flex justify-center mb-8">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
+                <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                     {subTabs.map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveSubTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${activeSubTab === tab ? 'bg-[--theme-color] text-white' : 'text-gray-600 hover:text-black'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${activeSubTab === tab ? 'bg-[--theme-color] text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}
                         >
                             {tab}
-                            {counts[tab] > 0 && (
-                                <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${activeSubTab === tab ? 'bg-white text-gray-800' : 'bg-gray-300 text-gray-700'}`}>
-                                    {counts[tab]}
-                                </span>
-                            )}
                         </button>
                     ))}
                 </div>
@@ -164,27 +145,27 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                 feedLoading ? (
                     <div className="py-16"><Spinner /></div>
                 ) : feedError ? (
-                    <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">
+                    <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                         Could not load channel videos. Please check the YouTube link in the community settings.
                     </p>
                 ) : (channelFeed?.videos?.length > 0 ? (
                     <>
                         {channelFeed.channelTitle && (
-                            <p className="text-center text-gray-500 mb-4">
+                            <p className="text-center text-gray-500 dark:text-gray-400 mb-4">
                                 Latest videos from{' '}
                                 <a href={youtubeChannelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-[--theme-color] hover:underline">
                                     {channelFeed.channelTitle}
                                 </a>
                             </p>
                         )}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                             {channelFeed.videos.map(video => (
-                                <div key={video.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
+                                <div key={video.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                     <VideoThumb url={`https://www.youtube.com/watch?v=${video.id}`} />
-                                    <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer" className="block p-3 hover:bg-gray-50">
+                                    <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer" className="block p-3 hover:bg-gray-50 dark:hover:bg-gray-700">
                                         <p className="font-bold line-clamp-2" title={video.title}>{video.title}</p>
                                         {video.published && (
-                                            <p className="text-sm text-gray-500 mt-1">{new Date(video.published).toLocaleDateString()}</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{new Date(video.published).toLocaleDateString()}</p>
                                         )}
                                     </a>
                                 </div>
@@ -192,7 +173,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                         </div>
                     </>
                 ) : (
-                    <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">This channel has no videos yet.</p>
+                    <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">This channel has no videos yet.</p>
                 ))
             )}
 
@@ -215,13 +196,13 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                         />
                     )}
                     {showcases.length === 0 ? (
-                        <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">No showcase videos yet.</p>
+                        <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">No showcase videos yet.</p>
                     ) : filteredShowcases.length === 0 ? (
-                        <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">No showcases match your filters.</p>
+                        <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">No showcases match your filters.</p>
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                             {filteredShowcases.map(showcase => (
-                                <div key={showcase.url} className="bg-white rounded-lg shadow-lg overflow-hidden">
+                                <div key={showcase.url} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                     <VideoThumb url={showcase.url}>
                                         {showcase.name && (
                                             <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 to-transparent px-3 pt-2 pb-6 pointer-events-none">
@@ -254,7 +235,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                                     placeholder="Search event videos..."
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="w-full p-3 pl-4 pr-10 bg-gray-200 rounded-full focus:outline-none focus:ring-2"
+                                    className="w-full p-3 pl-4 pr-10 bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-full focus:outline-none focus:ring-2"
                                     style={{ '--tw-ring-color': 'var(--theme-color)' }}
                                 />
                                 {searchTerm && (
@@ -266,7 +247,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                             <select
                                 value={eventFilter}
                                 onChange={(e) => setEventFilter(e.target.value)}
-                                className="p-3 bg-gray-200 rounded-full text-sm font-medium text-gray-700 focus:outline-none"
+                                className="p-3 bg-gray-200 dark:bg-gray-700 rounded-full text-sm font-medium text-gray-700 dark:text-gray-200 focus:outline-none"
                             >
                                 <option value="all">All Events</option>
                                 {eventsWithVideos.map(event => (
@@ -276,22 +257,22 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                         </div>
                     )}
                     {eventVideos.length > 0 && filteredEventVideos.length === 0 && (
-                        <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">No event videos match your search.</p>
+                        <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">No event videos match your search.</p>
                     )}
                     {eventVideos.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                             {filteredEventVideos.map(({ url, event }, index) => (
-                                <div key={`${event.id}_${index}`} className="bg-white rounded-lg shadow-lg overflow-hidden">
+                                <div key={`${event.id}_${index}`} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                     <VideoThumb url={url} />
-                                    <Link to={`/event/${event.id}`} className="block p-3 hover:bg-gray-50">
+                                    <Link to={`/event/${event.id}`} className="block p-3 hover:bg-gray-50 dark:hover:bg-gray-700">
                                         <p className="font-bold truncate" title={event.title}>{event.title}</p>
-                                        <p className="text-sm text-gray-500">Event video</p>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">Event video</p>
                                     </Link>
                                 </div>
                             ))}
                         </div>
                     ) : (
-                        <p className="text-center text-gray-500 mt-10 py-10 bg-white rounded-lg shadow-md">No event videos yet.</p>
+                        <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">No event videos yet.</p>
                     )}
                 </>
             )}

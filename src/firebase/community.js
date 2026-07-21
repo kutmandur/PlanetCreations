@@ -1,4 +1,4 @@
-import { doc, updateDoc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove } from "firebase/firestore";
+import { doc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove } from "firebase/firestore";
 import { db } from "./config";
 
 /**
@@ -38,6 +38,7 @@ export const joinCommunity = async (communityId, userId) => {
     batch.set(userMembershipRef, {
         communityName: communityName,
         communityId: communityId,
+        roles: [defaultRank.toLowerCase()],
         joinedAt: serverTimestamp()
     });
 
@@ -102,10 +103,10 @@ export const kickAndReportUser = async (communityId, targetUserId, reason, staff
  * @param {string[]} newRoles - The new array of roles to assign.
  */
 export const assignCommunityRole = async (communityId, targetUserId, newRoles) => {
+    const batch = writeBatch(db);
     const memberRef = doc(db, 'communitys', communityId, 'members', targetUserId);
-    await updateDoc(memberRef, {
-        roles: newRoles
-    });
+    batch.update(memberRef, { roles: newRoles });
+    await batch.commit();
 };
 
 /**

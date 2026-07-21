@@ -5,11 +5,13 @@ import Icon from './Icon';
 import NotificationDropdown from './NotificationDropdown';
 import InstallHelp from './InstallHelp';
 import PreloadLink from './PreloadLink';
+import ViewModeToggle from './ViewModeToggle';
+import ThemeToggle from './ThemeToggle';
 import { preloadRoute } from '../../utils/preload';
 
 import logo from '../../assets/logo.png'; 
 
-const Navbar = ({ user, userProfile, onLogout, notifications, className, setModalMessage }) => {
+const Navbar = ({ user, userProfile, onLogout, notifications, className, setModalMessage, onReportBug }) => {
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
     const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
     const profileMenuRef = useRef(null);
@@ -70,6 +72,8 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                         </PreloadLink>
                     )}
 
+                    <ThemeToggle />
+
                     {user ? (
                         <>
                             {isModerator && (
@@ -126,6 +130,23 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                                         >
                                             Settings
                                         </button>
+                                        <button
+                                            onClick={() => { navigate('/client-info'); setIsProfileMenuOpen(false); }}
+                                            onMouseEnter={() => preloadRoute('/client-info')}
+                                            onTouchStart={() => preloadRoute('/client-info')}
+                                            className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        >
+                                            About the Client
+                                        </button>
+                                        {onReportBug && (
+                                            <button
+                                                onClick={() => { onReportBug(); setIsProfileMenuOpen(false); }}
+                                                className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                            >
+                                                Report a Bug
+                                            </button>
+                                        )}
+                                        <ViewModeToggle onSelect={() => setIsProfileMenuOpen(false)} />
                                         <button onClick={handleLogoutAndRedirect} className="w-full text-left block px-4 py-2 text-sm text-red-700 hover:bg-red-50">
                                             Logout
                                         </button>

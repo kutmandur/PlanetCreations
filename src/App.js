@@ -13,6 +13,7 @@ import PreloadLink from './components/ui/PreloadLink';
 import { preloadCriticalComponents } from './utils/preload';
 import lazyWithReload from './utils/lazyWithReload';
 import { isSafeHttpUrl } from './utils/helpers';
+import { watchSystemTheme } from './utils/theme';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -93,6 +94,10 @@ const AppContent = () => {
     const [blacklist, setBlacklist] = useState([]);
     const [showRickRoll, setShowRickRoll] = useState(false);
     const [isBugReportOpen, setIsBugReportOpen] = useState(false);
+
+    // While the user follows the OS setting (no explicit theme choice), apply live
+    // dark/light changes from the system.
+    useEffect(() => watchSystemTheme(), []);
     
     const [homeState, setHomeState] = useState({
         searchTerm: '', filterTag: '', sortBy: 'recommended', activeCategory: 'All',
@@ -405,7 +410,7 @@ const AppContent = () => {
     const showNewCreationButton = user && location.pathname === '/';
 
     return (
-        <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100">
+        <div className="h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900">
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { if (isSafeHttpUrl(externalLink)) { window.open(externalLink, '_blank', 'noopener,noreferrer'); } setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
@@ -436,7 +441,7 @@ const AppContent = () => {
                 </div>
             )}
 
-            <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} />
+            <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} onReportBug={() => setIsBugReportOpen(true)} />
 
             {showVerificationBanner && !isOfflineMode && (
                 <div className="bg-yellow-400 text-center p-2 text-yellow-900 font-semibold flex-shrink-0">
@@ -493,15 +498,10 @@ const AppContent = () => {
                 <footer className="text-center px-4 py-3 text-gray-500 flex-shrink-0">
                     <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 text-sm">
                         <span>&copy; 2025 PlanetCreations.net</span>
-                        <PreloadLink to="/terms-of-service" className="hover:text-gray-800 hover:underline whitespace-nowrap">Terms of Service</PreloadLink>
-                        <PreloadLink to="/impressum" className="hover:text-gray-800 hover:underline whitespace-nowrap">Impressum / Legal Notice</PreloadLink>
-                        <PreloadLink to="/client-info" className="hover:text-gray-800 hover:underline whitespace-nowrap">About the Client</PreloadLink>
-                        {user && (
-                            <button onClick={() => setIsBugReportOpen(true)} className="hover:text-gray-800 hover:underline whitespace-nowrap">
-                                Report a Bug
-                            </button>
-                        )}
+                        <PreloadLink to="/terms-of-service" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Terms of Service</PreloadLink>
+                        <PreloadLink to="/impressum" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Impressum / Legal Notice</PreloadLink>
                     </div>
+                    <p className="mt-2 text-xs text-gray-400">We are not affiliated with or endorsed by Frontier Developments.</p>
                 </footer>
             )}
             {isBugReportOpen && user && (
