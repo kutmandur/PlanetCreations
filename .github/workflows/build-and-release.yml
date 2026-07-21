@@ -32,6 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # dmg-license ist eine macOS-only optionale Dependency des DMG-Builders.
+      # Sie fällt aus dem package-lock.json heraus, wenn dieses auf Windows/Linux
+      # erzeugt wurde, wodurch der Mac-Build sonst mit "Cannot find module
+      # 'dmg-license'" abbricht. --no-save lässt das Lockfile unverändert.
+      - name: Install macOS DMG dependency
+        if: matrix.os == 'macos-latest'
+        run: npm install dmg-license --no-save
+
       # electron-builder baut je Runner sein natives Target (NSIS/DMG/AppImage)
       # und lädt alle Artefakte in dasselbe GitHub-Draft-Release hoch.
       # macOS wird unsigniert gebaut (identity: null in package.json) — Erststart
