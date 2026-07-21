@@ -14,6 +14,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showSystemNotification: (payload) => ipcRenderer.invoke('show-system-notification', payload),
   getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
+  isGameOverlay: process.argv.includes('--game-overlay'),
+  startOverlayDrag: (point) => ipcRenderer.send('overlay-drag-start', point),
+  moveOverlay: (point) => ipcRenderer.send('overlay-drag-move', point),
+  endOverlayDrag: () => ipcRenderer.send('overlay-drag-end'),
+  resizeOverlay: (direction) => ipcRenderer.send('overlay-resize', direction),
+  setOverlayExpanded: (expanded) => ipcRenderer.invoke('set-overlay-expanded', expanded),
+  onOverlayModeChanged: (callback) => {
+    const listener = (_event, expanded) => callback(expanded);
+    ipcRenderer.on('overlay-mode-changed', listener);
+    return () => ipcRenderer.removeListener('overlay-mode-changed', listener);
+  },
   getClientIdentity: () => ipcRenderer.invoke('get-client-identity'),
   installQueuedCreation: (payload) => ipcRenderer.invoke('install-queued-creation', payload),
   onNavigateToRoute: (callback) => {

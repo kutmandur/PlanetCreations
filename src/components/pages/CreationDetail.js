@@ -474,13 +474,13 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     </div>
 
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
-                        <h3 className="text-2xl font-bold mb-4">Description</h3>
-                        <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{creation.description}</p>
+                        <h3 className="text-2xl font-bold mb-4 text-center">Description</h3>
+                        <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap text-center">{creation.description}</p>
                     </div>
 
                     {showcaseVideos.length > 0 && (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
-                            <h3 className="text-2xl font-bold mb-4">Showcase</h3>
+                            <h3 className="text-2xl font-bold mb-4 text-center">Showcase</h3>
                             <div className="flex overflow-x-auto space-x-4 pb-2">
                                 {showcaseVideos.map((video, index) => (
                                     <a key={index} href={video.url} target="_blank" rel="noopener noreferrer" className="block w-48 flex-shrink-0 group">
@@ -499,8 +499,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
                     {sortedChangelog.length > 0 && (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
-                            <h3 className="text-2xl font-bold mb-4">Changelog</h3>
-                            <div className="h-48 overflow-y-auto pr-2 space-y-4">
+                            <h3 className="text-2xl font-bold mb-4 text-center">Changelog</h3>
+                            <div className="h-48 overflow-y-auto pr-2 space-y-4 text-center">
                                 {sortedChangelog.map((entry, index) => (
                                     <div key={index} className="pb-4 border-b last:border-b-0">
                                         <p className="font-semibold text-gray-800 dark:text-gray-100">{entry.text}</p>
@@ -513,7 +513,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
                     {eventDetails && eventSubmissions && (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
-                            <h3 className="text-2xl font-bold mb-4">
+                            <h3 className="text-2xl font-bold mb-4 text-center">
                                 Event Specific Information for <Link to={`/event/${eventDetails.id}`} className="text-blue-500 hover:underline">{eventDetails.title}</Link>
                             </h3>
                             <div className="space-y-4">
@@ -533,22 +533,18 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
                 <div className="w-full lg:w-1/3 space-y-8">
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-                        <Link to={`/profile/${creation.userId}`} className="flex items-center mb-4 cursor-pointer">
+                        <Link to={`/profile/${creation.userId}`} className="flex flex-col items-center text-center mb-4 cursor-pointer">
                             {creatorProfile ? (
                                 <>
-                                    <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover mr-4"/>
-                                    <div>
-                                        <p className="text-sm text-gray-500">Creator</p>
-                                        <span className={`text-xl font-bold ${color.text} hover:underline`}>{displayUsername}</span>
-                                    </div>
+                                    <p className="text-sm text-gray-500 mb-2">Creator</p>
+                                    <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover mb-2"/>
+                                    <span className={`text-xl font-bold ${color.text} hover:underline`}>{displayUsername}</span>
                                 </>
                             ) : (
                                 <>
-                                    <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mr-4"></div>
-                                    <div>
-                                        <p className="text-sm text-gray-500">Creator</p>
-                                        <div className="h-6 w-32 bg-gray-200 rounded animate-pulse"></div>
-                                    </div>
+                                    <p className="text-sm text-gray-500 mb-2">Creator</p>
+                                    <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mb-2"></div>
+                                    <div className="h-6 w-32 bg-gray-200 rounded animate-pulse"></div>
                                 </>
                             )}
                         </Link>
@@ -564,14 +560,14 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         <div className="mt-6 pt-6 border-t space-y-4">
                             {creation.shareCode && (
                                 <div>
-                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">Share Code</p>
+                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1 text-center">Share Code</p>
                                     <button onClick={handleCopyShareCode} className="w-full font-mono bg-gray-100 dark:bg-gray-700 dark:text-gray-100 p-2 rounded text-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">{creation.shareCode}</button>
                                 </div>
                             )}
 
                             {canDirectInstall && (
                                 <div>
-                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">Direct Install</p>
+                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1 text-center">Direct Install</p>
                                     {!isElectron && compatibleClients.length > 1 && (
                                         <select
                                             value={selectedClientId}
@@ -593,9 +589,17 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             )}
                         </div>
                         
-                        {creation.customMediaLink && (<div className="mt-4"><p className="text-sm font-bold text-gray-600 mb-1">Custom Media</p><button onClick={() => setExternalLink(creation.customMediaLink)} className={`${color.text} hover:underline break-all text-left`}>Download Link</button></div>)}
+                        {creation.customMediaLink && (
+                            <div className="mt-4">
+                                <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2 text-center">Custom Media</p>
+                                <button type="button" onClick={() => setExternalLink(creation.customMediaLink)} className="w-full flex items-center justify-center gap-2 p-3 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold transition-colors">
+                                    <Icon path={ICONS.download} className="w-5 h-5" />
+                                    Download Custom Media
+                                </button>
+                            </div>
+                        )}
                         <CreationSharingQrCode creationId={id} creationName={creation.title} />
-                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer">{tag}</button>))}</div></div>
+                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2 text-center">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer">{tag}</button>))}</div></div>
                     </div>
                     {loadingCommunities ? (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 animate-pulse">

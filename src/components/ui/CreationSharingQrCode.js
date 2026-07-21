@@ -14,6 +14,7 @@ const CreationSharingQrCode = ({ creationId, creationName }) => {
             name={creationName}
             fileLabel={creationName}
             copyLabel="Copy Creation Link"
+            headingClassName="text-center"
         />
     );
 };

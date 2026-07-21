@@ -63,6 +63,86 @@ html.dark .creation-form-wizard select {
 
 html.dark :where(.hover\:bg-gray-50, .hover\:bg-gray-100, .hover\:bg-gray-200):hover { background-color: #4b5563; }
 html.dark :where(.hover\:text-black, .hover\:text-gray-800, .hover\:text-gray-900):hover { color: #fff; }
+
+/* PlanetCreations in-game companion overlay. */
+html.game-overlay-window,
+html.game-overlay-window body,
+html.game-overlay-window #root { background: transparent !important; }
+.game-overlay-stage {
+  width: 100vw;
+  height: 100vh;
+  padding: 7%;
+  background: transparent;
+  user-select: none;
+}
+.game-overlay-logo {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: visible;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  cursor: grab;
+  touch-action: none;
+  transition: transform .15s ease;
+}
+.game-overlay-logo:hover { box-shadow: none; }
+.game-overlay-logo.is-dragging { cursor: grabbing; transform: scale(.97); }
+.game-overlay-logo img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; pointer-events: none; }
+.game-overlay-badge {
+  position: absolute;
+  top: -7%;
+  right: -7%;
+  min-width: 28%;
+  height: 28%;
+  padding: 0 5%;
+  border: 2px solid white;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ef4444;
+  color: white;
+  font-size: clamp(9px, 18vw, 15px);
+  line-height: 1;
+  font-weight: 800;
+  box-shadow: 0 3px 10px rgba(0,0,0,.35);
+}
+.game-overlay-chrome {
+  position: fixed;
+  z-index: 10000;
+  inset: 0 0 auto 0;
+  height: 40px;
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #e5e7eb;
+  background: rgba(17,24,39,.97);
+  border-bottom: 1px solid rgba(255,255,255,.12);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.game-overlay-chrome:active { cursor: grabbing; }
+.game-overlay-chrome button {
+  width: 30px;
+  height: 30px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d1d5db;
+  cursor: pointer;
+}
+.game-overlay-chrome button:hover { color: white; background: rgba(255,255,255,.12); }
 /* Smooth the switch between themes for common surfaces. */
 body, body * {
   transition-property: background-color, border-color;
@@ -77,6 +157,96 @@ body, body * {
 .game-text { color: var(--game-color, #6B7280); }
 .game-border { border-color: var(--game-color, #6B7280); }
 .game-ring:focus { --tw-ring-color: var(--game-color, #6B7280); }
+
+/* About the Client: motion is deliberately scoped to this page. */
+.client-hero-grid {
+  opacity: .22;
+  background-image:
+    linear-gradient(rgba(255,255,255,.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.12) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 90%);
+  animation: client-grid-drift 18s linear infinite;
+}
+
+.client-orb { animation: client-orb-float 9s ease-in-out infinite alternate; }
+.client-orb-two { animation-delay: -4s; animation-duration: 12s; }
+.client-gradient-text {
+  color: transparent;
+  background: linear-gradient(90deg, #93c5fd, #c4b5fd, #67e8f9, #93c5fd);
+  background-size: 250% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: client-gradient-shift 6s linear infinite;
+}
+
+.client-hero-enter { opacity: 0; animation: client-rise-in .75s cubic-bezier(.2,.8,.2,1) forwards; }
+.client-hero-kicker { animation-delay: .05s; }
+.client-hero-title { animation-delay: .16s; }
+.client-hero-copy { animation-delay: .28s; }
+.client-hero-actions { animation-delay: .4s; }
+.client-app-preview { opacity: 0; animation: client-preview-in .9s .52s cubic-bezier(.2,.8,.2,1) forwards; }
+
+.client-floating-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 9999px;
+  background: rgba(17,24,39,.9);
+  padding: .55rem .85rem;
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 700;
+  box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  backdrop-filter: blur(8px);
+  animation: client-badge-float 3.5s ease-in-out infinite;
+}
+.client-floating-badge-one { top: 32%; left: -3rem; color: #86efac; }
+.client-floating-badge-two { right: -2.5rem; bottom: 16%; color: #7dd3fc; animation-delay: -1.7s; }
+
+.client-feature-grid .client-feature-card { opacity: 0; animation: client-rise-in .65s cubic-bezier(.2,.8,.2,1) forwards; }
+.client-feature-grid .client-feature-card:nth-child(2) { animation-delay: .08s; }
+.client-feature-grid .client-feature-card:nth-child(3) { animation-delay: .16s; }
+.client-feature-grid .client-feature-card:nth-child(4) { animation-delay: .24s; }
+.client-feature-grid .client-feature-card:nth-child(5) { animation-delay: .32s; }
+.client-feature-grid .client-feature-card:nth-child(6) { animation-delay: .4s; }
+.client-feature-card:hover .client-feature-icon { transform: scale(1.12) rotate(-5deg); }
+.client-feature-icon { transition: transform .3s cubic-bezier(.2,.8,.2,1); }
+.client-card-shine {
+  position: absolute;
+  inset: -100% auto -100% -45%;
+  width: 30%;
+  transform: rotate(18deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+  transition: left .65s ease;
+  pointer-events: none;
+}
+.client-feature-card:hover .client-card-shine { left: 125%; }
+.client-workflow-step:hover .client-step-number { transform: scale(1.08); }
+.client-step-number { transition: transform .2s ease; }
+
+@keyframes client-grid-drift { to { background-position: 42px 42px; } }
+@keyframes client-orb-float { to { transform: translate3d(-55px, 45px, 0) scale(1.15); } }
+@keyframes client-gradient-shift { to { background-position: 250% center; } }
+@keyframes client-rise-in { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes client-preview-in { from { opacity: 0; transform: translateY(30px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes client-badge-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+
+@media (max-width: 900px) {
+  .client-floating-badge { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .client-hero-grid, .client-orb, .client-gradient-text, .client-hero-enter,
+  .client-app-preview, .client-floating-badge, .client-feature-grid .client-feature-card {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  .client-card-shine { display: none; }
+}
 
 @layer utilities {
   @keyframes coaster-spin {

@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen } = require('electron');
+const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -19,9 +20,155 @@ const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
 let mainWindow;
 let tray;
+let gameOverlayWindow;
+let gameProcessTimer;
+let overlayDragState = null;
 let isQuitting = false;
 let hasShownTrayHint = false;
 const activeNotifications = new Set();
+const GAME_PROCESS_NAME = 'PlanetCoaster2.exe';
+const OVERLAY_MIN_SIZE = 56;
+const OVERLAY_MAX_SIZE = 180;
+const OVERLAY_DEFAULT_SIZE = 88;
+
+function getReactAppUrl() {
+    return isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`;
+}
+
+function getOverlaySettingsPath() {
+    return path.join(app.getPath('userData'), 'game-overlay.json');
+}
+
+function readOverlaySettings() {
+    try {
+        const stored = JSON.parse(fs.readFileSync(getOverlaySettingsPath(), 'utf8'));
+        return {
+            x: Number.isFinite(stored.x) ? Math.round(stored.x) : null,
+            y: Number.isFinite(stored.y) ? Math.round(stored.y) : null,
+            size: Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, Number(stored.size) || OVERLAY_DEFAULT_SIZE)),
+            panelBounds: stored.panelBounds || null,
+        };
+    } catch (error) {
+        return { x: null, y: null, size: OVERLAY_DEFAULT_SIZE, panelBounds: null };
+    }
+}
+
+function writeOverlaySettings(patch) {
+    const current = readOverlaySettings();
+    try {
+        fs.writeFileSync(getOverlaySettingsPath(), JSON.stringify({ ...current, ...patch }, null, 2));
+    } catch (error) {
+        log.warn('Could not save game overlay settings:', error);
+    }
+}
+
+function keepBoundsOnScreen(bounds) {
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    return {
+        x: Math.min(Math.max(bounds.x, area.x), area.x + Math.max(0, area.width - bounds.width)),
+        y: Math.min(Math.max(bounds.y, area.y), area.y + Math.max(0, area.height - bounds.height)),
+        width: Math.min(bounds.width, area.width),
+        height: Math.min(bounds.height, area.height),
+    };
+}
+
+function createGameOverlayWindow() {
+    if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) return gameOverlayWindow;
+    const settings = readOverlaySettings();
+    const primaryArea = screen.getPrimaryDisplay().workArea;
+    const initialBounds = keepBoundsOnScreen({
+        x: settings.x ?? primaryArea.x + primaryArea.width - settings.size - 32,
+        y: settings.y ?? primaryArea.y + Math.round((primaryArea.height - settings.size) / 2),
+        width: settings.size,
+        height: settings.size,
+    });
+
+    gameOverlayWindow = new BrowserWindow({
+        ...initialBounds,
+        show: false,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        fullscreenable: false,
+        hasShadow: false,
+        thickFrame: false,
+        icon: getAppIconPath(),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            additionalArguments: ['--game-overlay'],
+            contextIsolation: true,
+            nodeIntegration: false,
+            backgroundThrottling: false,
+        },
+    });
+    gameOverlayWindow.setMenu(null);
+    gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
+    gameOverlayWindow.loadURL(`${getReactAppUrl()}#/`);
+    gameOverlayWindow.on('closed', () => { gameOverlayWindow = null; });
+    return gameOverlayWindow;
+}
+
+function setOverlayExpanded(expanded) {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed()) return false;
+    const settings = readOverlaySettings();
+    if (expanded) {
+        const compact = gameOverlayWindow.getBounds();
+        writeOverlaySettings({ x: compact.x, y: compact.y, size: compact.width });
+        const area = screen.getDisplayMatching(compact).workArea;
+        const saved = settings.panelBounds;
+        const hasValidSavedPanel = saved && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(saved[key]));
+        const desired = hasValidSavedPanel ? saved : {
+            width: Math.min(980, area.width - 48),
+            height: Math.min(780, area.height - 48),
+            x: Math.round(compact.x + compact.width / 2 - Math.min(980, area.width - 48) / 2),
+            y: Math.round(compact.y + compact.height / 2 - Math.min(780, area.height - 48) / 2),
+        };
+        gameOverlayWindow.setResizable(true);
+        gameOverlayWindow.setHasShadow(true);
+        gameOverlayWindow.setBounds(keepBoundsOnScreen(desired), true);
+        gameOverlayWindow.webContents.send('overlay-mode-changed', true);
+        gameOverlayWindow.focus();
+    } else {
+        const panelBounds = gameOverlayWindow.getBounds();
+        writeOverlaySettings({ panelBounds });
+        const compactBounds = keepBoundsOnScreen({ x: settings.x ?? panelBounds.x, y: settings.y ?? panelBounds.y, width: settings.size, height: settings.size });
+        gameOverlayWindow.webContents.send('overlay-mode-changed', false);
+        gameOverlayWindow.setResizable(false);
+        gameOverlayWindow.setHasShadow(false);
+        gameOverlayWindow.setBounds(compactBounds, true);
+    }
+    return true;
+}
+
+function isPlanetCoaster2Running() {
+    if (process.platform !== 'win32') return Promise.resolve(false);
+    return new Promise((resolve) => {
+        execFile('tasklist.exe', ['/FI', `IMAGENAME eq ${GAME_PROCESS_NAME}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (error, stdout = '') => {
+            resolve(!error && stdout.toLowerCase().includes(GAME_PROCESS_NAME.toLowerCase()));
+        });
+    });
+}
+
+async function updateGameOverlayVisibility() {
+    const running = await isPlanetCoaster2Running();
+    if (running) {
+        const overlay = createGameOverlayWindow();
+        if (!overlay.isVisible()) overlay.showInactive();
+    } else if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
+        gameOverlayWindow.hide();
+    }
+}
+
+function startGameProcessMonitor() {
+    updateGameOverlayVisibility();
+    gameProcessTimer = setInterval(updateGameOverlayVisibility, 4000);
+}
 
 function getAppIconPath() {
     return isDev ?
@@ -304,7 +451,10 @@ async function handleUrlImport(urlToHandle) {
 
 
 // --- LOGIK FÜR AUTO-IMPORT BEI DOPPELKLICK / PROTOKOLL ---
-const gotTheLock = app.requestSingleInstanceLock();
+// Development-only escape hatch for an isolated overlay preview while the installed
+// client is already running. Packaged builds always retain single-instance behavior.
+const isOverlayTestInstance = isDev && process.argv.includes('--overlay-test-instance');
+const gotTheLock = isOverlayTestInstance || app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
@@ -405,7 +555,7 @@ function createWindow({ openOnline = false } = {}) {
 
     mainWindow.setMenu(null);
     const splashPath = isDev ? path.join(__dirname, '../public/splash.html') : path.join(__dirname, '../build/splash.html');
-    const reactAppUrl = isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../build/index.html')}`;
+    const reactAppUrl = getReactAppUrl();
     if (openOnline) mainWindow.loadURL(reactAppUrl);
     else mainWindow.loadFile(splashPath);
     
@@ -473,6 +623,50 @@ ipcMain.handle('show-system-notification', (event, payload) => {
 
 ipcMain.handle('get-launch-at-login', () => getLaunchAtLoginStatus());
 ipcMain.handle('set-launch-at-login', (event, enabled) => setLaunchAtLogin(enabled));
+ipcMain.on('overlay-drag-start', (event, point) => {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
+    if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
+    overlayDragState = { pointerX: point.screenX, pointerY: point.screenY, bounds: gameOverlayWindow.getBounds() };
+});
+ipcMain.on('overlay-drag-move', (event, point) => {
+    if (!overlayDragState || !gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
+    if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
+    const next = keepBoundsOnScreen({
+        ...overlayDragState.bounds,
+        x: overlayDragState.bounds.x + Math.round(point.screenX - overlayDragState.pointerX),
+        y: overlayDragState.bounds.y + Math.round(point.screenY - overlayDragState.pointerY),
+    });
+    gameOverlayWindow.setBounds(next);
+});
+ipcMain.on('overlay-drag-end', (event) => {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
+    const bounds = gameOverlayWindow.getBounds();
+    if (gameOverlayWindow.isResizable()) writeOverlaySettings({ panelBounds: bounds });
+    else writeOverlaySettings({ x: bounds.x, y: bounds.y, size: bounds.width });
+    overlayDragState = null;
+});
+ipcMain.on('overlay-resize', (event, direction) => {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || gameOverlayWindow.isResizable() || event.sender !== gameOverlayWindow.webContents) return;
+    const current = gameOverlayWindow.getBounds();
+    const nextSize = Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, current.width + (direction > 0 ? 8 : -8)));
+    const next = keepBoundsOnScreen({
+        x: Math.round(current.x - (nextSize - current.width) / 2),
+        y: Math.round(current.y - (nextSize - current.height) / 2),
+        width: nextSize,
+        height: nextSize,
+    });
+    gameOverlayWindow.setBounds(next);
+    if (overlayDragState) {
+        const pointer = screen.getCursorScreenPoint();
+        overlayDragState = { pointerX: pointer.x, pointerY: pointer.y, bounds: next };
+    }
+    writeOverlaySettings({ x: next.x, y: next.y, size: nextSize });
+});
+ipcMain.handle('set-overlay-expanded', (event, expanded) => {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return false;
+    overlayDragState = null;
+    return setOverlayExpanded(Boolean(expanded));
+});
 ipcMain.handle('get-client-identity', () => getClientIdentity());
 ipcMain.handle('install-queued-creation', async (event, payload) => {
     const creationId = typeof payload?.creationId === 'string' ? payload.creationId.trim() : '';
@@ -762,8 +956,12 @@ app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
     createTray();
     createWindow({ openOnline: isAutoStart });
+    startGameProcessMonitor();
 });
-app.on('before-quit', () => { isQuitting = true; });
+app.on('before-quit', () => {
+    isQuitting = true;
+    if (gameProcessTimer) clearInterval(gameProcessTimer);
+});
 app.on('window-all-closed', () => {
     if (!tray || isQuitting) app.quit();
 });

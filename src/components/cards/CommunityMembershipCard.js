@@ -12,34 +12,24 @@ const CommunityMembershipCard = ({ membership }) => {
         return (yiq >= 128) ? '#000000' : '#ffffff';
     };
 
-    const slugify = (text) => {
-        if (!text) return '';
-        return text.toString().toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/[^\w-]+/g, '')
-            .replace(/--+/g, '-')
-            .replace(/^-+/, '')
-            .replace(/-+$/, '');
-    };
-
     return (
-        <Link to={`/community/${slugify(membership.communityName)}`}>
-            <div className="bg-white rounded-lg shadow-md p-4 flex flex-col h-full transform hover:-translate-y-1 transition-transform duration-300">
-                <div className="flex items-center mb-3">
-                    <img 
-                        src={membership.communityProfileImageUrl || 'https://placehold.co/48x48/e2e8f0/64748b?text=C'} 
-                        alt={`${membership.communityName} profile`}
-                        className="w-12 h-12 rounded-lg object-cover flex-shrink-0 mr-4"
+        <Link to={`/community/${membership.communitySlug}`} className="block">
+            <article className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden h-full transform hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
+                <div className="h-28 overflow-hidden">
+                    <img
+                        src={membership.communityBannerImageUrl || 'https://placehold.co/600x220/333333/ffffff?text=Community'}
+                        alt={`${membership.communityName} banner`}
+                        className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
                     />
-                    <h4 className="font-bold text-lg text-gray-800 truncate">{membership.communityName}</h4>
                 </div>
-                <div>
-                    <p className="text-sm font-semibold text-gray-600 mb-2">Ranks:</p>
-                    <div className="flex flex-wrap gap-2">
-                        {membership.roles && membership.ranks ? (
+                <div className="p-4 text-center">
+                    <h4 className="font-bold text-lg text-gray-800 dark:text-gray-100 truncate" title={membership.communityName}>{membership.communityName}</h4>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mt-2 mb-1.5">Ranks</p>
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                        {membership.roles?.length > 0 && membership.ranks ? (
                             membership.roles.map(roleName => {
                                 const rankInfo = membership.ranks.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-                                const bgColor = rankInfo ? rankInfo.color : '#6B7280';
+                                const bgColor = rankInfo ? rankInfo.color : '#D1D5DB';
                                 const textColor = getTextColorForBackground(bgColor);
 
                                 return (
@@ -53,11 +43,11 @@ const CommunityMembershipCard = ({ membership }) => {
                                 );
                             })
                         ) : (
-                            <span className="text-xs bg-gray-200 px-2.5 py-1 rounded-full">Member</span>
+                            <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-2.5 py-1 rounded-full">Member</span>
                         )}
                     </div>
                 </div>
-            </div>
+            </article>
         </Link>
     );
 };
