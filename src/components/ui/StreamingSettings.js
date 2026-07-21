@@ -159,12 +159,12 @@ const StreamingSettings = ({ setModalMessage }) => {
                 ))}
             </div>
 
-            <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:p-5">
-                <h3 className="text-lg font-bold text-gray-800 text-center mb-4">
+            <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:p-5 dark:border-blue-800 dark:bg-blue-950/40">
+                <h3 className="text-lg font-bold text-gray-800 text-center mb-4 dark:text-blue-100">
                     How to connect {providerInfo.label}
                 </h3>
                 {provider === 'obs' ? (
-                    <ol className="space-y-3 text-sm text-gray-700">
+                    <ol className="space-y-3 text-sm text-gray-700 dark:text-gray-200">
                         <li className="flex gap-3">
                             <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white font-bold flex items-center justify-center">1</span>
                             <span>Open <strong>OBS Studio</strong>, then select <strong>Tools → WebSocket Server Settings</strong> from the top menu.</span>
@@ -187,7 +187,7 @@ const StreamingSettings = ({ setModalMessage }) => {
                         </li>
                     </ol>
                 ) : (
-                    <ol className="space-y-3 text-sm text-gray-700">
+                    <ol className="space-y-3 text-sm text-gray-700 dark:text-gray-200">
                         <li className="flex gap-3">
                             <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500 text-white font-bold flex items-center justify-center">1</span>
                             <span>Open <strong>Streamlabs Desktop</strong> and click the <strong>Settings</strong> cog in the lower-left corner.</span>
@@ -210,11 +210,26 @@ const StreamingSettings = ({ setModalMessage }) => {
                         </li>
                     </ol>
                 )}
-                <p className="mt-4 text-xs text-gray-500 text-center">
+                <p className="mt-4 text-xs text-gray-500 text-center dark:text-blue-200/80">
                     {provider === 'streamlabs'
                         ? 'The API token grants local control of Streamlabs. Keep it private and never share it publicly.'
                         : 'PlanetCreations connects only to OBS on this computer; your streaming account password is never requested.'}
                 </p>
+                <div className="mt-4 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-gray-700 dark:border-blue-700 dark:bg-gray-900/40 dark:text-gray-200">
+                    <p className="font-bold text-center text-gray-800 dark:text-blue-100">Live preview on PlanetCreations</p>
+                    <p className="mt-2">
+                        <strong>YouTube:</strong> Embedding must be enabled for the live video. In <strong>YouTube Studio</strong>, open
+                        <strong> Content → Live</strong>, select the stream, expand <strong>Show more</strong> in its details and enable
+                        <strong> Allow embedding</strong>.
+                    </p>
+                    <p className="mt-2">
+                        <strong>Twitch:</strong> No separate embedding switch is required. The Twitch channel player can be embedded automatically;
+                        viewers may still need to confirm age or content notices before playback.
+                    </p>
+                    <p className="mt-2 text-xs text-center text-gray-500 dark:text-blue-200/80">
+                        If embedding is disabled or restricted, the LIVE badge and external stream link still work, but the gallery preview cannot play the stream.
+                    </p>
+                </div>
             </div>
 
             <div className={`grid grid-cols-1 ${provider === 'streamlabs' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-4 items-end`}>
