@@ -6,6 +6,7 @@
 // austauschbar betreiben kann:
 //   'stream-started' {service} / 'stream-stopped' {} / 'status-changed' {...}
 const WebSocket = require('ws');
+const net = require('net');
 
 const RECONNECT_DELAY_MS = 15 * 1000;
 const REQUEST_TIMEOUT_MS = 10 * 1000;
@@ -23,10 +24,13 @@ class StreamlabsIntegration {
         this.stopped = false;
         this.requestId = 0;
         this.pending = new Map();
+        this.transport = null;
+        this.receiveBuffer = '';
+        this.lastError = null;
     }
 
     getRuntimeStatus() {
-        return { connected: this.connected, streaming: this.streaming, service: this.service };
+        return { connected: this.connected, streaming: this.streaming, service: this.service, error: this.lastError };
     }
 
     emitStatus() {
@@ -35,7 +39,10 @@ class StreamlabsIntegration {
 
     request(resource, method, args = []) {
         return new Promise((resolve, reject) => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            const isOpen = this.transport === 'tcp'
+                ? this.socket && !this.socket.destroyed
+                : this.socket?.readyState === WebSocket.OPEN;
+            if (!isOpen) {
                 reject(new Error('Streamlabs socket is not open.'));
                 return;
             }
@@ -46,7 +53,8 @@ class StreamlabsIntegration {
             }, REQUEST_TIMEOUT_MS);
             this.pending.set(id, { resolve, reject, timeout });
             const request = JSON.stringify({ jsonrpc: '2.0', id, method, params: { resource, args } });
-            this.socket.send(JSON.stringify([request]));
+            if (this.transport === 'tcp') this.socket.write(`${request}\n`);
+            else this.socket.send(JSON.stringify([request]));
         });
     }
 
@@ -85,6 +93,44 @@ class StreamlabsIntegration {
         }
     }
 
+    handleTcpData(chunk) {
+        this.receiveBuffer += chunk.toString('utf8');
+        const messages = this.receiveBuffer.split('\n');
+        this.receiveBuffer = messages.pop() || '';
+        messages.filter(Boolean).forEach((message) => this.handleMessage(message));
+    }
+
+    clearPending(message = 'Streamlabs connection closed.') {
+        for (const { reject, timeout } of this.pending.values()) {
+            clearTimeout(timeout);
+            reject(new Error(message));
+        }
+        this.pending.clear();
+    }
+
+    async initializeConnection({ authenticate = false, token = '' } = {}) {
+        try {
+            if (authenticate) {
+                const authenticated = await this.request('TcpServerService', 'auth', [token]);
+                if (!authenticated) throw new Error('Streamlabs rejected the API token.');
+            }
+            this.connected = true;
+            this.lastError = null;
+            const model = await this.request('StreamingService', 'getModel').catch(() => null);
+            this.streaming = model?.streamingStatus === 'live';
+            await this.request('StreamingService', 'streamingStatusChange').catch(() => null);
+            await this.refreshService();
+            this.log.info(`Connected to Streamlabs Desktop via ${this.transport}.`);
+            this.emitStatus();
+        } catch (error) {
+            this.lastError = error.message;
+            this.log.warn('Streamlabs connection failed:', error.message);
+            this.emitStatus();
+            if (this.transport === 'tcp') this.socket?.destroy();
+            else this.socket?.close();
+        }
+    }
+
     async handleStreamingStatus(status) {
         if (status === 'live' && !this.streaming) {
             this.streaming = true;
@@ -114,45 +160,53 @@ class StreamlabsIntegration {
         }
     }
 
-    async connect() {
+    connect() {
         const config = this.getConfig();
+        if (!config.enabled || this.stopped || this.socket) return;
+        const socket = net.createConnection({ host: '127.0.0.1', port: 28194 });
+        this.socket = socket;
+        this.transport = 'tcp';
+
+        socket.on('data', (raw) => this.handleTcpData(raw));
+        socket.on('error', (error) => { this.lastError = error.message; });
+        socket.on('close', () => {
+            const wasConnected = this.connected;
+            this.socket = null;
+            this.transport = null;
+            this.receiveBuffer = '';
+            this.connected = false;
+            this.streaming = false;
+            this.clearPending();
+            if (wasConnected) {
+                this.emitStatus();
+                this.scheduleReconnect();
+            } else if (!this.stopped && this.getConfig().enabled) {
+                this.connectRemote(config);
+            }
+        });
+        socket.on('connect', () => this.initializeConnection());
+    }
+
+    connectRemote(config = this.getConfig()) {
         if (!config.enabled || this.stopped || this.socket) return;
         const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
         const socket = new WebSocket(`ws://${host}:${config.port}/api/websocket`);
         this.socket = socket;
+        this.transport = 'sockjs';
 
         socket.on('message', (raw) => this.handleSockJsFrame(raw));
-        socket.on('error', () => { /* close-Handler übernimmt das Aufräumen */ });
+        socket.on('error', (error) => { this.lastError = error.message; });
         socket.on('close', () => {
             const wasConnected = this.connected;
             this.socket = null;
+            this.transport = null;
             this.connected = false;
             this.streaming = false;
-            for (const { reject, timeout } of this.pending.values()) {
-                clearTimeout(timeout);
-                reject(new Error('Streamlabs connection closed.'));
-            }
-            this.pending.clear();
-            if (wasConnected) this.emitStatus();
+            this.clearPending();
+            if (wasConnected || this.lastError) this.emitStatus();
             this.scheduleReconnect();
         });
-        socket.on('open', async () => {
-            try {
-                const authenticated = await this.request('TcpServerService', 'auth', [config.token || '']);
-                if (!authenticated) throw new Error('Streamlabs rejected the API token.');
-                this.connected = true;
-                const model = await this.request('StreamingService', 'getModel').catch(() => null);
-                this.streaming = model?.streamingStatus === 'live';
-                await this.request('StreamingService', 'streamingStatusChange').catch(() => null);
-                await this.refreshService();
-                this.log.info('Connected to Streamlabs Desktop.');
-                this.emitStatus();
-            } catch (error) {
-                // Falsche IP, falscher Token oder API noch nicht bereit.
-                this.log.warn('Streamlabs connection failed:', error.message);
-                try { socket.close(); } catch (closeError) { /* noop */ }
-            }
-        });
+        socket.on('open', () => this.initializeConnection({ authenticate: true, token: config.token || '' }));
     }
 
     scheduleReconnect() {
@@ -173,8 +227,12 @@ class StreamlabsIntegration {
         this.stopped = true;
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
         if (this.socket) {
-            try { this.socket.close(); } catch (error) { /* noop */ }
+            try {
+                if (this.transport === 'tcp') this.socket.destroy();
+                else this.socket.close();
+            } catch (error) { /* noop */ }
             this.socket = null;
+            this.transport = null;
             this.connected = false;
             this.streaming = false;
         }

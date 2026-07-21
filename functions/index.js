@@ -565,6 +565,14 @@ exports.getUploadUrl = functions
         const uid = requireAuthenticated(context);
         const fileName = sanitizeBackupFileName(data && data.fileName);
         const fileSize = data && data.fileSize;
+        const ownershipConfirmed = data && data.ownershipConfirmed === true;
+        const hostingAccepted = data && data.hostingAccepted === true;
+        if (!ownershipConfirmed || !hostingAccepted) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "You must confirm ownership and accept hosting before uploading a creation package.",
+            );
+        }
         if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_BACKUP_SIZE_BYTES) {
             throw new functions.https.HttpsError(
                 "invalid-argument",
@@ -582,6 +590,13 @@ exports.getUploadUrl = functions
             expectedSize: fileSize,
             contentType: uploadContentType,
             status: "pending",
+            uploadConsent: {
+                ownershipConfirmed,
+                hostingAccepted,
+                confirmedBy: uid,
+                confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+                version: 1,
+            },
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             expiresAt,
         });
@@ -655,6 +670,13 @@ exports.finalizeBackupUpload = functions
             throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
         }
         const session = sessionSnap.data();
+        if (!session.uploadConsent || session.uploadConsent.ownershipConfirmed !== true ||
+            session.uploadConsent.hostingAccepted !== true || session.uploadConsent.confirmedBy !== uid) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The required upload consent is missing or invalid.",
+            );
+        }
         if (session.status === "completed" && session.creationId === creationId) {
             return { success: true, alreadyFinalized: true };
         }
@@ -719,6 +741,7 @@ exports.finalizeBackupUpload = functions
                 backupMediaSetId: validation.metadata.mediaSetId,
                 backupProcessingError: null,
                 backupUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                backupUploadConsent: session.uploadConsent,
             });
             await sessionRef.update({
                 status: "completed",
