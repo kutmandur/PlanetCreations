@@ -114,6 +114,83 @@ function registerDirectInstallTarget(app, creationId, targetPath, metadata) {
     writeJsonAtomic(registryPath, registry);
 }
 
+function getWorkshopRegistryPath(app) {
+    return path.join(app.getPath('userData'), 'workshop_packages.json');
+}
+
+function getWorkshopPackageRecord(app, packagePath) {
+    return readJson(getWorkshopRegistryPath(app), {})[path.resolve(packagePath)] || null;
+}
+
+function registerWorkshopPackage(app, packagePath, creationId, details = {}) {
+    const registryPath = getWorkshopRegistryPath(app);
+    const registry = readJson(registryPath, {});
+    registry[path.resolve(packagePath)] = {
+        ...registry[path.resolve(packagePath)],
+        creationId,
+        title: details.title || registry[path.resolve(packagePath)]?.title || null,
+        previewPath: details.previewPath || registry[path.resolve(packagePath)]?.previewPath || null,
+        downloadedAt: new Date().toISOString(),
+    };
+    writeJsonAtomic(registryPath, registry);
+}
+
+async function downloadWorkshopPreview(previewUrl, destinationBasePath) {
+    if (!previewUrl) return null;
+    let currentUrl = new URL(previewUrl);
+    for (let redirects = 0; redirects <= 3; redirects++) {
+        if (currentUrl.protocol !== 'https:' || /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(currentUrl.hostname)) {
+            throw new Error('The workshop preview URL is not allowed.');
+        }
+        const response = await fetch(currentUrl.toString(), { redirect: 'manual', size: 8 * 1024 * 1024 });
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+            const location = response.headers.get('location');
+            if (!location) throw new Error('The workshop preview redirect is invalid.');
+            currentUrl = new URL(location, currentUrl);
+            continue;
+        }
+        if (!response.ok) throw new Error(`Workshop preview download failed (${response.status}).`);
+        const mimeType = String(response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+        const extensionByMime = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
+        const extension = extensionByMime[mimeType];
+        if (!extension) throw new Error('The workshop preview is not a supported image.');
+        const buffer = await response.buffer();
+        if (!buffer.length || buffer.length > 8 * 1024 * 1024) throw new Error('The workshop preview is empty or too large.');
+        const signatureMatches =
+            (mimeType === 'image/jpeg' && buffer[0] === 0xff && buffer[1] === 0xd8) ||
+            (mimeType === 'image/png' && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) ||
+            (mimeType === 'image/gif' && /^GIF8[79]a$/.test(buffer.subarray(0, 6).toString('ascii'))) ||
+            (mimeType === 'image/webp' && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP');
+        if (!signatureMatches) throw new Error('The workshop preview content does not match its image type.');
+        const previewPath = `${destinationBasePath}${extension}`;
+        fs.writeFileSync(previewPath, buffer);
+        return previewPath;
+    }
+    throw new Error('The workshop preview redirected too many times.');
+}
+
+async function archiveWorkshopPackage(app, sourcePath, creationId, details = {}) {
+    const verification = await verifyBackup(sourcePath);
+    if (verification.status !== 'verified' || verification.metadata?.packageType !== 'creation') {
+        throw new Error(verification.error || 'Only signed and verified creation packages can be archived.');
+    }
+    const workshopDir = path.join(getBackupBaseDir(app), 'Workshop');
+    fs.mkdirSync(workshopDir, { recursive: true });
+    const originalName = path.basename(verification.metadata.originalFileName || 'creation');
+    const baseName = path.basename(originalName, path.extname(originalName)).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safeCreationId = creationId.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const destinationPath = path.join(workshopDir, `${baseName}_${safeCreationId}.PlanetCreations`);
+    fs.copyFileSync(sourcePath, destinationPath);
+    let previewPath = null;
+    try {
+        previewPath = await downloadWorkshopPreview(details.previewUrl, path.join(workshopDir, `${baseName}_${safeCreationId}.preview`));
+    } catch (error) {
+        console.warn(`Could not download workshop preview for ${creationId}:`, error.message);
+    }
+    registerWorkshopPackage(app, destinationPath, creationId, { title: details.title, previewPath });
+    return destinationPath;
+}
+
 function getLatestGameFileMtime(directoryPath, gameId) {
     const allowedExtensions = new Set(Object.entries(gameByExtension)
         .filter(([, mappedGameId]) => mappedGameId === gameId)
@@ -265,6 +342,15 @@ function deleteBackup(app, backupFilePath) {
             return { success: false, message: 'Error: Invalid backup path.' };
         }
         if (!fs.existsSync(backupFilePath)) return { success: false, message: 'Error: Backup file not found.' };
+        const resolvedPath = path.resolve(backupFilePath);
+        const workshopRegistryPath = getWorkshopRegistryPath(app);
+        const workshopRegistry = readJson(workshopRegistryPath, {});
+        const workshopRecord = workshopRegistry[resolvedPath];
+        if (workshopRecord?.previewPath && fs.existsSync(workshopRecord.previewPath)) fs.unlinkSync(workshopRecord.previewPath);
+        if (workshopRecord) {
+            delete workshopRegistry[resolvedPath];
+            writeJsonAtomic(workshopRegistryPath, workshopRegistry);
+        }
         fs.unlinkSync(backupFilePath);
         return { success: true, message: 'Backup deleted successfully.' };
     } catch (error) {
@@ -344,6 +430,17 @@ function listAllBackups(app) {
                     originalFilePath: getRegisteredTarget(app, metadata.packageId) || metadata.originalFilePath || null,
                     gameId: metadata.gameId || gameByExtension[path.extname(originalFileName).toLowerCase()] || null,
                 };
+                if (category === 'Workshop') {
+                    const record = getWorkshopPackageRecord(app, archivePath);
+                    const targetPath = record?.creationId ? getDirectInstallTarget(app, record.creationId) : null;
+                    backupData.creationId = record?.creationId || null;
+                    backupData.workshopTitle = record?.title || null;
+                    backupData.previewPath = record?.previewPath && fs.existsSync(record.previewPath) ? record.previewPath : null;
+                    backupData.installTargetPath = targetPath;
+                    backupData.installStatus = targetPath && fs.existsSync(targetPath) ?
+                        (metadata.payloadSha256 && sha256(fs.readFileSync(targetPath)) !== metadata.payloadSha256 ? 'modified' : 'installed') :
+                        'not-installed';
+                }
                 if (!allBackups[saveName]) allBackups[saveName] = [];
                 allBackups[saveName].push(backupData);
             } catch (error) {
@@ -536,11 +633,44 @@ async function installCreationPackage(app, backupZipPath, creationId, frontierPa
     }
 }
 
+async function installWorkshopPackage(app, packagePath, frontierPath) {
+    if (!isPathInside(path.join(getBackupBaseDir(app), 'Workshop'), packagePath)) {
+        return { success: false, status: 'error', message: 'The selected package is not in the Workshop folder.' };
+    }
+    const record = getWorkshopPackageRecord(app, packagePath);
+    const creationId = record?.creationId || `workshop-${crypto.createHash('sha256').update(path.resolve(packagePath)).digest('hex').slice(0, 24)}`;
+    registerWorkshopPackage(app, packagePath, creationId);
+    return installCreationPackage(app, packagePath, creationId, frontierPath);
+}
+
+async function uninstallWorkshopPackage(app, packagePath) {
+    try {
+        if (!isPathInside(path.join(getBackupBaseDir(app), 'Workshop'), packagePath)) {
+            return { success: false, status: 'error', message: 'The selected package is not in the Workshop folder.' };
+        }
+        const record = getWorkshopPackageRecord(app, packagePath);
+        if (!record?.creationId) return { success: false, message: 'This workshop package has no local installation record.' };
+        const targetPath = getDirectInstallTarget(app, record.creationId);
+        if (!targetPath || !fs.existsSync(targetPath)) return { success: true, status: 'not-installed', message: 'The creation is already uninstalled.' };
+        const verification = await verifyBackup(packagePath);
+        if (verification.status !== 'verified') return { success: false, message: verification.error || 'Package verification failed.' };
+        const modified = Boolean(verification.metadata?.payloadSha256 && sha256(fs.readFileSync(targetPath)) !== verification.metadata.payloadSha256);
+        if (modified) return { success: false, status: 'modified', message: 'The installed game file has changed. It was not removed to protect your progress.' };
+        fs.unlinkSync(targetPath);
+        return { success: true, status: 'not-installed', message: 'Creation uninstalled. The workshop package remains available.' };
+    } catch (error) {
+        return { success: false, status: 'error', message: error.message };
+    }
+}
+
 module.exports = {
     createBackup,
     listAllBackups,
     restoreBackup,
     installCreationPackage,
+    archiveWorkshopPackage,
+    installWorkshopPackage,
+    uninstallWorkshopPackage,
     backupCreationMedia,
     importMediaBackup,
     deleteBackup,
