@@ -8,6 +8,7 @@ const TRUSTED_WEB_ORIGINS = new Set([
 let currentOrigin = '';
 try { currentOrigin = window.location.origin; } catch (error) { /* local splash */ }
 const isTrustedHostedView = TRUSTED_WEB_ORIGINS.has(currentOrigin);
+const isBundledClientView = window.location.protocol === 'file:' || currentOrigin === 'http://localhost:3000';
 
 const listen = (channel, callback, transform = (_event, ...args) => args) => {
   const listener = (...args) => callback(...transform(...args));
@@ -15,8 +16,8 @@ const listen = (channel, callback, transform = (_event, ...args) => args) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 
-// Minimal bridge available to the trusted hosted website. Every privileged main-
-// process handler independently validates the sender as a second security layer.
+// Shared bridge for the trusted hosted website. Normal browsers never receive this
+// object; it exists only inside the secured PlanetCreations Electron windows.
 const hostedApi = {
   isElectron: true,
   isHostedWebView: isTrustedHostedView,
@@ -80,4 +81,7 @@ const localApi = {
   getMediaStatus: (savePath) => ipcRenderer.invoke('get-media-status', savePath),
 };
 
-contextBridge.exposeInMainWorld('electronAPI', isTrustedHostedView ? hostedApi : localApi);
+// The main window and overlay deliberately use the same hosted origin so Firebase
+// Auth/IndexedDB state is shared between them. Both trusted Electron views need the
+// full bridge: the expanded overlay can therefore open the Offline Manager too.
+contextBridge.exposeInMainWorld('electronAPI', (isTrustedHostedView || isBundledClientView) ? localApi : { isElectron: true });
