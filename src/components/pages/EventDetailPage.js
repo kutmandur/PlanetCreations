@@ -10,6 +10,7 @@ import { scheduleDataRefresh } from '../../utils/appRefresh';
 import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 import EventSharingQrCode from '../ui/EventSharingQrCode';
+import { getEffectiveCommunityPermissions } from '../../utils/communityPermissions';
 
 const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView, blacklist = [] }) => {
     const { eventId } = useParams();
@@ -24,6 +25,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     const [voteCountdown, setVoteCountdown] = useState('');
     const [isSubmissionModalOpen, setIsSubmissionModalOpen] = useState(false);
     const [canManageEvent, setCanManageEvent] = useState(false);
+    const [currentUserMember, setCurrentUserMember] = useState(null);
     const [userEventVotes, setUserEventVotes] = useState([]);
     const [isVoting, setIsVoting] = useState(false);
     const [voteCounts, setVoteCounts] = useState({});
@@ -62,9 +64,20 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     setMembers(membersSnap ? membersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) : []);
 
                     const isSiteStaff = userProfile?.role === 'admin' || userProfile?.role === 'moderator';
-                    const memberRoles = memberSnap?.exists() ? (memberSnap.data().roles || []) : [];
-                    const isCommunityStaff = memberRoles.includes('owner') || memberRoles.includes('moderator');
-                    setCanManageEvent(isSiteStaff || isCommunityStaff);
+                    const memberData = memberSnap?.exists()
+                        ? { id: memberSnap.id, ...memberSnap.data() }
+                        : null;
+                    const communityData = communitySnap?.exists()
+                        ? { id: communitySnap.id, ...communitySnap.data() }
+                        : null;
+                    setCanManageEvent(
+                        isSiteStaff ||
+                        getEffectiveCommunityPermissions(
+                            communityData,
+                            memberData
+                        ).manageEvents
+                    );
+                    setCurrentUserMember(memberData);
 
                     setConnectedCreations(creationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                 }
@@ -207,8 +220,13 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
         );
     }
     if (!event) return <div className="text-center p-8">Event not found.</div>;
+    const communityPermissions = getEffectiveCommunityPermissions(community, currentUserMember);
+    const siteStaffBypass = userProfile?.role === 'admin' || userProfile?.role === 'moderator';
+    const canParticipateEvents = siteStaffBypass || communityPermissions.participateEvents;
+    const canCreateEvents = siteStaffBypass || communityPermissions.createEvents;
+    const canManageOwnEvent = canManageEvent || (user?.uid === event.creatorId && canCreateEvents);
     // "Invisible until event starts": vor dem Start nur für Manager sichtbar.
-    if (isEventHidden(event) && !canManageEvent) {
+    if (isEventHidden(event) && !canManageOwnEvent) {
         return (
             <div className="text-center p-8">
                 <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">This event isn't public yet</h2>
@@ -230,6 +248,10 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
 
     const handleEventVote = async (creationId) => {
         if (!user || isVoting) return;
+        if (!canParticipateEvents) {
+            setModalMessage('Your community rank cannot participate in this event.');
+            return;
+        }
         setIsVoting(true);
 
         const voteRef = doc(db, 'creations', creationId, 'votes', user.uid);
@@ -310,7 +332,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     const getYoutubeEmbedUrl = (url) => getYoutubeEmbed(url);
     const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
-    const canEdit = user?.uid === event.creatorId || canManageEvent;
+    const canEdit = canManageOwnEvent;
     const themeColor = community?.themeColor || '#F97316';
     const formatDate = (timestamp) => {
         if (!timestamp) return 'N/A';
@@ -368,8 +390,8 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                 </button>
                 <div className="flex space-x-2">
                     {canEdit && (<button onClick={() => navigate(`/event/${eventId}/edit`)} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"><Icon path={ICONS.edit} className="w-5 h-5 mr-2" />Edit Event</button>)}
-                    {canManageEvent && (<button onClick={() => navigate(`/event/${eventId}/manage`)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"><Icon path={ICONS.cog} className="w-5 h-5 mr-2" />Manage Event</button>)}
-                    {canManageEvent && (<button onClick={handleDeleteEvent} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"><Icon path={ICONS.trash} className="w-5 h-5 mr-2" />Delete Event</button>)}
+                    {canManageOwnEvent && (<button onClick={() => navigate(`/event/${eventId}/manage`)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"><Icon path={ICONS.cog} className="w-5 h-5 mr-2" />Manage Event</button>)}
+                    {canManageOwnEvent && (<button onClick={handleDeleteEvent} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"><Icon path={ICONS.trash} className="w-5 h-5 mr-2" />Delete Event</button>)}
                 </div>
             </div>
 
@@ -421,7 +443,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                             {event.rules?.map(rule => (<li key={rule.id}>{rule.text}</li>))}
                         </ul>
                         {(!event.rules || event.rules.length === 0) && (<p className="text-gray-500 dark:text-gray-400">No specific rules have been set for this event.</p>)}
-                        {canManageEvent && (
+                        {canManageOwnEvent && (
                             <div className="mt-8 pt-6 border-t max-w-xs mx-auto">
                                 <EventSharingQrCode eventId={eventId} eventName={event.title} />
                             </div>
@@ -497,7 +519,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                             <option value="alphabetical">Alphabetical</option>
                             {isVotingOver && <option value="votes">By Votes</option>}
                         </select>
-                        {isSubmissionActive && user && (
+                        {isSubmissionActive && user && canParticipateEvents && (
                             <button onClick={() => setIsSubmissionModalOpen(true)} className="bg-[--theme-color] text-white font-bold py-2 px-4 rounded-lg hover:brightness-90 transition-all">Submit</button>
                         )}
                     </div>
@@ -524,6 +546,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                                     voteLimitReached={voteLimitReached && !isVotedForThis}
                                     voteCount={voteCounts[creation.id] || 0}
                                     onVote={() => handleEventVote(creation.id)}
+                                    canParticipate={canParticipateEvents}
                                 />
                             );
                         })}
@@ -532,7 +555,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     <p className="text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 p-8 rounded-lg shadow-md">No creations have been submitted to this event yet.</p>
                 )}
             </div>
-            {isSubmissionModalOpen && (
+            {isSubmissionModalOpen && canParticipateEvents && (
                 <EventSubmissionModal
                     user={user}
                     event={event}

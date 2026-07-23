@@ -18,6 +18,7 @@ import {
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./config";
+import { searchUsers } from "./userIndexService";
 
 const STORAGE_LIMIT = 500 * 1024 * 1024; // 500 MB
 const MAX_VERSIONS_PER_USER_LIMITED = 1;
@@ -564,22 +565,7 @@ export const searchUsersForInvite = async (searchTerm, limitCount = 10) => {
         return [];
     }
 
-    // Search by username prefix
-    const searchLower = searchTerm.toLowerCase();
-    const searchUpper = searchLower + '\uf8ff';
-
-    const usersQuery = query(
-        collection(db, 'profiles'),
-        where('username_lowercase', '>=', searchLower),
-        where('username_lowercase', '<=', searchUpper)
-    );
-
-    const snapshot = await getDocs(usersQuery);
-    return snapshot.docs.slice(0, limitCount).map(doc => ({
-        id: doc.id,
-        username: doc.data().username,
-        avatar: doc.data().profilePictureUrl
-    }));
+    return searchUsers(searchTerm, limitCount);
 };
 
 // ============================================

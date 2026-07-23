@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
+import ProfileImage from '../ui/ProfileImage';
 
 const EventCreationCard = ({ 
     creation, 
@@ -13,7 +14,8 @@ const EventCreationCard = ({
     voteCount,
     isVotingActive,
     isVotingOver,
-    voteLimitReached
+    voteLimitReached,
+    canParticipate = true
 }) => {
     const [hoverIndex, setHoverIndex] = useState(0);
     const intervalRef = useRef(null);
@@ -79,6 +81,9 @@ const EventCreationCard = ({
     const backgroundColor = hexToRgba(themeColor, 0.2);
 
     const renderVoteSection = () => {
+        if (!canParticipate) {
+            return null;
+        }
         const handleVoteClick = (e) => {
             e.preventDefault(); 
             e.stopPropagation();
@@ -160,7 +165,7 @@ const EventCreationCard = ({
                 <h3 className="text-xl font-bold mb-2 truncate text-center" title={creation.title}>{creation.title}</h3>
                 <div className="flex items-center text-gray-700 text-sm mb-2">
                     <Link to={`/profile/${creation.userId}`} className="hover:underline flex items-center" onClick={(e) => e.stopPropagation()}>
-                        <img src={creation.userProfilePictureUrl || 'https://placehold.co/24x24/e2e8f0/64748b?text=P'} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-gray-300" />
+                        <ProfileImage src={creation.userProfilePictureUrl} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-gray-300 object-cover" />
                         <span className="font-semibold">{creation.username}</span>
                     </Link>
                 </div>
@@ -181,9 +186,11 @@ const EventCreationCard = ({
                         </span>
                     )}
                 </div>
-                <div className="mt-auto pt-3 border-t flex items-center justify-center">
-                    {renderVoteSection()}
-                </div>
+                {canParticipate && (
+                    <div className="mt-auto pt-3 border-t flex items-center justify-center">
+                        {renderVoteSection()}
+                    </div>
+                )}
             </div>
         </article>
     );

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react';
+import { useLocation } from 'react-router-dom';
 import { db } from '../../firebase/config';
-import { collection, query, onSnapshot, where, getDocs } from 'firebase/firestore';
+import { collection, collectionGroup, query, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Spinner from '../ui/Spinner';
 import CommunityCard from '../cards/CommunityCard';
+import InviteCommunityCard from '../cards/InviteCommunityCard';
 import FloatingActionButtonCommunity from '../ui/FloatingActionButtonCommunity';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 import AllEventsPage from './AllEventsPage';
@@ -15,7 +17,15 @@ import useGames from '../../hooks/useGames';
 import { useCommunities } from '../../hooks/useCommunities';
 
 const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState, setModalMessage }) => {
-    const TABS = useRef(['Browser', 'My Communitys', 'All Events', 'Collaborations']).current;
+    const location = useLocation();
+    const [invitations, setInvitations] = useState([]);
+    const TABS = useMemo(() => [
+        'Browser',
+        'My Communitys',
+        ...(invitations.length > 0 ? ['Invitations'] : []),
+        'All Events',
+        'Collaborations',
+    ], [invitations.length]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
     
@@ -136,6 +146,39 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
             setMyCommunityIds([]);
         }
     }, [user]);
+
+    useEffect(() => {
+        if (!user?.uid) {
+            setInvitations([]);
+            return undefined;
+        }
+        const invitesQuery = query(
+            collectionGroup(db, 'invites'),
+            where('userId', '==', user.uid)
+        );
+        const unsubscribe = onSnapshot(invitesQuery, snapshot => {
+            setInvitations(snapshot.docs.map(inviteDoc => ({
+                id: inviteDoc.id,
+                ...inviteDoc.data(),
+            })));
+        }, error => {
+            setModalMessage(`Could not load community invitations: ${error.message}`);
+        });
+        return unsubscribe;
+    }, [user, setModalMessage]);
+
+    useEffect(() => {
+        const requestedTab = new URLSearchParams(location.search).get('tab');
+        if (requestedTab === 'Invitations' && invitations.length > 0) {
+            setCommunitysState(prev => ({ ...prev, activeTab: 'Invitations' }));
+        }
+    }, [invitations.length, location.search, setCommunitysState]);
+
+    useEffect(() => {
+        if (communitysState.activeTab === 'Invitations' && invitations.length === 0) {
+            setCommunitysState(prev => ({ ...prev, activeTab: 'My Communitys' }));
+        }
+    }, [communitysState.activeTab, invitations.length, setCommunitysState]);
 
     useEffect(() => {
         const canCreateRoles = ['influencer', 'moderator', 'admin'];
@@ -271,6 +314,22 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
 
             case 'All Events':
                 return <AllEventsPage userProfile={userProfile} />;
+
+            case 'Invitations':
+                return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        {invitations.map(invitation => (
+                            <InviteCommunityCard
+                                key={`${invitation.communityId}-${invitation.id}`}
+                                invitation={invitation}
+                                community={(allCommunitys || []).find(
+                                    community => community.id === invitation.communityId)}
+                                userId={user.uid}
+                                setModalMessage={setModalMessage}
+                            />
+                        ))}
+                    </div>
+                );
             
             case 'Collaborations':
                 // Feature ist noch nicht freigegeben – vorerst nur Teaser anzeigen.

@@ -8,10 +8,16 @@ import { ICONS, getTextColorForBackground } from '../../utils/helpers';
 import { POOL_LABELS } from '../../utils/feedRanking';
 import { isLiveStreamActive } from '../../utils/liveStream';
 import Icon from '../ui/Icon';
+import ProfileImage from '../ui/ProfileImage';
 import { preloadComponent } from '../../utils/preload';
 import useHoverSlideshow from '../../hooks/useHoverSlideshow';
 
-const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
+const CreationCard = memo(({
+    creation,
+    isLink = true,
+    onTagClick,
+    accentBorderColor = null,
+}) => {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     const { imgSrc, onMouseEnter: startHover, onMouseLeave: stopHover } = useHoverSlideshow(creation);
@@ -64,7 +70,20 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
     const isLive = isLiveStreamActive(creation.liveStream);
 
     const CardContent = () => (
-        <article className={`bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ${isLive ? 'ring-2 ring-red-500' : ''}`}>
+        <article
+            className={`bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ${
+                isLive
+                    ? 'ring-2 ring-red-500'
+                    : accentBorderColor
+                        ? 'ring-2'
+                        : ''
+            }`}
+            style={
+                !isLive && accentBorderColor
+                    ? { '--tw-ring-color': accentBorderColor }
+                    : undefined
+            }
+        >
             <div className="relative h-48 overflow-hidden">
                 {isLive && (
                     <span className="absolute top-2 left-2 z-10 bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wide flex items-center gap-1">
@@ -97,7 +116,7 @@ const CreationCard = memo(({ creation, isLink = true, onTagClick }) => {
                 )}
                 <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded-md text-xs font-semibold">
                     <div onClick={handleProfileClick} className="hover:underline flex items-center">
-                        <img src={creation.userProfilePictureUrl || 'https://placehold.co/24x24/e2e8f0/64748b?text=P'} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-white" />
+                        <ProfileImage src={creation.userProfilePictureUrl} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-white object-cover" />
                         <span>
                             {creation.username}
                         </span>

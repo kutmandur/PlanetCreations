@@ -7,6 +7,7 @@ import { db } from '../../firebase/config';
 import { getGameColor, ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
+import ProfileImage from '../ui/ProfileImage';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
 import CreationSharingQrCode from '../ui/CreationSharingQrCode';
 import GoLiveModal from '../modals/GoLiveModal';
@@ -716,7 +717,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 <>
                                     <p className="text-sm text-gray-500 mb-2">Creator</p>
                                     <div className="relative mb-2">
-                                        <img src={displayProfilePic || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} alt="Creator profile" className="w-16 h-16 rounded-full object-cover"/>
+                                        <ProfileImage src={displayProfilePic} alt="Creator profile" className="w-16 h-16 rounded-full object-cover"/>
                                         {liveIsActive && (
                                             <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wide ring-2 ring-white dark:ring-gray-800">Live</span>
                                         )}

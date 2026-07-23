@@ -3,6 +3,7 @@ import { db } from '../../../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
 import InfoBox from '../../ui/InfoBox';
 import CommunityCardEditor from '../CommunityCardEditor';
+import BannerImageSizeTooltip from '../../community/BannerImageSizeTooltip';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
 import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
@@ -57,7 +58,10 @@ const AppearanceSection = ({ community, setModalMessage }) => {
           </div>
         </Field>
 
-        <Field label="Banner Image URL">
+        <Field
+          label="Banner Image URL"
+          labelAccessory={<BannerImageSizeTooltip />}
+        >
           <input
             type="url"
             value={bannerImageUrl}

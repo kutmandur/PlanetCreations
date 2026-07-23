@@ -1,6 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { assignCommunityRole, kickUser, kickAndReportUser } from '../../firebase/community';
+import {
+    assignCommunityRole,
+    createCommunityInvite,
+    kickUser,
+    kickAndReportUser,
+} from '../../firebase/community';
+import { searchUsers } from '../../firebase/userIndexService';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
@@ -51,7 +57,15 @@ const ProfilePopover = ({ userId, onClose, user, userProfile, setReportModal, se
 };
 
 
-const RankSelectorPopover = ({ ranks, memberRoles, onRoleChange, onClose, position, memberId }) => {
+const RankSelectorPopover = ({
+    ranks,
+    memberRoles,
+    onRoleChange,
+    onClose,
+    position,
+    memberId,
+    canManageProtectedRanks,
+}) => {
     const popoverRef = useRef(null);
 
     useEffect(() => {
@@ -78,18 +92,20 @@ const RankSelectorPopover = ({ ranks, memberRoles, onRoleChange, onClose, positi
             className="z-50 w-56 bg-white rounded-md shadow-lg border max-h-60 overflow-y-auto"
             style={popoverStyle}
         >
-            {ranks.map(rank => {
-                const isOwnerRank = rank.name.toLowerCase() === 'owner';
-                const isDisabled = isOwnerRank;
-
+            {ranks
+              .filter(rank => {
+                const rankName = rank.name.toLowerCase();
+                if (rankName === 'owner') return false;
+                return rankName !== 'moderator' || canManageProtectedRanks;
+              })
+              .map(rank => {
                 return (
-                    <label key={rank.name} className={`flex items-center px-4 py-2 text-sm text-gray-700 ${isDisabled ? 'cursor-not-allowed bg-gray-100 text-gray-400' : 'hover:bg-gray-100 cursor-pointer'}`}>
+                    <label key={rank.name} className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
                         <input
                             type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             checked={memberRoles.includes(rank.name.toLowerCase())}
                             onChange={() => onRoleChange(memberId, rank.name.toLowerCase())}
-                            disabled={isDisabled}
                         />
                         <span className="ml-3">{rank.name}</span>
                     </label>
@@ -101,12 +117,86 @@ const RankSelectorPopover = ({ ranks, memberRoles, onRoleChange, onClose, positi
 };
 
 
-const MemberManager = ({ members, ranks, communityId, user, userProfile, setModalMessage, setConfirmation, setReportModal, currentUserRankWeight, currentUserId }) => {
+const MemberManager = ({
+    members,
+    ranks,
+    communityId,
+    community,
+    user,
+    userProfile,
+    setModalMessage,
+    setConfirmation,
+    setReportModal,
+    currentUserRankWeight,
+    currentUserId,
+    canManageMembers = false,
+    canManageInvitations = false,
+    canManageProtectedRanks = false,
+}) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [rankFilter, setRankFilter] = useState('all');
     const [loadingStates, setLoadingStates] = useState({});
     const [rankPopoverState, setRankPopoverState] = useState(null);
     const [profilePopoverState, setProfilePopoverState] = useState(null);
+    const [inviteTerm, setInviteTerm] = useState('');
+    const [inviteResults, setInviteResults] = useState([]);
+    const [searchingInvites, setSearchingInvites] = useState(false);
+    const [invitingId, setInvitingId] = useState(null);
+
+    const memberIds = useMemo(() => new Set(members.map(member => member.id)), [members]);
+
+    useEffect(() => {
+        if (!canManageInvitations) {
+            setInviteResults([]);
+            setSearchingInvites(false);
+            return undefined;
+        }
+        const normalized = inviteTerm.trim();
+        if (normalized.length < 2) {
+            setInviteResults([]);
+            setSearchingInvites(false);
+            return undefined;
+        }
+        let cancelled = false;
+        setSearchingInvites(true);
+        const timer = setTimeout(async () => {
+            try {
+                const results = await searchUsers(normalized, 8);
+                if (!cancelled) {
+                    setInviteResults(results.filter(result =>
+                        result.id !== currentUserId && !memberIds.has(result.id)));
+                }
+            } catch (error) {
+                if (!cancelled) setModalMessage(`Could not search users: ${error.message}`);
+            } finally {
+                if (!cancelled) setSearchingInvites(false);
+            }
+        }, 250);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [
+        inviteTerm,
+        currentUserId,
+        memberIds,
+        setModalMessage,
+        canManageInvitations,
+    ]);
+
+    const handleInvite = async (targetUser) => {
+        setInvitingId(targetUser.id);
+        try {
+            await createCommunityInvite(communityId, targetUser, currentUserId);
+            setModalMessage(`${targetUser.username} was invited to ${community?.name || 'the community'}.`);
+            setInviteTerm('');
+            setInviteResults([]);
+        } catch (error) {
+            setModalMessage(`Could not send invitation: ${error.message}`);
+        } finally {
+            setInvitingId(null);
+        }
+    };
 
     const getMemberRoles = useCallback((member) => {
         if (!member) return [];
@@ -226,6 +316,50 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
+            {canManageInvitations && (
+            <section className="mb-6 p-4 rounded-xl border border-gray-200 bg-gray-50">
+                <h2 className="font-bold text-lg text-gray-800">Invite a User</h2>
+                <p className="text-sm text-gray-500 mb-3">
+                    Search the global user directory. Existing members are hidden.
+                </p>
+                <div className="relative">
+                    <input
+                        type="search"
+                        value={inviteTerm}
+                        onChange={(event) => setInviteTerm(event.target.value)}
+                        placeholder="Type at least 2 characters..."
+                        className="w-full p-2.5 pl-10 border rounded-lg"
+                    />
+                    <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+                {(searchingInvites || inviteResults.length > 0) && (
+                    <div className="mt-2 rounded-lg border bg-white divide-y overflow-hidden">
+                        {searchingInvites ? (
+                            <div className="flex justify-center p-3"><Spinner size="small" /></div>
+                        ) : inviteResults.map(result => (
+                            <div key={result.id} className="flex items-center justify-between gap-3 p-3">
+                                <div className="min-w-0">
+                                    <p className="font-semibold text-gray-800 truncate">{result.username}</p>
+                                    {result.role && result.role !== 'user' && (
+                                        <p className="text-xs capitalize text-gray-400">{result.role}</p>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInvite(result)}
+                                    disabled={invitingId === result.id}
+                                    className="px-4 py-2 rounded-lg bg-[--theme-color] text-white font-semibold disabled:opacity-50"
+                                >
+                                    {invitingId === result.id ? 'Sending...' : 'Invite'}
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
+            )}
+            {canManageMembers && (
+            <>
             <div className="flex flex-col sm:flex-row gap-4 mb-4">
                 <div className="relative flex-grow">
                     <input
@@ -266,7 +400,9 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
                         {filteredMembers.map(member => {
                             const memberRoles = getMemberRoles(member);
                             const memberRankWeight = getHighestRankWeight(memberRoles);
-                            const canManageMember = currentUserRankWeight < memberRankWeight;
+                            const canManageMember =
+                                canManageMembers &&
+                                currentUserRankWeight < memberRankWeight;
 
                             return (
                                 <tr key={member.id} className="border-b hover:bg-gray-50">
@@ -341,6 +477,7 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
                     onClose={() => setRankPopoverState(null)}
                     position={rankPopoverState.position}
                     memberId={rankPopoverState.memberId}
+                    canManageProtectedRanks={canManageProtectedRanks}
                 />
             )}
 
@@ -354,6 +491,8 @@ const MemberManager = ({ members, ranks, communityId, user, userProfile, setModa
                     setModalMessage={setModalMessage}
                     setConfirmation={setConfirmation}
                 />
+            )}
+            </>
             )}
         </div>
     );

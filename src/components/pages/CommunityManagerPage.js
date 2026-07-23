@@ -1,7 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { doc, onSnapshot, collection, getDoc } from 'firebase/firestore';
+import {
+    collection,
+    doc,
+    getDoc,
+    limit,
+    onSnapshot,
+    query,
+    where,
+} from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import Spinner from '../ui/Spinner';
@@ -12,6 +20,12 @@ import CreationManager from '../management/CreationManager';
 import CommunitySettingsManager from '../management/CommunitySettingsManager';
 import ShowcaseManager from '../management/ShowcaseManager';
 import EventsManager from '../management/EventsManager';
+import JoinRequestsManager from '../management/JoinRequestsManager';
+import { getCommunityManagerTabs } from '../../utils/communityManagerTabs';
+import {
+    ALL_COMMUNITY_PERMISSIONS,
+    getEffectiveCommunityPermissions,
+} from '../../utils/communityPermissions';
 
 const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirmation, blacklist, userProfile, setPopoverView }) => {
     const { id: communityId } = useParams();
@@ -19,12 +33,53 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     const [loading, setLoading] = useState(true);
     const [members, setMembers] = useState([]);
     const [creations, setCreations] = useState([]);
+    const [hasPendingJoinRequests, setHasPendingJoinRequests] = useState(false);
+    const managerMemberInfo = members.find(member => member.id === userProfile?.uid);
+    const managerRoles = managerMemberInfo?.roles || [];
+    const isSiteStaff = ['admin', 'moderator'].includes(userProfile?.role);
+    const managerPermissions = useMemo(
+        () => isSiteStaff
+            ? { ...ALL_COMMUNITY_PERMISSIONS }
+            : getEffectiveCommunityPermissions(community, managerMemberInfo),
+        [community, isSiteStaff, managerMemberInfo]
+    );
+    const canManageSettings =
+        userProfile?.role === 'admin' ||
+        community?.ownerId === userProfile?.uid ||
+        managerRoles.includes('owner');
 
-    const TABS = useRef(['Creations', 'Members', 'Events', 'Showcases', 'Settings']).current;
+    const tabs = useMemo(
+        () => getCommunityManagerTabs(
+            community,
+            hasPendingJoinRequests,
+            managerPermissions,
+            canManageSettings
+        ),
+        [
+            community,
+            hasPendingJoinRequests,
+            managerPermissions,
+            canManageSettings,
+        ]
+    );
     const [activeTab, setActiveTab] = useState('Creations');
     const tabRefs = useRef([]);
     const [gliderStyle, setGliderStyle] = useState({});
     const navigate = useNavigate();
+    const location = useLocation();
+
+    useEffect(() => {
+        const requestedTab = new URLSearchParams(location.search).get('tab');
+        if (requestedTab && tabs.includes(requestedTab)) {
+            setActiveTab(requestedTab);
+        }
+    }, [location.search, tabs]);
+
+    useEffect(() => {
+        if (!tabs.includes(activeTab)) {
+            setActiveTab(tabs[0] || 'Creations');
+        }
+    }, [activeTab, tabs]);
 
     useEffect(() => {
         let isMounted = true;
@@ -75,6 +130,27 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
         };
     }, [community, communityId]);
 
+    useEffect(() => {
+        if (!managerPermissions.manageJoinRequests) {
+            setHasPendingJoinRequests(false);
+            return undefined;
+        }
+        const pendingRequestsQuery = query(
+            collection(db, 'communitys', communityId, 'joinRequests'),
+            where('status', '==', 'pending'),
+            limit(1)
+        );
+        const unsubscribe = onSnapshot(
+            pendingRequestsQuery,
+            snapshot => setHasPendingJoinRequests(!snapshot.empty),
+            error => {
+                console.error('Could not determine join-request tab visibility:', error);
+                setHasPendingJoinRequests(false);
+            }
+        );
+        return unsubscribe;
+    }, [communityId, managerPermissions.manageJoinRequests]);
+
     // Creations kommen aus dem Community-Index (1 Read). Mutationen der Manager
     // aktualisieren den lokalen State direkt; der Index zieht per Trigger nach.
     const { data: indexCreations, isError: indexError } = useQuery({
@@ -102,14 +178,14 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     useEffect(() => {
         if (!loading) {
             setTimeout(() => {
-                const activeTabIndex = TABS.findIndex(tab => tab === activeTab);
+                const activeTabIndex = tabs.findIndex(tab => tab === activeTab);
                 const activeTabRef = tabRefs.current[activeTabIndex];
                 if (activeTabRef) {
                     setGliderStyle({ left: activeTabRef.offsetLeft, width: activeTabRef.offsetWidth });
                 }
             }, 50);
         }
-    }, [activeTab, TABS, loading]);
+    }, [activeTab, tabs, loading]);
 
     const getHighestRankWeight = (memberRoles, allRanks) => {
         if (!memberRoles || memberRoles.length === 0) return 99;
@@ -126,11 +202,15 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     
     const themeColor = community.themeColor || '#A855F7';
     
-    const currentUserMemberInfo = members.find(m => m.id === userProfile?.uid);
+    const currentUserMemberInfo = managerMemberInfo;
     const currentUserRoles = currentUserMemberInfo?.roles || [];
     const isOwner = currentUserRoles.includes('owner');
-    const isModerator = currentUserRoles.includes('moderator');
-    const currentUserRankWeight = getHighestRankWeight(currentUserRoles, community.ranks || []);
+    const currentUserRankWeight =
+        userProfile?.role === 'admin'
+            ? -1
+            : userProfile?.role === 'moderator'
+                ? 1
+                : getHighestRankWeight(currentUserRoles, community.ranks || []);
 
     const renderTabContent = () => {
         switch (activeTab) {
@@ -149,17 +229,29 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             members={members}
                             ranks={community.ranks || []}
                             communityId={communityId}
+                            community={community}
                             setPopoverView={setPopoverView}
                             setModalMessage={setModalMessage}
                             setConfirmation={setConfirmation}
                             currentUserRankWeight={currentUserRankWeight}
                             currentUserId={userProfile?.uid}
+                            canManageMembers={managerPermissions.manageMembers}
+                            canManageInvitations={managerPermissions.manageInvitations}
+                            canManageProtectedRanks={
+                                isOwner || userProfile?.role === 'admin'
+                            }
+                        />;
+            case 'Requests':
+                return <JoinRequestsManager
+                            community={community}
+                            setModalMessage={setModalMessage}
                         />;
             case 'Events':
                 return <EventsManager
                             community={community}
                             userProfile={userProfile}
                             setModalMessage={setModalMessage}
+                            canCreateEvents={managerPermissions.createEvents}
                         />;
             case 'Showcases':
                 return <ShowcaseManager
@@ -182,7 +274,6 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             setModalMessage={setModalMessage}
                             setPasswordConfirm={setPasswordConfirm}
                             isOwner={isOwner}
-                            isModerator={isModerator}
                             onTransferComplete={() => navigate('/communitys')}
                             onDeleted={() => navigate('/communitys')}
                         />;
@@ -211,7 +302,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             <div className="relative flex justify-center my-6">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
                     <div className={`absolute h-full bg-[--theme-color] rounded-full transition-all duration-500 ease-in-out`} style={gliderStyle} />
-                    {TABS.map((tab, index) => (
+                    {tabs.map((tab, index) => (
                         <button
                             key={tab}
                             ref={el => tabRefs.current[index] = el}

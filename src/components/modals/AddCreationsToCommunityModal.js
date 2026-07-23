@@ -11,7 +11,7 @@ import { ICONS } from '../../utils/helpers';
 
 // Popup zum Verwalten der eigenen Creations in einer Community:
 // hinzufügen, entfernen und einmalig für das Showcase bewerben.
-const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessage }) => {
+const AddCreationsToCommunityModal = ({ user, community, canApplyShowcase = true, onClose, setModalMessage }) => {
     const queryClient = useQueryClient();
     const [myCreations, setMyCreations] = useState([]);
     // creationId -> Link-Doc-Daten (existiert = ist in der Community)
@@ -250,7 +250,7 @@ const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessag
                                                         <span className="flex-1 text-center text-sm font-semibold py-1.5 px-3 rounded-lg bg-gray-200 text-gray-500" title="Each creation can only apply once.">
                                                             Applied ✓
                                                         </span>
-                                                    ) : (
+                                                    ) : canApplyShowcase ? (
                                                         <button
                                                             onClick={() => handleApply(creation)}
                                                             disabled={isBusy}
@@ -258,7 +258,7 @@ const AddCreationsToCommunityModal = ({ user, community, onClose, setModalMessag
                                                         >
                                                             Apply for Showcase
                                                         </button>
-                                                    )}
+                                                    ) : null}
                                                 </>
                                             ) : (
                                                 <button

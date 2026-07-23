@@ -3,12 +3,24 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getDocs, startAfter, writeBatch, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
-import { getGameColor, ICONS, SOCIAL_PLATFORMS, getYoutubeThumbnailUrl } from '../../utils/helpers';
+import {
+    getGameColor,
+    getTextColorForBackground,
+    ICONS,
+    isSafeHttpUrl,
+    SOCIAL_PLATFORMS,
+    getYoutubeThumbnailUrl,
+} from '../../utils/helpers';
+import {
+    getProfileAppearance,
+    isValidProfileColor,
+} from '../../utils/profileAppearance';
 import useGames from '../../hooks/useGames';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import Icon from '../ui/Icon';
+import ProfileImage from '../ui/ProfileImage';
 import CommunityMembershipCard from '../cards/CommunityMembershipCard';
 import CommunityFilterBar, { creationMatchesFilters } from '../management/CommunityFilterBar';
 
@@ -56,10 +68,18 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const [isFollowing, setIsFollowing] = useState(false);
     const [followerCount, setFollowerCount] = useState(0);
     const [isFollowingBusy, setIsFollowingBusy] = useState(false);
+    const [profileBannerFailed, setProfileBannerFailed] = useState(false);
     const tabRefs = useRef([]);
+    const contentSwipeRef = useRef(null);
     const [gliderStyle, setGliderStyle] = useState({});
-    const color = getGameColor(selectedGame);
-    const themeHex = color.hex;
+    const selectedGameColor = getGameColor(selectedGame);
+    const favoriteGameColor = getGameColor(profile?.favoriteGame);
+    const profileAppearance = getProfileAppearance(
+        isValidProfileColor(profile?.profileColor)
+            ? profile.profileColor
+            : selectedGameColor.hex
+    );
+    const themeHex = profileAppearance.hex;
     const navigate = useNavigate();
 
     const games = useGames();
@@ -251,6 +271,128 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const loading = loadingProfile || loadingInitialCreations || loadingMemberships;
 
     useEffect(() => {
+        if (loading) return undefined;
+
+        const swipeElement = contentSwipeRef.current;
+        const isMobile = window.matchMedia('(max-width: 1023px)').matches;
+        const prefersReducedMotion = window.matchMedia(
+            '(prefers-reduced-motion: reduce)'
+        ).matches;
+
+        if (!swipeElement || !isMobile || prefersReducedMotion) return undefined;
+
+        let animationFrameId;
+        let startDelayId;
+        let observer;
+        let isStopped = false;
+        let interactionListenersActive = false;
+
+        const interactionEvents = ['pointerdown', 'pointermove', 'touchstart', 'touchmove', 'wheel'];
+
+        const removeInteractionListeners = () => {
+            if (!interactionListenersActive) return;
+            interactionEvents.forEach((eventName) => {
+                window.removeEventListener(eventName, stopAnimation, true);
+            });
+            window.removeEventListener('keydown', stopAnimation, true);
+            interactionListenersActive = false;
+        };
+
+        const stopAnimation = () => {
+            if (isStopped) return;
+            isStopped = true;
+            window.clearTimeout(startDelayId);
+            window.cancelAnimationFrame(animationFrameId);
+            swipeElement.style.scrollSnapType = '';
+            removeInteractionListeners();
+            observer?.disconnect();
+        };
+
+        const addInteractionListeners = () => {
+            if (interactionListenersActive) return;
+            interactionEvents.forEach((eventName) => {
+                window.addEventListener(eventName, stopAnimation, {
+                    capture: true,
+                    passive: true,
+                });
+            });
+            window.addEventListener('keydown', stopAnimation, true);
+            interactionListenersActive = true;
+        };
+
+        const startPeekAnimation = () => {
+            if (isStopped || swipeElement.scrollLeft > 2) return;
+
+            addInteractionListeners();
+            startDelayId = window.setTimeout(() => {
+                if (isStopped) return;
+
+                const peekDistance = Math.min(64, swipeElement.clientWidth * 0.18);
+                const outwardDuration = 340;
+                const holdDuration = 130;
+                const returnDuration = 430;
+                const totalDuration = outwardDuration + holdDuration + returnDuration;
+                const startedAt = window.performance.now();
+
+                swipeElement.style.scrollSnapType = 'none';
+
+                const animate = (currentTime) => {
+                    if (isStopped) return;
+
+                    const elapsed = currentTime - startedAt;
+                    let nextScrollLeft;
+
+                    if (elapsed < outwardDuration) {
+                        const progress = elapsed / outwardDuration;
+                        const easedProgress = 1 - Math.pow(1 - progress, 3);
+                        nextScrollLeft = peekDistance * easedProgress;
+                    } else if (elapsed < outwardDuration + holdDuration) {
+                        nextScrollLeft = peekDistance;
+                    } else if (elapsed < totalDuration) {
+                        const progress =
+                            (elapsed - outwardDuration - holdDuration) / returnDuration;
+                        const easedProgress =
+                            progress < 0.5
+                                ? 2 * progress * progress
+                                : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                        nextScrollLeft = peekDistance * (1 - easedProgress);
+                    } else {
+                        swipeElement.scrollLeft = 0;
+                        swipeElement.style.scrollSnapType = '';
+                        isStopped = true;
+                        removeInteractionListeners();
+                        return;
+                    }
+
+                    swipeElement.scrollLeft = nextScrollLeft;
+                    animationFrameId = window.requestAnimationFrame(animate);
+                };
+
+                animationFrameId = window.requestAnimationFrame(animate);
+            }, 220);
+        };
+
+        if ('IntersectionObserver' in window) {
+            observer = new IntersectionObserver(
+                (entries) => {
+                    if (!entries.some((entry) => entry.isIntersecting)) return;
+                    observer.disconnect();
+                    startPeekAnimation();
+                },
+                {
+                    rootMargin: '0px 0px -15% 0px',
+                    threshold: 0.01,
+                }
+            );
+            observer.observe(swipeElement);
+        } else {
+            startPeekAnimation();
+        }
+
+        return stopAnimation;
+    }, [loading, userId]);
+
+    useEffect(() => {
         setTimeout(() => {
             const activeTabIndex = TABS_WITH_ALL.findIndex(tab => tab.id === selectedGame);
             const activeTabRef = tabRefs.current[activeTabIndex];
@@ -283,6 +425,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     useEffect(() => { setFollowerCount(profile?.followers?.length || 0); }, [profile]);
     useEffect(() => { setIsFollowing((userProfile?.following || []).includes(userId)); }, [userProfile, userId]);
+    useEffect(() => { setProfileBannerFailed(false); }, [profile?.profileBannerUrl]);
 
     const handleFollow = async () => {
         if (!user || !userProfile) { setModalMessage("You must be logged in to follow."); return; }
@@ -356,115 +499,321 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     if (loading) return <Spinner gameId={selectedGame} />;
 
-    const activeSocials = PROFILE_SOCIALS.filter(s => profile?.[s.field]);
+    const activeSocials = PROFILE_SOCIALS.filter((social) => {
+        if (!profile?.[social.field]) return false;
+        return social.field === 'discord' || isSafeHttpUrl(social.href(profile));
+    });
+    const profileBannerUrl =
+        profile?.profileBannerUrl && isSafeHttpUrl(profile.profileBannerUrl)
+            ? profile.profileBannerUrl
+            : '';
+    const hasProfileBanner = Boolean(profileBannerUrl && !profileBannerFailed);
+    const hasBio = Boolean(profile?.bio?.trim());
 
     return (
-        <div className="container mx-auto p-4 mt-8" style={color.style}>
-            <div className="max-w-4xl mx-auto">
-                <div className="bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-md mb-8 relative">
-                    <div className="absolute top-4 right-4 flex items-center space-x-2">
-                        {user && user.uid === userId && (
-                            <button onClick={() => navigate('/profile/edit')} className="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-2 px-4 rounded-lg text-sm">
-                                Edit Profile
-                            </button>
-                        )}
-                        <button onClick={handleShare} title="Share Profile" className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-100">
-                            <Icon path={ICONS.share} className="w-6 h-6" />
-                        </button>
-                    </div>
+        <div className="container mx-auto mt-8 p-4" style={profileAppearance.style}>
+            <div
+                className={`relative mb-8 min-h-[22rem] overflow-hidden rounded-2xl shadow-lg ${
+                    hasProfileBanner ? '' : 'bg-white dark:bg-gray-800'
+                }`}
+                style={
+                    hasProfileBanner
+                        ? {
+                            background: `linear-gradient(135deg, ${profileAppearance.hex}, ${profileAppearance.hoverHex})`,
+                        }
+                        : undefined
+                }
+            >
+                {hasProfileBanner && (
+                    <img
+                        src={profileBannerUrl}
+                        alt=""
+                        onError={() => setProfileBannerFailed(true)}
+                        className="absolute inset-0 h-full w-full object-cover"
+                    />
+                )}
+                {hasProfileBanner && (
+                    <div className="absolute inset-0 hidden bg-gradient-to-r from-black/75 via-black/45 to-black/65 dark:block" />
+                )}
 
-                    <div className="flex flex-col items-center text-center">
-                        <img
-                            src={profile?.profilePictureUrl || 'https://placehold.co/128x128/e2e8f0/64748b?text=P'}
-                            alt="Profile"
-                            className={`w-32 h-32 rounded-full object-cover border-4 ${color.border} mb-4`}
-                            onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/128x128/e2e8f0/64748b?text=P'; }}
-                        />
-                        <h2 className={`text-3xl font-bold ${color.text}`}>{profile?.username || 'User Profile'}</h2>
-                        {profile?.country && <p className="text-gray-500 mt-1">{profile.country}</p>}
-                        {profile?.favoriteGame && <p className="text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-2 py-1 rounded-full inline-block mt-2">{profile.favoriteGame.replace(/-/g, ' ')}</p>}
-
-                        <div className="flex items-center justify-center gap-6 mt-3 text-sm">
-                            <span><span className="font-bold">{followerCount}</span> <span className="text-gray-500">Followers</span></span>
-                            <span><span className="font-bold">{profile?.following?.length || 0}</span> <span className="text-gray-500">Following</span></span>
-                        </div>
-
-                        <div className="flex items-center justify-center mt-6 space-x-2">
-                            {user && user.uid !== userId && (
-                                <button onClick={handleFollow} disabled={isFollowingBusy} className={`font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 ${isFollowing ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600' : 'text-white'}`} style={isFollowing ? {} : { backgroundColor: themeHex }}>
-                                    {isFollowing ? 'Following' : 'Follow'}
-                                </button>
-                            )}
-                            {user && user.uid !== userId && (
-                                <button onClick={handleReportUser} disabled={hasAlreadyReported} className="text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed">
-                                    {hasAlreadyReported ? 'Already Reported' : 'Report User'}
-                                </button>
-                            )}
-                            {userProfile?.role === 'admin' && user?.uid !== userId && (
-                                <button onClick={handleDeleteUser} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm">
-                                    Delete User
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="mt-6 text-center">
-                        {activeSocials.length > 0 && (
-                            <div className="flex justify-center flex-wrap items-center gap-2 mb-4">
-                                {activeSocials.map(social => (
-                                    <a
-                                        key={social.field}
-                                        href={social.href(profile)}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        title={social.title}
-                                        className="w-9 h-9 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:text-white flex items-center justify-center transition-colors"
-                                        style={{ '--hover-bg': themeHex }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = themeHex; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
+                <div className="relative flex min-h-[22rem] items-start gap-3 p-5 sm:gap-6 sm:p-8">
+                    <div className="hidden w-10 flex-shrink-0 sm:block" aria-hidden="true" />
+                    <div className="min-w-0 flex-1 self-stretch">
+                        <div
+                            className={
+                                hasBio
+                                    ? 'grid h-full items-center gap-6 lg:grid-cols-3'
+                                    : 'flex h-full items-center justify-center'
+                            }
+                        >
+                            <div
+                                className={`relative mt-10 flex w-full max-w-xs flex-col items-center rounded-[2rem] border-2 px-5 pb-6 pt-20 text-center shadow-xl backdrop-blur-md sm:mt-12 ${
+                                    hasBio ? 'lg:col-start-1' : ''
+                                } ${
+                                    hasProfileBanner
+                                        ? 'bg-black/35'
+                                        : 'bg-gray-50/95 dark:bg-gray-900/60'
+                                }`}
+                                style={{ borderColor: themeHex }}
+                            >
+                                <ProfileImage
+                                    src={profile?.profilePictureUrl}
+                                    alt="Profile"
+                                    className="absolute -top-14 left-1/2 h-28 w-28 -translate-x-1/2 rounded-full border-4 bg-white object-cover shadow-xl dark:bg-gray-800 sm:-top-16 sm:h-32 sm:w-32"
+                                    style={{ borderColor: themeHex }}
+                                />
+                                <h2
+                                    className={`text-3xl font-bold ${
+                                        hasProfileBanner
+                                            ? 'text-white drop-shadow-sm'
+                                            : 'game-text'
+                                    }`}
+                                >
+                                    {profile?.username || 'User Profile'}
+                                </h2>
+                                {profile?.country && (
+                                    <p
+                                        className={`mt-1 ${
+                                            hasProfileBanner
+                                                ? 'text-white/75'
+                                                : 'text-gray-500 dark:text-gray-400'
+                                        }`}
                                     >
-                                        <Icon path={social.platform.icon} solid={social.platform.solid} className="w-5 h-5" />
-                                    </a>
-                                ))}
+                                        {profile.country}
+                                    </p>
+                                )}
+                                {profile?.favoriteGame && (
+                                    <p
+                                        className="mt-2 inline-block rounded-full px-3 py-1 text-sm font-medium capitalize shadow-sm"
+                                        style={{
+                                            backgroundColor: favoriteGameColor.hex,
+                                            color: getTextColorForBackground(favoriteGameColor.hex),
+                                        }}
+                                    >
+                                        {profile.favoriteGame.replace(/-/g, ' ')}
+                                    </p>
+                                )}
+
+                                <div
+                                    className={`mt-4 flex items-center justify-center gap-6 text-sm ${
+                                        hasProfileBanner
+                                            ? 'text-white'
+                                            : 'text-gray-900 dark:text-gray-100'
+                                    }`}
+                                >
+                                    <span>
+                                        <span className="font-bold">{followerCount}</span>{' '}
+                                        <span
+                                            className={
+                                                hasProfileBanner
+                                                    ? 'text-white/70'
+                                                    : 'text-gray-500 dark:text-gray-400'
+                                            }
+                                        >
+                                            Followers
+                                        </span>
+                                    </span>
+                                    <span>
+                                        <span className="font-bold">
+                                            {profile?.following?.length || 0}
+                                        </span>{' '}
+                                        <span
+                                            className={
+                                                hasProfileBanner
+                                                    ? 'text-white/70'
+                                                    : 'text-gray-500 dark:text-gray-400'
+                                            }
+                                        >
+                                            Following
+                                        </span>
+                                    </span>
+                                </div>
+
+                                <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+                                    {user && user.uid === userId && (
+                                        <button
+                                            onClick={() => navigate('/profile/edit')}
+                                            className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                                                hasProfileBanner
+                                                    ? 'border border-white/20 bg-white/15 text-white backdrop-blur-sm hover:bg-white/25'
+                                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+                                            }`}
+                                        >
+                                            Edit Profile
+                                        </button>
+                                    )}
+                                    {user && user.uid !== userId && (
+                                        <button
+                                            onClick={handleFollow}
+                                            disabled={isFollowingBusy}
+                                            className={`rounded-xl px-4 py-2 text-sm font-bold text-white transition disabled:opacity-50 ${
+                                                isFollowing
+                                                    ? hasProfileBanner
+                                                        ? 'border border-white/20 bg-white/15 backdrop-blur-sm hover:bg-white/25'
+                                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+                                                    : ''
+                                            }`}
+                                            style={
+                                                isFollowing
+                                                    ? {}
+                                                    : { backgroundColor: themeHex }
+                                            }
+                                        >
+                                            {isFollowing ? 'Following' : 'Follow'}
+                                        </button>
+                                    )}
+                                    {user && user.uid !== userId && (
+                                        <button
+                                            onClick={handleReportUser}
+                                            disabled={hasAlreadyReported}
+                                            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            {hasAlreadyReported ? 'Already Reported' : 'Report User'}
+                                        </button>
+                                    )}
+                                    {userProfile?.role === 'admin' && user?.uid !== userId && (
+                                        <button
+                                            onClick={handleDeleteUser}
+                                            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700"
+                                        >
+                                            Delete User
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                        )}
-                        {profile?.bio && <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{profile.bio}</p>}
+
+                            {hasBio && (
+                                <div
+                                    className={`w-full max-w-sm place-self-center rounded-2xl border-2 p-5 text-left shadow-lg backdrop-blur-md sm:p-6 lg:col-span-2 lg:col-start-2 ${
+                                        hasProfileBanner
+                                            ? 'bg-black/35 text-white'
+                                            : 'bg-gray-50/90 text-gray-700 dark:bg-gray-900/60 dark:text-gray-200'
+                                    }`}
+                                    style={{ borderColor: themeHex }}
+                                >
+                                    <p
+                                        className={`mb-2 text-xs font-bold uppercase tracking-[0.18em] ${
+                                            hasProfileBanner
+                                                ? 'text-white/55'
+                                                : 'text-gray-400 dark:text-gray-500'
+                                        }`}
+                                    >
+                                        About
+                                    </p>
+                                    <p
+                                        className={`whitespace-pre-wrap leading-relaxed ${
+                                            hasProfileBanner ? 'text-white/90' : ''
+                                        }`}
+                                    >
+                                        {profile.bio}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div
+                        className="flex flex-shrink-0 flex-col items-center gap-2"
+                        aria-label="Profile links"
+                    >
+                        <button
+                            onClick={handleShare}
+                            title="Share Profile"
+                            aria-label="Share Profile"
+                            className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                                hasProfileBanner
+                                    ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm hover:bg-white/25'
+                                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-white'
+                            }`}
+                        >
+                            <Icon path={ICONS.share} className="h-5 w-5" />
+                        </button>
+                        {activeSocials.map((social) => (
+                            <a
+                                key={social.field}
+                                href={social.href(profile)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={social.title}
+                                aria-label={social.title}
+                                className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:text-white ${
+                                    hasProfileBanner
+                                        ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm'
+                                        : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                                }`}
+                                onMouseEnter={(event) => {
+                                    event.currentTarget.style.backgroundColor = themeHex;
+                                }}
+                                onMouseLeave={(event) => {
+                                    event.currentTarget.style.backgroundColor = '';
+                                }}
+                            >
+                                <Icon
+                                    path={social.platform.icon}
+                                    solid={social.platform.solid}
+                                    className="h-5 w-5"
+                                />
+                            </a>
+                        ))}
                     </div>
                 </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-8" style={{ '--theme-color': themeHex }}>
-                <div className="w-full lg:w-3/4">
-                    <div className="flex justify-center my-6">
-                        <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
-                            {['Creations', 'Showcases'].map(section => (
-                                <button
-                                    key={section}
-                                    onClick={() => setActiveSection(section)}
-                                    className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${activeSection === section ? `${color.bg} text-white` : 'text-gray-600 hover:text-black'}`}
-                                >
-                                    {section}
-                                </button>
-                            ))}
-                        </div>
+            <div style={{ '--theme-color': themeHex }}>
+                <div className="my-6 flex justify-center">
+                    <div className="relative flex items-center overflow-x-auto rounded-full bg-gray-200 p-1 shadow-inner dark:bg-gray-700">
+                        {['Creations', 'Showcases'].map((section) => (
+                            <button
+                                key={section}
+                                onClick={() => setActiveSection(section)}
+                                className={`relative z-10 whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors duration-300 sm:px-6 sm:text-base ${
+                                    activeSection === section
+                                        ? 'game-bg text-white'
+                                        : 'text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white'
+                                }`}
+                            >
+                                {section}
+                            </button>
+                        ))}
                     </div>
+                </div>
 
-                    {activeSection === 'Creations' && (
-                        <>
-                            <div className="flex justify-center mb-6">
-                                <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
-                                    <div className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} style={gliderStyle} />
-                                    {TABS_WITH_ALL.map((tab, index) => (
-                                        <button key={tab.id} ref={el => tabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ selectedGame === tab.id ? 'text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}>
-                                            {tab.name}
-                                        </button>
-                                    ))}
-                                </div>
+                {activeSection === 'Creations' && (
+                    <>
+                        <div className="mb-6 flex justify-center">
+                            <div className="relative flex items-center overflow-x-auto rounded-full bg-gray-200 p-1 shadow-inner dark:bg-gray-700">
+                                <div
+                                    className="absolute h-full rounded-full transition-all duration-500 ease-in-out"
+                                    style={{
+                                        ...gliderStyle,
+                                        backgroundColor: selectedGameColor.hex,
+                                    }}
+                                />
+                                {TABS_WITH_ALL.map((tab, index) => (
+                                    <button
+                                        key={tab.id}
+                                        ref={(element) => {
+                                            tabRefs.current[index] = element;
+                                        }}
+                                        onClick={() => setSelectedGame(tab.id)}
+                                        className={`relative z-10 whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors duration-300 sm:px-6 sm:text-base ${
+                                            selectedGame === tab.id
+                                                ? 'text-white'
+                                                : 'text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white'
+                                        }`}
+                                    >
+                                        {tab.name}
+                                    </button>
+                                ))}
                             </div>
+                        </div>
 
+                        <div className="mx-auto w-full max-w-2xl">
                             <CommunityFilterBar
                                 searchTerm={filterState.searchTerm}
-                                onSearchChange={(value) => handleFilterChange('searchTerm', value)}
+                                onSearchChange={(value) =>
+                                    handleFilterChange('searchTerm', value)
+                                }
                                 filters={filterState}
                                 onFilterChange={handleFilterChange}
                                 ranks={[]}
@@ -475,83 +824,154 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                 ]}
                                 placeholder="Search creations by title or tag..."
                             />
-
-                            <h3 className="text-2xl font-bold mb-4">Creations by {profile?.username || 'this user'}</h3>
-                            {visibleCreations.length > 0 ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {visibleCreations.map(creation => (
-                                        <CreationCard key={creation.id} creation={creation} onTagClick={(tag) => handleFilterChange('tag', tag)} />
-                                    ))}
-                                </div>
-                            ) : (
-                                !loadingInitialCreations && <p className="text-center text-gray-500 mt-10">{creations.length > 0 ? `No creations match your filters.` : `This user hasn't created anything yet.`}</p>
-                            )}
-                            {loadingMoreCreations && <div className="text-center p-8 col-span-full"><Spinner/></div>}
-                            {!hasMoreCreations && creations.length > 0 && (
-                                <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've seen all their creations!</p>
-                            )}
-                        </>
-                    )}
-
-                    {activeSection === 'Showcases' && (
-                        loadingShowcases || showcases === null ? (
-                            <div className="py-16"><Spinner /></div>
-                        ) : showcases.length === 0 ? (
-                            <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">
-                                This creator hasn't been featured in any showcases yet.
-                            </p>
-                        ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                                {showcases.map(showcase => (
-                                    <div key={showcase.key} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-                                        <a href={showcase.url} target="_blank" rel="noopener noreferrer" className="relative block h-44 overflow-hidden group">
-                                            <img
-                                                src={getYoutubeThumbnailUrl(showcase.url) || 'https://placehold.co/480x270/333333/ffffff?text=Video'}
-                                                alt="Showcase video thumbnail"
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                            />
-                                            {showcase.name && (
-                                                <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 to-transparent px-3 pt-2 pb-6 pointer-events-none">
-                                                    <p className="text-white font-bold text-lg text-center truncate" title={showcase.name}>{showcase.name}</p>
-                                                </div>
-                                            )}
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <div className="w-14 h-14 rounded-full bg-black/60 group-hover:bg-red-600 transition-colors flex items-center justify-center">
-                                                    <div className="w-0 h-0 border-y-8 border-y-transparent border-l-[14px] border-l-white ml-1" />
-                                                </div>
-                                            </div>
-                                        </a>
-                                        <div className="p-4">
-                                            <p className="text-sm text-gray-500 mb-1">Showcased by</p>
-                                            <p className="font-bold text-lg mb-2">{showcase.communityName}</p>
-                                            <div className="space-y-1">
-                                                {showcase.creations.map(creation => (
-                                                    <Link key={creation.id} to={`/creation/${creation.id}`} className="block text-sm text-blue-600 hover:underline truncate" title={creation.title}>
-                                                        {creation.title}
-                                                    </Link>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )
-                    )}
-                </div>
-
-                <div className="w-full lg:w-1/4">
-                    <div className="sticky top-24 space-y-6">
-                        <h3 className={`text-2xl font-bold ${color.text}`}>Community Memberships</h3>
-                        <div className="space-y-6">
-                            {memberships.length > 0 ? (
-                                memberships.map(membership => (
-                                    <CommunityMembershipCard key={membership.communityId} membership={membership} />
-                                ))
-                            ) : (
-                                <p className="text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">This user is not a member of any communities.</p>
-                            )}
                         </div>
+                    </>
+                )}
+
+                <div
+                    ref={contentSwipeRef}
+                    className="profile-content-swipe -mx-4 flex snap-x snap-mandatory items-start overflow-x-auto lg:mx-0 lg:grid lg:snap-none lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)] lg:gap-8 lg:overflow-visible"
+                >
+                    <div className="w-full min-w-full flex-none snap-start px-4 lg:min-w-0 lg:flex-auto lg:px-0">
+                        {activeSection === 'Creations' && (
+                            <>
+                                <h3 className="mb-4 text-center text-2xl font-bold text-gray-800 dark:text-gray-100">
+                                    Creations by {profile?.username || 'this user'}
+                                </h3>
+                                {visibleCreations.length > 0 ? (
+                                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                                        {visibleCreations.map((creation) => (
+                                            <CreationCard
+                                                key={creation.id}
+                                                creation={creation}
+                                                accentBorderColor={themeHex}
+                                                onTagClick={(tag) =>
+                                                    handleFilterChange('tag', tag)
+                                                }
+                                            />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    !loadingInitialCreations && (
+                                        <p className="mt-10 text-center text-gray-500">
+                                            {creations.length > 0
+                                                ? 'No creations match your filters.'
+                                                : "This user hasn't created anything yet."}
+                                        </p>
+                                    )
+                                )}
+                                {loadingMoreCreations && (
+                                    <div className="col-span-full p-8 text-center">
+                                        <Spinner />
+                                    </div>
+                                )}
+                                {!hasMoreCreations && creations.length > 0 && (
+                                    <p className="col-span-full mt-10 text-center text-xl text-gray-500">
+                                        You've seen all their creations!
+                                    </p>
+                                )}
+                            </>
+                        )}
+
+                        {activeSection === 'Showcases' && (
+                            <>
+                                <h3 className="mb-4 text-center text-2xl font-bold">
+                                    Showcases featuring {profile?.username || 'this user'}
+                                </h3>
+                                {loadingShowcases || showcases === null ? (
+                                    <div className="py-16">
+                                        <Spinner />
+                                    </div>
+                                ) : showcases.length === 0 ? (
+                                    <p className="rounded-lg bg-white py-10 text-center text-gray-500 shadow-md dark:bg-gray-800 dark:text-gray-400">
+                                        This creator hasn't been featured in any showcases yet.
+                                    </p>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                                        {showcases.map((showcase) => (
+                                            <div
+                                                key={showcase.key}
+                                                className="overflow-hidden rounded-lg bg-white shadow-lg dark:bg-gray-800"
+                                            >
+                                                <a
+                                                    href={showcase.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="group relative block h-44 overflow-hidden"
+                                                >
+                                                    <img
+                                                        src={
+                                                            getYoutubeThumbnailUrl(showcase.url) ||
+                                                            'https://placehold.co/480x270/333333/ffffff?text=Video'
+                                                        }
+                                                        alt="Showcase video thumbnail"
+                                                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                                    />
+                                                    {showcase.name && (
+                                                        <div className="pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent px-3 pb-6 pt-2">
+                                                            <p
+                                                                className="truncate text-center text-lg font-bold text-white"
+                                                                title={showcase.name}
+                                                            >
+                                                                {showcase.name}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/60 transition-colors group-hover:bg-red-600">
+                                                            <div className="ml-1 h-0 w-0 border-y-8 border-l-[14px] border-y-transparent border-l-white" />
+                                                        </div>
+                                                    </div>
+                                                </a>
+                                                <div className="p-4">
+                                                    <p className="mb-1 text-sm text-gray-500">
+                                                        Showcased by
+                                                    </p>
+                                                    <p className="mb-2 text-lg font-bold">
+                                                        {showcase.communityName}
+                                                    </p>
+                                                    <div className="space-y-1">
+                                                        {showcase.creations.map((creation) => (
+                                                            <Link
+                                                                key={creation.id}
+                                                                to={`/creation/${creation.id}`}
+                                                                className="block truncate text-sm text-blue-600 hover:underline"
+                                                                title={creation.title}
+                                                            >
+                                                                {creation.title}
+                                                            </Link>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
+                        )}
                     </div>
+
+                    <aside className="w-full min-w-full flex-none snap-start px-4 lg:min-w-0 lg:flex-auto lg:px-0">
+                        <div className="lg:sticky lg:top-24">
+                            <h3 className="mb-4 text-center text-2xl font-bold text-gray-800 dark:text-gray-100">
+                                Community Memberships
+                            </h3>
+                            <div className="space-y-6">
+                                {memberships.length > 0 ? (
+                                    memberships.map((membership) => (
+                                        <CommunityMembershipCard
+                                            key={membership.communityId}
+                                            membership={membership}
+                                        />
+                                    ))
+                                ) : (
+                                    <p className="rounded-lg bg-white p-4 text-gray-500 shadow-md dark:bg-gray-800 dark:text-gray-400">
+                                        This user is not a member of any communities.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </aside>
                 </div>
             </div>
         </div>

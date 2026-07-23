@@ -1,4 +1,5 @@
-import { doc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove } from "firebase/firestore";
+import { doc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove, setDoc, deleteDoc } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./config";
 
 /**
@@ -45,6 +46,99 @@ export const joinCommunity = async (communityId, userId) => {
     await batch.commit();
 };
 
+export const requestCommunityJoin = async (communityId, user, message = '') => {
+    if (!user?.uid) throw new Error('You must be signed in.');
+    await setDoc(doc(db, 'communitys', communityId, 'joinRequests', user.uid), {
+        userId: user.uid,
+        username: user.username || 'Unknown User',
+        message: String(message || '').trim(),
+        status: 'pending',
+        createdAt: serverTimestamp(),
+    });
+};
+
+export const withdrawCommunityJoinRequest = async (communityId, userId) => {
+    await deleteDoc(doc(db, 'communitys', communityId, 'joinRequests', userId));
+};
+
+export const decideCommunityJoinRequest = async (communityId, userId, decision) => {
+    const callable = httpsCallable(getFunctions(), 'decideJoinRequest');
+    return callable({ communityId, userId, decision });
+};
+
+export const removeCommunityCreation = async (communityId, creationId) => {
+    const callable = httpsCallable(getFunctions(), 'removeCommunityCreation');
+    return callable({ communityId, creationId });
+};
+
+export const setCommunityJoinPassword = async (communityId, password) => {
+    const callable = httpsCallable(getFunctions(), 'setCommunityJoinPassword');
+    return callable({ communityId, action: 'set', password });
+};
+
+export const clearCommunityJoinPassword = async (communityId) => {
+    const callable = httpsCallable(getFunctions(), 'setCommunityJoinPassword');
+    return callable({ communityId, action: 'clear' });
+};
+
+export const joinCommunityWithPassword = async (communityId, password) => {
+    const callable = httpsCallable(getFunctions(), 'joinCommunityWithPassword');
+    return callable({ communityId, password });
+};
+
+export const createCommunityInvite = async (communityId, targetUser, invitedBy) => {
+    if (!targetUser?.id) throw new Error('Select a user to invite.');
+    const profileSnap = await getDoc(doc(db, 'profiles', targetUser.id));
+    if (!profileSnap.exists()) throw new Error('The selected user profile no longer exists.');
+    const targetUsername = profileSnap.data().username;
+    if (!targetUsername) throw new Error('The selected user does not have a valid username.');
+    await setDoc(doc(db, 'communitys', communityId, 'invites', targetUser.id), {
+        userId: targetUser.id,
+        communityId,
+        username: targetUsername,
+        invitedBy,
+        invitedAt: serverTimestamp(),
+    });
+};
+
+export const acceptCommunityInvite = async (invite, userId) => {
+    const communityId = invite.communityId;
+    const [profileSnap, communitySnap, memberSnap] = await Promise.all([
+        getDoc(doc(db, 'profiles', userId)),
+        getDoc(doc(db, 'communitys', communityId)),
+        getDoc(doc(db, 'communitys', communityId, 'members', userId)),
+    ]);
+    if (!profileSnap.exists() || !communitySnap.exists()) {
+        throw new Error('User profile or community not found.');
+    }
+    if (memberSnap.exists()) {
+        await deleteDoc(doc(db, 'communitys', communityId, 'invites', userId));
+        return;
+    }
+
+    const communityData = communitySnap.data();
+    const defaultRank = String(communityData.defaultRankName || 'member').toLowerCase();
+    const roles = [defaultRank];
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'communitys', communityId, 'members', userId), {
+        roles,
+        username: profileSnap.data().username || 'Unknown User',
+        joinedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'profiles', userId, 'communityMemberships', communityId), {
+        communityId,
+        communityName: communityData.name || 'Community',
+        roles,
+        joinedAt: serverTimestamp(),
+    });
+    batch.delete(doc(db, 'communitys', communityId, 'invites', userId));
+    await batch.commit();
+};
+
+export const declineCommunityInvite = async (communityId, userId) => {
+    await deleteDoc(doc(db, 'communitys', communityId, 'invites', userId));
+};
+
 /**
  * Allows a user to leave a community, deleting records from both the community's member list
  * and the user's public profile.
@@ -69,7 +163,10 @@ export const leaveCommunity = async (communityId, userId) => {
  * @param {string} targetUserId - The ID of the user to kick.
  */
 export const kickUser = async (communityId, targetUserId) => {
-    await leaveCommunity(communityId, targetUserId); // The logic is identical to leaving
+    // Community staff cannot write another user's profile mirror directly.
+    // Deleting the authoritative member doc lets syncCommunityMembershipRoles
+    // remove that mirror with the Admin SDK.
+    await deleteDoc(doc(db, 'communitys', communityId, 'members', targetUserId));
 };
 
 /**

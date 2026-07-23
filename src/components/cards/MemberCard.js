@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import ProfileImage from '../ui/ProfileImage';
 
 const MemberCard = ({ member, community }) => {
 
@@ -41,8 +42,8 @@ const MemberCard = ({ member, community }) => {
                     '--tw-ring-color': themeColor 
                 }}
             >
-                <img 
-                    src={member.profilePictureUrl || 'https://placehold.co/64x64/e2e8f0/64748b?text=P'} 
+                <ProfileImage
+                    src={member.profilePictureUrl}
                     alt={`${member.username}'s profile`}
                     className="w-20 h-20 rounded-full object-cover border-4 border-white"
                 />
