@@ -22,6 +22,11 @@ const {
     validateUnsignedMediaMetadata,
     validateCreationArchive,
 } = require("./backupFormat");
+const {
+    getEffectiveCommunityPermissionKeys,
+    hashCommunityPassword,
+    verifyCommunityPassword,
+} = require("./communityMembership");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -1093,16 +1098,30 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
         const eventData = eventDoc.data();
         const communityId = eventData.communityId;
         const isSiteStaff = userRole === 'admin' || userRole === 'moderator';
-        let isCommunityStaff = false;
+        let canManageAllEvents = false;
+        let canDeleteOwnEvent = false;
         if (!isSiteStaff) {
             const memberRef = db.collection('communitys').doc(communityId).collection('members').doc(userId);
-            const memberDoc = await memberRef.get();
-            if (memberDoc.exists) {
-                const memberRoles = memberDoc.data().roles || [];
-                isCommunityStaff = memberRoles.includes('owner') || memberRoles.includes('moderator');
+            const communityRef = db.collection('communitys').doc(communityId);
+            const [memberDoc, communityDoc] = await Promise.all([
+                memberRef.get(),
+                communityRef.get(),
+            ]);
+            if (memberDoc.exists && communityDoc.exists) {
+                const memberData = memberDoc.data();
+                const permissions = getEffectiveCommunityPermissionKeys(
+                    communityDoc.data(),
+                    memberData
+                );
+                canManageAllEvents = permissions.includes('manageEvents');
+                canDeleteOwnEvent = eventData.creatorId === userId &&
+                    permissions.includes('createEvents');
             }
         }
-        if (!isSiteStaff && !isCommunityStaff) { throw new functions.https.HttpsError('permission-denied', 'You do not have permission to delete this event.'); }
+        if (!isSiteStaff && !canManageAllEvents && !canDeleteOwnEvent) {
+            throw new functions.https.HttpsError(
+                'permission-denied', 'You do not have permission to delete this event.');
+        }
         const batch = db.batch();
         batch.delete(eventRef);
         const creationsQuery = db.collection('creations').where('eventIds', 'array-contains', eventId);
@@ -1191,6 +1210,131 @@ exports.onMemberLeave = functions.firestore
         return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(-1) });
     });
 
+const buildCommunityMembershipData = (communityId, communityData, profileData) => {
+    const defaultRank = String(communityData.defaultRankName || 'member').toLowerCase();
+    const roles = [defaultRank];
+    const perms = getEffectiveCommunityPermissionKeys(communityData, { roles });
+    return {
+        member: {
+            roles,
+            perms,
+            username: profileData.username || 'Unknown User',
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        profileMembership: {
+            communityId,
+            communityName: communityData.name || 'Community',
+            roles,
+            perms,
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+    };
+};
+
+const addCommunityMemberWithAdmin = async (communityId, userId, communityData, profileData) => {
+    const membershipData = buildCommunityMembershipData(
+        communityId, communityData, profileData);
+    const batch = db.batch();
+    batch.set(db.doc(`communitys/${communityId}/members/${userId}`),
+        membershipData.member);
+    batch.set(db.doc(`profiles/${userId}/communityMemberships/${communityId}`),
+        membershipData.profileMembership);
+    await batch.commit();
+};
+
+const canManageCommunityMembership = async (
+    communityId,
+    context,
+    permission = null,
+    ownerOnly = false
+) => {
+    if (!context.auth) return false;
+    const uid = context.auth.uid;
+    const siteRole = context.auth.token?.role;
+    if (siteRole === 'admin' || (!ownerOnly && siteRole === 'moderator')) return true;
+
+    const [communitySnap, memberSnap] = await Promise.all([
+        db.doc(`communitys/${communityId}`).get(),
+        db.doc(`communitys/${communityId}/members/${uid}`).get(),
+    ]);
+    if (!communitySnap.exists) return false;
+    if (communitySnap.data().ownerId === uid) return true;
+    if (ownerOnly || !memberSnap.exists) return false;
+    if (!permission) return false;
+    return getEffectiveCommunityPermissionKeys(
+        communitySnap.data(),
+        memberSnap.data()
+    ).includes(permission);
+};
+
+exports.removeCommunityCreation = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError(
+            'unauthenticated',
+            'You must be signed in.'
+        );
+    }
+    const communityId = String(data?.communityId || '');
+    const creationId = String(data?.creationId || '');
+    if (!communityId || !creationId) {
+        throw new functions.https.HttpsError(
+            'invalid-argument',
+            'A communityId and creationId are required.'
+        );
+    }
+    if (!await canManageCommunityMembership(
+        communityId,
+        context,
+        'manageCreations'
+    )) {
+        throw new functions.https.HttpsError(
+            'permission-denied',
+            'You do not have permission to manage community creations.'
+        );
+    }
+
+    const creationRef = db.doc(`creations/${creationId}`);
+    const linkRef = db.doc(`communitys/${communityId}/creations/${creationId}`);
+    const [creationSnap, linkSnap] = await Promise.all([
+        creationRef.get(),
+        linkRef.get(),
+    ]);
+    if (!linkSnap.exists) {
+        throw new functions.https.HttpsError(
+            'not-found',
+            'The creation is not linked to this community.'
+        );
+    }
+
+    const batch = db.batch();
+    if (creationSnap.exists) {
+        const creationData = creationSnap.data();
+        const assignments = Array.isArray(creationData.communityAssignments)
+            ? creationData.communityAssignments
+            : [];
+        batch.set(creationRef, {
+            communityIds: admin.firestore.FieldValue.arrayRemove(communityId),
+            communityAssignments: assignments.filter(
+                assignment => assignment?.communityId !== communityId
+            ),
+        }, { merge: true });
+    }
+    batch.delete(linkRef);
+    const reportRef = db.collection('reports').doc();
+    batch.set(reportRef, {
+        targetId: creationId,
+        targetType: 'creation',
+        targetTitle: creationSnap.exists
+            ? creationSnap.data().title || linkSnap.data().title || ''
+            : linkSnap.data().title || '',
+        reason: 'Removed from community by a community manager.',
+        reporterId: context.auth.uid,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return { ok: true };
+});
+
 // Keep the denormalized profile membership in sync with the authoritative member
 // document. This lets read-heavy UI paths load ranks together with memberships
 // without one additional member-document read per community.
@@ -1211,19 +1355,312 @@ exports.syncCommunityMembershipRoles = functions.firestore
         const roles = Array.isArray(afterData.roles)
             ? afterData.roles
             : (typeof afterData.role === 'string' ? [afterData.role] : []);
-        await membershipRef.set({ roles }, { merge: true });
+        const communitySnap = await db.doc(`communitys/${communityId}`).get();
+        const perms = getEffectiveCommunityPermissionKeys(
+            communitySnap.exists ? communitySnap.data() : {},
+            { ...afterData, roles });
+
+        const existingPerms = Array.isArray(afterData.perms) ? afterData.perms : [];
+        if (JSON.stringify(existingPerms) !== JSON.stringify(perms)) {
+            await change.after.ref.set({ perms }, { merge: true });
+        }
+        await membershipRef.set({ roles, perms }, { merge: true });
         return null;
     });
 
-exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWrite(async (change, context) => {
-    const afterData = change.after.data();
-    const beforeData = change.before.data();
-    if (afterData && (!beforeData || beforeData.username !== afterData.username)) {
-        const username = afterData.username;
-        const usernameLowercase = username.toLowerCase();
-        return change.after.ref.set({ username_lowercase: usernameLowercase }, { merge: true });
+// Kompakter Eintrag fürs Nutzer-Such-Dokument (userSearchIndex/all). Kurze
+// Feldnamen halten das Doc klein und müssen zu src/firebase/userIndexService.js
+// (entryToUser) passen. ul fällt auf username.toLowerCase() zurück, falls das
+// denormalisierte username_lowercase-Feld (noch) fehlt.
+// Recompute every member when rank definitions or permission toggles change.
+// Writes are chunked below Firestore's 500-operation batch limit.
+exports.syncCommunityRankPermissions = functions.firestore
+    .document('communitys/{communityId}')
+    .onUpdate(async (change, context) => {
+        const beforeRanks = change.before.data().ranks || [];
+        const afterData = change.after.data();
+        const afterRanks = afterData.ranks || [];
+        if (JSON.stringify(beforeRanks) === JSON.stringify(afterRanks)) return null;
+
+        const membersSnap = await db.collection(
+            `communitys/${context.params.communityId}/members`).get();
+        const pending = membersSnap.docs.filter(memberDoc => {
+            const current = Array.isArray(memberDoc.data().perms) ? memberDoc.data().perms : [];
+            const next = getEffectiveCommunityPermissionKeys(afterData, memberDoc.data());
+            return JSON.stringify(current) !== JSON.stringify(next);
+        });
+
+        for (let offset = 0; offset < pending.length; offset += 400) {
+            const batch = db.batch();
+            pending.slice(offset, offset + 400).forEach(memberDoc => {
+                batch.set(memberDoc.ref, {
+                    perms: getEffectiveCommunityPermissionKeys(afterData, memberDoc.data()),
+                }, { merge: true });
+            });
+            await batch.commit();
+        }
+        return null;
+    });
+
+exports.decideJoinRequest = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
     }
-    return null;
+    const communityId = String(data?.communityId || '');
+    const userId = String(data?.userId || '');
+    const decision = String(data?.decision || '');
+    if (!communityId || !userId || !['approve', 'decline'].includes(decision)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid join-request decision.');
+    }
+    if (!await canManageCommunityMembership(
+        communityId,
+        context,
+        'manageJoinRequests'
+    )) {
+        throw new functions.https.HttpsError(
+            'permission-denied', 'Only community staff can decide join requests.');
+    }
+
+    const requestRef = db.doc(`communitys/${communityId}/joinRequests/${userId}`);
+    const communityRef = db.doc(`communitys/${communityId}`);
+    const profileRef = db.doc(`profiles/${userId}`);
+    const memberRef = db.doc(`communitys/${communityId}/members/${userId}`);
+    const profileMembershipRef =
+        db.doc(`profiles/${userId}/communityMemberships/${communityId}`);
+    let communityData;
+
+    await db.runTransaction(async transaction => {
+        const [requestSnap, communitySnap, profileSnap, memberSnap] = await Promise.all([
+            transaction.get(requestRef),
+            transaction.get(communityRef),
+            transaction.get(profileRef),
+            transaction.get(memberRef),
+        ]);
+        if (!requestSnap.exists) {
+            throw new functions.https.HttpsError('not-found', 'Join request not found.');
+        }
+        if (!communitySnap.exists || !profileSnap.exists) {
+            throw new functions.https.HttpsError(
+                'not-found', 'Community or user profile not found.');
+        }
+        if (decision === 'approve' && memberSnap.exists) {
+            throw new functions.https.HttpsError(
+                'already-exists', 'This user is already a community member.');
+        }
+
+        communityData = communitySnap.data();
+        if (decision === 'approve') {
+            const membershipData = buildCommunityMembershipData(
+                communityId, communityData, profileSnap.data());
+            transaction.set(memberRef, membershipData.member);
+            transaction.set(profileMembershipRef, membershipData.profileMembership);
+        }
+        transaction.delete(requestRef);
+    });
+
+    const communityName = communityData.name || 'Community';
+    await notifyUser(userId, 'communityJoinRequest', {
+        title: decision === 'approve' ? 'Join request approved' : 'Join request declined',
+        message: decision === 'approve'
+            ? `You are now a member of ${communityName}.`
+            : `Your request to join ${communityName} was declined.`,
+        link: `/community/${communityData.slug || ''}`,
+    });
+    return { ok: true };
+});
+
+exports.onCommunityJoinRequestCreated = functions.firestore
+    .document('communitys/{communityId}/joinRequests/{userId}')
+    .onCreate(async (snap, context) => {
+        const { communityId, userId } = context.params;
+        const communitySnap = await db.doc(`communitys/${communityId}`).get();
+        if (!communitySnap.exists) return null;
+
+        const membersRef = db.collection(`communitys/${communityId}/members`);
+        const [fixedStaffSnap, permittedStaffSnap] = await Promise.all([
+            membersRef.where(
+                'roles',
+                'array-contains-any',
+                ['owner', 'moderator']
+            ).get(),
+            membersRef.where(
+                'perms',
+                'array-contains',
+                'manageJoinRequests'
+            ).get(),
+        ]);
+        const staffDocs = new Map();
+        [...fixedStaffSnap.docs, ...permittedStaffSnap.docs]
+            .forEach(staffDoc => staffDocs.set(staffDoc.id, staffDoc));
+        const communityData = communitySnap.data();
+        const applicant = snap.data().username || 'A user';
+        await Promise.all([...staffDocs.values()]
+            .filter(staffDoc => staffDoc.id !== userId)
+            .map(staffDoc => notifyUser(staffDoc.id, 'communityJoinRequest', {
+                title: 'New community join request',
+                message: `${applicant} wants to join ${communityData.name || 'your community'}.`,
+                link: `/manager/${communityId}?tab=Requests`,
+            })));
+        return null;
+    });
+
+exports.setCommunityJoinPassword = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
+    }
+    const communityId = String(data?.communityId || '');
+    const action = String(data?.action || 'set');
+    if (!communityId || !['set', 'clear'].includes(action)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid password action.');
+    }
+    if (!await canManageCommunityMembership(
+        communityId,
+        context,
+        null,
+        true
+    )) {
+        throw new functions.https.HttpsError(
+            'permission-denied', 'Only the community owner can change the join password.');
+    }
+
+    const privateRef = db.doc(`communitys/${communityId}/private/joinConfig`);
+    const communityRef = db.doc(`communitys/${communityId}`);
+    if (action === 'clear') {
+        const batch = db.batch();
+        batch.delete(privateRef);
+        batch.set(communityRef, {
+            hasJoinPassword: false,
+            joinMode: 'open',
+        }, { merge: true });
+        await batch.commit();
+        return { ok: true };
+    }
+
+    const password = String(data?.password || '');
+    if (password.length < 6 || password.length > 128) {
+        throw new functions.https.HttpsError(
+            'invalid-argument', 'The password must be between 6 and 128 characters.');
+    }
+    const passwordData = hashCommunityPassword(password);
+    const batch = db.batch();
+    batch.set(privateRef, {
+        ...passwordData,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(communityRef, {
+        hasJoinPassword: true,
+        joinMode: 'password',
+    }, { merge: true });
+    await batch.commit();
+    return { ok: true };
+});
+
+exports.joinCommunityWithPassword = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
+    }
+    const communityId = String(data?.communityId || '');
+    const password = String(data?.password || '');
+    if (!communityId || !password) {
+        throw new functions.https.HttpsError('invalid-argument', 'Community and password are required.');
+    }
+
+    const uid = context.auth.uid;
+    const [communitySnap, privateSnap, profileSnap, memberSnap] = await Promise.all([
+        db.doc(`communitys/${communityId}`).get(),
+        db.doc(`communitys/${communityId}/private/joinConfig`).get(),
+        db.doc(`profiles/${uid}`).get(),
+        db.doc(`communitys/${communityId}/members/${uid}`).get(),
+    ]);
+    if (memberSnap.exists) return { ok: true, alreadyMember: true };
+    if (!communitySnap.exists || !profileSnap.exists || !privateSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Community join configuration not found.');
+    }
+    if (communitySnap.data().joinMode !== 'password') {
+        throw new functions.https.HttpsError(
+            'failed-precondition', 'This community does not currently use password joining.');
+    }
+
+    if (!verifyCommunityPassword(password, privateSnap.data())) {
+        throw new functions.https.HttpsError('permission-denied', 'Incorrect community password.');
+    }
+    await addCommunityMemberWithAdmin(communityId, uid, communitySnap.data(), profileSnap.data());
+    return { ok: true };
+});
+
+exports.onCommunityInviteCreated = functions.firestore
+    .document('communitys/{communityId}/invites/{userId}')
+    .onCreate(async (snap, context) => {
+        const { communityId, userId } = context.params;
+        const communitySnap = await db.doc(`communitys/${communityId}`).get();
+        if (!communitySnap.exists) return null;
+        const communityData = communitySnap.data();
+        await notifyUser(userId, 'communityInvite', {
+            title: 'Community invitation',
+            message: `You were invited to join ${communityData.name || 'a community'}.`,
+            link: '/communitys?tab=Invitations',
+        });
+        return null;
+    });
+
+// Compact user search-index entry. Keep field names aligned with
+// src/firebase/userIndexService.js (entryToUser).
+const buildUserIndexEntry = (data) => ({
+    un: data.username || '',
+    ul: (data.username_lowercase || data.username || '').toLowerCase(),
+    up: data.profilePictureUrl || null,
+    r: data.role || 'user',
+});
+
+const isUserIndexable = (data) =>
+    Boolean(data && typeof data.username === 'string' && data.username.trim());
+
+exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWrite(async (change, context) => {
+    const userId = context.params.userId;
+    const afterData = change.after.exists ? change.after.data() : null;
+    const beforeData = change.before.exists ? change.before.data() : null;
+    let normalizedAfterData = afterData;
+
+    // 1) username_lowercase auf dem Profil pflegen (wie bisher). Der Rückschreiber
+    //    triggert onProfileWrite erneut — dann greift unten der No-Op-Guard.
+    if (afterData && afterData.username && (!beforeData || beforeData.username !== afterData.username)) {
+        const usernameLowercase = afterData.username.toLowerCase();
+        await change.after.ref.set({ username_lowercase: usernameLowercase }, { merge: true });
+        normalizedAfterData = { ...afterData, username_lowercase: usernameLowercase };
+    }
+
+    // 2) Kompakten Nutzer-Suchindex (userSearchIndex/all) synchron halten. Analog
+    //    zu syncCreationToSearchIndex: 1 Doc mit entries-Map (uid -> Eintrag),
+    //    Client lädt es mit 1 Read und sucht lokal (Fuse.js).
+    const entryField = new admin.firestore.FieldPath('entries', userId);
+    const beforeEntry = isUserIndexable(beforeData) ? buildUserIndexEntry(beforeData) : null;
+    const afterEntry = isUserIndexable(normalizedAfterData) ? buildUserIndexEntry(normalizedAfterData) : null;
+
+    // Profil gelöscht oder Username entfernt -> vorhandenen Eintrag entfernen.
+    if (beforeEntry && !afterEntry) {
+        return db.doc('userSearchIndex/all')
+            .update(entryField, admin.firestore.FieldValue.delete(),
+                'count', admin.firestore.FieldValue.increment(-1))
+            .catch(error => {
+                // Vor dem initialen Backfill existiert das Index-Doc evtl. noch nicht.
+                if (error.code === 5 || error.code === 'not-found') return null;
+                throw error;
+            });
+    }
+    if (!afterEntry) return null;
+
+    // No-Op-Guard: nur schreiben, wenn sich der kompakte Eintrag tatsächlich ändert
+    // (username/avatar) — nicht bei jedem unrelated Profil-Feld-Write.
+    if (beforeEntry && JSON.stringify(beforeEntry) === JSON.stringify(afterEntry)) {
+        return null;
+    }
+
+    const isNewEntry = !beforeEntry;
+    return db.doc('userSearchIndex/all').set({
+        entries: { [userId]: afterEntry },
+        ...(isNewEntry ? { count: admin.firestore.FieldValue.increment(1) } : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
 });
 
 exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite(async (change, context) => {
@@ -2445,6 +2882,92 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
     } catch (error) {
         console.error("Search index rebuild failed:", error);
         res.status(500).json({ error: "Rebuild failed: " + error.message });
+    }
+});
+
+/**
+ * Kompletter Neuaufbau des Nutzer-Suchindex (userSearchIndex/all) aus der
+ * profiles-Collection. Einmalig nach dem Deploy aufrufen (Backfill) oder zur
+ * Reparatur. Danach hält onProfileWrite den Index inkrementell aktuell.
+ * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/rebuildUserSearchIndex
+ */
+app.get("/rebuildUserSearchIndex", authenticate, async (req, res) => {
+    const userId = req.user.uid;
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({ error: "Only admins can rebuild the user search index." });
+    }
+
+    try {
+        const snapshot = await db.collection('profiles').get();
+        const entries = {};
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (!data.username) return; // Profile ohne Username nicht indexieren
+            entries[doc.id] = buildUserIndexEntry(data);
+        });
+
+        // Bewusst ohne merge: kompletter Rebuild entfernt verwaiste Einträge
+        await db.doc('userSearchIndex/all').set({
+            entries,
+            count: Object.keys(entries).length,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        console.log(`User search index rebuilt: ${Object.keys(entries).length} entries`);
+        return res.json({ success: true, count: Object.keys(entries).length });
+    } catch (error) {
+        console.error("User search index rebuild failed:", error);
+        return res.status(500).json({ error: "Rebuild failed: " + error.message });
+    }
+});
+
+/**
+ * Rebuilds effective rank permissions for every community member.
+ */
+app.get("/backfillCommunityMemberPermissions", authenticate, async (req, res) => {
+    const userDoc = await db.collection('users').doc(req.user.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({ error: "Only admins can backfill member permissions." });
+    }
+
+    try {
+        const communitiesSnap = await db.collection('communitys').get();
+        let memberCount = 0;
+        let updatedCount = 0;
+
+        for (const communityDoc of communitiesSnap.docs) {
+            const membersSnap = await communityDoc.ref.collection('members').get();
+            memberCount += membersSnap.size;
+            const updates = membersSnap.docs.filter(memberDoc => {
+                const current = Array.isArray(memberDoc.data().perms) ? memberDoc.data().perms : [];
+                const next = getEffectiveCommunityPermissionKeys(communityDoc.data(), memberDoc.data());
+                return JSON.stringify(current) !== JSON.stringify(next);
+            });
+            updatedCount += updates.length;
+
+            for (let offset = 0; offset < updates.length; offset += 400) {
+                const batch = db.batch();
+                updates.slice(offset, offset + 400).forEach(memberDoc => {
+                    batch.set(memberDoc.ref, {
+                        perms: getEffectiveCommunityPermissionKeys(
+                            communityDoc.data(), memberDoc.data()),
+                    }, { merge: true });
+                });
+                await batch.commit();
+            }
+        }
+
+        return res.json({
+            success: true,
+            communities: communitiesSnap.size,
+            members: memberCount,
+            updated: updatedCount,
+        });
+    } catch (error) {
+        console.error("Community member permission backfill failed:", error);
+        return res.status(500).json({ error: "Backfill failed: " + error.message });
     }
 });
 

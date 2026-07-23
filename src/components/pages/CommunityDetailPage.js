@@ -3,7 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
 import { collection, query, onSnapshot, where, doc, getDocs, getDoc, updateDoc, orderBy, limit, startAfter } from 'firebase/firestore';
-import { joinCommunity, leaveCommunity, deleteCommunityAsAdmin } from '../../firebase/community';
+import {
+    acceptCommunityInvite,
+    joinCommunity,
+    joinCommunityWithPassword,
+    leaveCommunity,
+    deleteCommunityAsAdmin,
+    requestCommunityJoin,
+    withdrawCommunityJoinRequest,
+} from '../../firebase/community';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import AddCreationsToCommunityModal from '../modals/AddCreationsToCommunityModal';
 import CommunityVideosTab from '../community/CommunityVideosTab';
@@ -17,6 +25,15 @@ import { ICONS, SOCIAL_PLATFORMS, isEventHidden } from '../../utils/helpers';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
 import Icon from '../ui/Icon';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
+import {
+    getEffectiveCommunityPermissions,
+    hasAnyCommunityManagementPermission,
+} from '../../utils/communityPermissions';
+import {
+    canViewCommunityInfo,
+    isCommunityInfoRestricted,
+} from '../../utils/communityVisibility';
+import CommunityJoinModal from '../modals/CommunityJoinModal';
 
 const TABS = ['Creations', 'Members', 'Events'];
 
@@ -33,8 +50,12 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [isMember, setIsMember] = useState(false);
+    const [membershipResolvedCommunityId, setMembershipResolvedCommunityId] = useState(null);
     const [eventNotifyOn, setEventNotifyOn] = useState(true);
     const [isProcessingJoin, setIsProcessingJoin] = useState(false);
+    const [joinRequestPending, setJoinRequestPending] = useState(false);
+    const [hasInvite, setHasInvite] = useState(false);
+    const [joinModalMode, setJoinModalMode] = useState(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const navigate = useNavigate();
 
@@ -46,13 +67,23 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const [creationTagFilter, setCreationTagFilter] = useState('');
     const [creationDlcFilter, setCreationDlcFilter] = useState('all');
     const filterMenuRef = useRef(null);
+    const siteStaffBypass = ['admin', 'moderator'].includes(userProfile?.role);
+    const infoPageRestricted = isCommunityInfoRestricted(community);
+    const isCommunityOwnerById = !!user?.uid && community?.ownerId === user.uid;
+    const membershipResolved =
+        !!community?.id && membershipResolvedCommunityId === community.id;
+    const infoAccessResolved =
+        !infoPageRestricted || siteStaffBypass || isCommunityOwnerById || membershipResolved;
+    const canViewInfoPage =
+        infoAccessResolved &&
+        canViewCommunityInfo(community, isMember, userProfile, user?.uid);
 
     // Creations der Community kommen aus dem Kompakt-Index (1 Read),
     // gepflegt von den Cloud-Function-Triggern.
     const { data: creations = [] } = useQuery({
         queryKey: ['communityIndex', community?.id],
         queryFn: () => fetchCommunityIndex(community.id),
-        enabled: !!community?.id,
+        enabled: !!community?.id && community.slug === communityName && canViewInfoPage,
         staleTime: 5 * 60 * 1000,
     });
 
@@ -87,14 +118,56 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     }, [communityName, navigate, setModalMessage]);
 
     useEffect(() => {
-        if (!community || !user) return;
+        if (!community) {
+            setIsMember(false);
+            setMembershipResolvedCommunityId(null);
+            return undefined;
+        }
+        if (!user?.uid) {
+            setIsMember(false);
+            setMembershipResolvedCommunityId(community.id);
+            return undefined;
+        }
+
         let isMounted = true;
+        setMembershipResolvedCommunityId(null);
         const membershipRef = doc(db, 'profiles', user.uid, 'communityMemberships', community.id);
-        const unsubscribe = onSnapshot(membershipRef, (doc) => {
-            if (isMounted) setIsMember(doc.exists());
-        });
+        const unsubscribe = onSnapshot(
+            membershipRef,
+            (membershipDoc) => {
+                if (!isMounted) return;
+                setIsMember(membershipDoc.exists());
+                setMembershipResolvedCommunityId(community.id);
+            },
+            (error) => {
+                if (!isMounted) return;
+                setIsMember(false);
+                setMembershipResolvedCommunityId(community.id);
+                setModalMessage(`Could not verify community membership: ${error.message}`);
+            }
+        );
         return () => { isMounted = false; unsubscribe(); };
-    }, [user, community]);
+    }, [user?.uid, community, setModalMessage]);
+
+    useEffect(() => {
+        if (!community || !user || isMember) {
+            setJoinRequestPending(false);
+            setHasInvite(false);
+            return;
+        }
+        const unsubscribeRequest = onSnapshot(
+            doc(db, 'communitys', community.id, 'joinRequests', user.uid),
+            snapshot => setJoinRequestPending(snapshot.exists() && snapshot.data().status === 'pending')
+        );
+        const unsubscribeInvite = onSnapshot(
+            doc(db, 'communitys', community.id, 'invites', user.uid),
+            snapshot => setHasInvite(snapshot.exists())
+        );
+        return () => {
+            unsubscribeRequest();
+            unsubscribeInvite();
+        };
+    }, [community, user, isMember]);
 
     // Per-community event-notification preference (member doc notifyEvents, default on)
     useEffect(() => {
@@ -119,7 +192,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     };
 
     useEffect(() => {
-        if (!community) return;
+        if (!community || !canViewInfoPage) return;
         let isMounted = true;
 
         const fetchMembers = async () => {
@@ -134,10 +207,10 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         };
         fetchMembers();
         return () => { isMounted = false; };
-    }, [community]);
+    }, [community, canViewInfoPage]);
     
     useEffect(() => {
-        if (!community) return;
+        if (!community || !canViewInfoPage) return;
         const fetchInitialEvents = async () => {
             setHasMoreEvents(true);
             const eventsQuery = query(
@@ -155,7 +228,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             }
         };
         fetchInitialEvents();
-    }, [community]);
+    }, [community, canViewInfoPage]);
 
     const fetchMoreEvents = useCallback(async () => {
         if (loading || loadingMoreEvents || !hasMoreEvents) return;
@@ -229,10 +302,10 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     // prefetchQuery füllt nur den Cache und löst kein Re-Render dieser Seite aus.
     const youtubeChannelUrl = community?.socialLinks?.youtube || null;
     useEffect(() => {
-        if (youtubeChannelUrl) {
+        if (youtubeChannelUrl && canViewInfoPage) {
             queryClient.prefetchQuery(youtubeChannelFeedOptions(youtubeChannelUrl));
         }
-    }, [youtubeChannelUrl, queryClient]);
+    }, [youtubeChannelUrl, canViewInfoPage, queryClient]);
 
     useEffect(() => {
         if (!visibleTabs.includes(activeTab)) setActiveTab(TABS[0]);
@@ -271,8 +344,14 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const isCommunityOwner = (community?.ownerId && user)
         ? community.ownerId === user.uid
         : currentUserMemberInfo?.roles?.includes('owner');
-    const isCommunityModerator = currentUserMemberInfo?.roles?.includes('moderator');
-    const showManageButton = isSiteAdmin || isCommunityModerator || isCommunityOwner;
+    const memberPermissions = getEffectiveCommunityPermissions(community, currentUserMemberInfo);
+    const showManageButton =
+        siteStaffBypass ||
+        isCommunityOwner ||
+        hasAnyCommunityManagementPermission(community, currentUserMemberInfo);
+    const canAddCreations = siteStaffBypass || memberPermissions.addCreations;
+    const canApplyShowcase = siteStaffBypass || memberPermissions.applyShowcase;
+    const canCreateEvents = siteStaffBypass || memberPermissions.createEvents;
 
     // Öffentlicher Events-Tab ist für Owner und Nutzer identisch: unsichtbare
     // Events erscheinen nur noch im Community-Manager (Events-Tab).
@@ -311,14 +390,63 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         return content;
     }, [activeTab, unpinnedCreations, members, searchTerm, creationStatusFilter, creationPlatformFilter, memberRankFilter, creationRankFilter, creationTagFilter, creationDlcFilter]);
 
-    if (loading || !community) return <Spinner />;
+    if (loading || !community || community.slug !== communityName) return <Spinner />;
     
     const handleJoin = async () => {
         if (!user) { setModalMessage("You must be logged in to join a community."); return; }
+        const joinMode = community.joinMode || 'open';
+        if (joinMode === 'application') {
+            setJoinModalMode('application');
+            return;
+        }
+        if (joinMode === 'password') {
+            setJoinModalMode('password');
+            return;
+        }
+        if (joinMode === 'invite' && !hasInvite) {
+            setModalMessage('This community is invite only.');
+            return;
+        }
         setIsProcessingJoin(true);
-        try { await joinCommunity(community.id, user.uid); }
+        try {
+            if (joinMode === 'invite') {
+                await acceptCommunityInvite({ communityId: community.id }, user.uid);
+            } else {
+                await joinCommunity(community.id, user.uid);
+            }
+        }
         catch (error) { console.error("Error joining community:", error); setModalMessage(error.message); }
         finally { setIsProcessingJoin(false); }
+    };
+
+    const handleJoinModalSubmit = async (value) => {
+        try {
+            if (joinModalMode === 'password') {
+                await joinCommunityWithPassword(community.id, value);
+                setModalMessage(`You joined ${community.name}.`);
+            } else {
+                await requestCommunityJoin(community.id, {
+                    uid: user.uid,
+                    username: userProfile?.username || user.displayName || 'Unknown User',
+                }, value);
+                setModalMessage('Your join request was sent.');
+            }
+        } catch (error) {
+            setModalMessage(error.message);
+            throw error;
+        }
+    };
+
+    const handleWithdrawRequest = async () => {
+        setIsProcessingJoin(true);
+        try {
+            await withdrawCommunityJoinRequest(community.id, user.uid);
+            setModalMessage('Your join request was withdrawn.');
+        } catch (error) {
+            setModalMessage(error.message);
+        } finally {
+            setIsProcessingJoin(false);
+        }
     };
 
     const handleLeave = () => {
@@ -336,6 +464,111 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     };
     
     const themeColor = community?.themeColor || '#F97316';
+    const joinActionLabel = isProcessingJoin
+        ? 'Joining...'
+        : community.joinMode === 'application'
+            ? 'Apply to Join'
+            : community.joinMode === 'password'
+                ? 'Join with Password'
+                : community.joinMode === 'invite'
+                    ? (hasInvite ? 'Accept Invitation' : 'Invite Only')
+                    : 'Join Community';
+
+    if (infoPageRestricted && !infoAccessResolved) {
+        return <div className="h-screen flex justify-center items-center"><Spinner /></div>;
+    }
+
+    if (!canViewInfoPage) {
+        return (
+            <div
+                className="container mx-auto p-4 sm:p-8 min-h-[70vh] flex items-center justify-center"
+                style={{ '--theme-color': themeColor }}
+            >
+                <div className="w-full max-w-xl rounded-2xl bg-white dark:bg-gray-800 shadow-xl p-8 text-center">
+                    <div className="mx-auto mb-5 w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                        <Icon path={ICONS.shieldCheck} className="w-9 h-9 text-[--theme-color]" />
+                    </div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">
+                        {community.name}
+                    </h1>
+                    <h2 className="mt-4 text-xl font-semibold text-gray-700 dark:text-gray-200">
+                        Members-only community
+                    </h2>
+                    <p className="mt-2 text-gray-500 dark:text-gray-400">
+                        Only members can open this community&apos;s info page.
+                    </p>
+
+                    <div className="mt-7 flex flex-col sm:flex-row justify-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => navigate('/communitys')}
+                            className="px-5 py-2.5 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 font-semibold transition-colors"
+                        >
+                            Back to Community Hub
+                        </button>
+
+                        {user && !joinRequestPending && (
+                            <button
+                                type="button"
+                                onClick={handleJoin}
+                                disabled={
+                                    isProcessingJoin ||
+                                    (community.joinMode === 'invite' && !hasInvite)
+                                }
+                                className="px-5 py-2.5 rounded-lg bg-[--theme-color] hover:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all"
+                            >
+                                {joinActionLabel}
+                            </button>
+                        )}
+
+                        {!user && (
+                            <button
+                                type="button"
+                                onClick={() => navigate(
+                                    `/login?redirect=${encodeURIComponent(`/community/${community.slug}`)}`
+                                )}
+                                className="px-5 py-2.5 rounded-lg bg-[--theme-color] hover:brightness-90 text-white font-bold transition-all"
+                            >
+                                Sign In
+                            </button>
+                        )}
+                    </div>
+
+                    {!user && (
+                        <p className="mt-5 text-sm text-gray-500 dark:text-gray-400">
+                            Sign in to request access or join this community.
+                        </p>
+                    )}
+
+                    {user && joinRequestPending && (
+                        <div className="mt-5">
+                            <span className="inline-block bg-amber-100 text-amber-800 font-bold py-2 px-5 rounded-lg">
+                                Application pending
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleWithdrawRequest}
+                                disabled={isProcessingJoin}
+                                className="block mx-auto mt-3 text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50"
+                            >
+                                Withdraw application
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {joinModalMode && (
+                    <CommunityJoinModal
+                        communityName={community.name}
+                        mode={joinModalMode}
+                        allowMessage={community.allowApplicationMessage === true}
+                        onClose={() => setJoinModalMode(null)}
+                        onSubmit={handleJoinModalSubmit}
+                    />
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
@@ -407,9 +640,35 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                         Notify me about events
                                     </label>
                                 </div>
+                            ) : joinRequestPending ? (
+                                <div className="flex flex-col items-center md:items-end gap-2">
+                                    <span className="bg-amber-100 text-amber-800 font-bold py-2 px-5 rounded-lg">
+                                        Application pending
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={handleWithdrawRequest}
+                                        disabled={isProcessingJoin}
+                                        className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50"
+                                    >
+                                        Withdraw application
+                                    </button>
+                                </div>
                             ) : (
-                                <button onClick={handleJoin} disabled={isProcessingJoin} className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                    {isProcessingJoin ? 'Joining...' : 'Join Community'}
+                                <button
+                                    onClick={handleJoin}
+                                    disabled={isProcessingJoin || ((community.joinMode === 'invite') && !hasInvite)}
+                                    className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition-colors"
+                                >
+                                    {isProcessingJoin
+                                        ? 'Joining...'
+                                        : community.joinMode === 'application'
+                                            ? 'Apply to Join'
+                                            : community.joinMode === 'password'
+                                                ? 'Join with Password'
+                                                : community.joinMode === 'invite'
+                                                    ? (hasInvite ? 'Accept Invitation' : 'Invite Only')
+                                                    : 'Join Community'}
                                 </button>
                             )
                         ) : (
@@ -451,7 +710,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                         ))}
                     </div>
                     {/* Desktop: + Button neben den Tabs */}
-                    {user && isMember && (
+                    {user && isMember && canAddCreations && (
                         <button
                             onClick={() => setIsAddModalOpen(true)}
                             className="hidden sm:flex ml-3 w-11 h-11 items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all flex-shrink-0"
@@ -461,18 +720,38 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             <Icon path={ICONS.plus} className="w-6 h-6" />
                         </button>
                     )}
+                    {user && isMember && canCreateEvents && activeTab === 'Events' && (
+                        <button
+                            onClick={() => navigate(`/community/${community.id}/create-event`)}
+                            className="hidden sm:flex ml-3 h-11 items-center justify-center rounded-full bg-emerald-600 px-4 text-white shadow hover:bg-emerald-700 transition-colors flex-shrink-0"
+                        >
+                            Create Event
+                        </button>
+                    )}
                 </div>
                 {/* Mobile: + Button in eigener Zeile unter den Tabs */}
-                {user && isMember && (
+                {user && isMember && (canAddCreations || (canCreateEvents && activeTab === 'Events')) && (
                     <div className="flex sm:hidden justify-center mt-3">
-                        <button
-                            onClick={() => setIsAddModalOpen(true)}
-                            className="w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all"
-                            title="Add or remove your creations in this community"
-                            aria-label="Manage your creations in this community"
-                        >
-                            <Icon path={ICONS.plus} className="w-6 h-6" />
-                        </button>
+                        <div className="flex gap-2">
+                            {canAddCreations && (
+                                <button
+                                    onClick={() => setIsAddModalOpen(true)}
+                                    className="w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all"
+                                    title="Add or remove your creations in this community"
+                                    aria-label="Manage your creations in this community"
+                                >
+                                    <Icon path={ICONS.plus} className="w-6 h-6" />
+                                </button>
+                            )}
+                            {canCreateEvents && activeTab === 'Events' && (
+                                <button
+                                    onClick={() => navigate(`/community/${community.id}/create-event`)}
+                                    className="h-11 rounded-full bg-emerald-600 px-4 font-semibold text-white shadow hover:bg-emerald-700"
+                                >
+                                    Create Event
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>
@@ -615,8 +894,18 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 <AddCreationsToCommunityModal
                     user={user}
                     community={community}
+                    canApplyShowcase={canApplyShowcase}
                     onClose={() => setIsAddModalOpen(false)}
                     setModalMessage={setModalMessage}
+                />
+            )}
+            {joinModalMode && (
+                <CommunityJoinModal
+                    communityName={community.name}
+                    mode={joinModalMode}
+                    allowMessage={community.allowApplicationMessage === true}
+                    onClose={() => setJoinModalMode(null)}
+                    onSubmit={handleJoinModalSubmit}
                 />
             )}
         </div>

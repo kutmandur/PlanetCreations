@@ -18,9 +18,19 @@ service cloud.firestore {
     function isInfluencer() {
       return isLoggedIn() && request.auth.token.role == 'influencer';
     }
-    function isCommunityStaff(communityId) {
+    function communityMemberCan(communityId, permission) {
       let memberPath = /databases/$(database)/documents/communitys/$(communityId)/members/$(request.auth.uid);
-      return isLoggedIn() && exists(memberPath) && get(memberPath).data.roles.hasAny(['owner', 'moderator']);
+      return isLoggedIn() && exists(memberPath) && (
+        get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
+        get(memberPath).data.get('roles', []).hasAny(['owner']) ||
+        get(memberPath).data.get('perms', []).hasAny([permission])
+      );
+    }
+    function communityAllowsSelfJoin(communityId, userId) {
+      let communityPath = /databases/$(database)/documents/communitys/$(communityId);
+      let invitePath = /databases/$(database)/documents/communitys/$(communityId)/invites/$(userId);
+      return get(communityPath).data.get('joinMode', 'open') == 'open' ||
+        exists(invitePath);
     }
 
     // --- Data Validation Functions ---
@@ -102,7 +112,8 @@ service cloud.firestore {
     function isValidCommunityData(data) {
       return data.keys().hasAll(['name', 'ownerId']) &&
              data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
-             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 2000));
+             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 2000)) &&
+             (!('membersOnlyInfoPage' in data.keys()) || data.membersOnlyInfoPage is bool);
     }
 
     // --- Rules for Collections ---
@@ -112,21 +123,47 @@ service cloud.firestore {
 
       // ✅ FIX: Separated 'write' into specific create, update, and delete rules.
       // This ensures the correct variables are used for each operation.
-      allow create: if isLoggedIn() && (isCommunityStaff(request.resource.data.communityId) || isModerator());
-      allow update: if isLoggedIn() && (isCommunityStaff(resource.data.communityId) || isModerator());
-      allow delete: if isLoggedIn() && (isCommunityStaff(resource.data.communityId) || isModerator());
+      allow create: if isLoggedIn() &&
+          request.resource.data.creatorId == request.auth.uid &&
+          (communityMemberCan(request.resource.data.communityId, 'createEvents') || isModerator());
+      allow update: if isLoggedIn() &&
+          request.resource.data.communityId == resource.data.communityId &&
+          request.resource.data.creatorId == resource.data.creatorId && (
+          communityMemberCan(resource.data.communityId, 'manageEvents') ||
+          isModerator() ||
+          (resource.data.creatorId == request.auth.uid &&
+           communityMemberCan(resource.data.communityId, 'createEvents'))
+      );
+      allow delete: if isLoggedIn() && (
+          communityMemberCan(resource.data.communityId, 'manageEvents') ||
+          isModerator() ||
+          (resource.data.creatorId == request.auth.uid &&
+           communityMemberCan(resource.data.communityId, 'createEvents'))
+      );
       
       match /voters/{userId} {
         allow read: if true;
         allow create: if isOwner(userId);
-        allow delete: if isCommunityStaff(get(/databases/$(database)/documents/events/$(eventId)).data.communityId) || isModerator();
+        allow delete: if communityMemberCan(
+          get(/databases/$(database)/documents/events/$(eventId)).data.communityId,
+          'manageEvents'
+        ) || isModerator();
       }
     }
 
     match /communitys/{communityId} {
       allow read: if true;
       allow create: if (isInfluencer() || isModerator()) && isValidCommunityData(request.resource.data);
-      allow update: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+      allow update: if isLoggedIn() &&
+        isValidCommunityData(request.resource.data) &&
+        (
+          get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
+          isAdmin() ||
+          (
+            communityMemberCan(communityId, 'manageShowcases') &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['showcaseGroups'])
+          )
+        );
       allow delete: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
 
       match /members/{userId} {
@@ -135,21 +172,105 @@ service cloud.firestore {
         // Community-Owner (seedet beim Erstellen 'owner') und Staff/Site-Mods dürfen
         // beliebige Rollen setzen. Verhindert, dass ein normales Mitglied sich selbst
         // per roles:['owner'] zu Community-Staff hochstuft (isCommunityStaff).
-        allow create: if isLoggedIn() && isOwner(userId) && (
-            request.resource.data.roles == [get(/databases/$(database)/documents/communitys/$(communityId)).data.get('defaultRankName', 'member').lower()] ||
+        allow create: if isLoggedIn() && isOwner(userId) &&
+          !request.resource.data.keys().hasAny(['perms']) && (
+            (
+              request.resource.data.roles == [get(/databases/$(database)/documents/communitys/$(communityId)).data.get('defaultRankName', 'member').lower()] &&
+              communityAllowsSelfJoin(communityId, userId)
+            ) ||
             get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
-            isCommunityStaff(communityId) ||
+            communityMemberCan(communityId, 'manageMembers') ||
             isModerator()
         );
-        allow delete: if isLoggedIn() && (isOwner(userId) || get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
-        // Rollen darf nur Community-Owner/Staff/Admin ändern. Ein Mitglied darf sein
-        // eigenes Doc nur bearbeiten, solange 'roles' unverändert bleibt.
-        allow update: if isLoggedIn() && (
+        allow delete: if isLoggedIn() && (
+          isOwner(userId) ||
+          get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
+          isAdmin() ||
+          (
+            (communityMemberCan(communityId, 'manageMembers') || isModerator()) &&
+            !resource.data.roles.hasAny(['owner', 'moderator'])
+          )
+        );
+        // Owner/Admins dürfen alle Rollen verwalten. Community- und Site-Moderatoren
+        // dürfen nur normale Mitglieder/Ränge bearbeiten, nicht Owner oder Moderator.
+        // Ein Mitglied darf sein eigenes Doc nur ändern, solange roles unverändert bleibt.
+        allow update: if isLoggedIn() &&
+          request.resource.data.get('perms', []) == resource.data.get('perms', []) && (
             get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
-            isCommunityStaff(communityId) ||
             isAdmin() ||
+            (
+              userId != request.auth.uid &&
+              (communityMemberCan(communityId, 'manageMembers') || isModerator()) &&
+              !resource.data.roles.hasAny(['owner', 'moderator']) &&
+              !request.resource.data.roles.hasAny(['owner', 'moderator'])
+            ) ||
             (isOwner(userId) && request.resource.data.roles == resource.data.roles)
         );
+      }
+      match /joinRequests/{userId} {
+        allow read: if isLoggedIn() &&
+          (
+            isOwner(userId) ||
+            communityMemberCan(communityId, 'manageJoinRequests') ||
+            isModerator()
+          );
+        allow create: if isLoggedIn() && isOwner(userId) &&
+          get(/databases/$(database)/documents/communitys/$(communityId)).data.get('joinMode', 'open') == 'application' &&
+          request.resource.data.keys().hasOnly([
+            'userId', 'username', 'message', 'status', 'createdAt'
+          ]) &&
+          request.resource.data.userId == userId &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.username is string &&
+          request.resource.data.username.size() <= 30 &&
+          request.resource.data.username ==
+            get(/databases/$(database)/documents/profiles/$(userId)).data.username &&
+          request.resource.data.message is string &&
+          request.resource.data.message.size() <= 1000 &&
+          (
+            get(/databases/$(database)/documents/communitys/$(communityId)).data.get('allowApplicationMessage', false) == true ||
+            request.resource.data.message == ''
+          ) &&
+          !exists(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if isLoggedIn() &&
+          (
+            isOwner(userId) ||
+            communityMemberCan(communityId, 'manageJoinRequests') ||
+            isModerator()
+          );
+      }
+      match /invites/{userId} {
+        allow read: if isLoggedIn() &&
+          (
+            isOwner(userId) ||
+            communityMemberCan(communityId, 'manageInvitations') ||
+            isModerator()
+          );
+        allow create: if isLoggedIn() &&
+          (communityMemberCan(communityId, 'manageInvitations') || isModerator()) &&
+          request.resource.data.keys().hasOnly([
+            'userId', 'communityId', 'username', 'invitedBy', 'invitedAt'
+          ]) &&
+          request.resource.data.userId == userId &&
+          request.resource.data.communityId == communityId &&
+          request.resource.data.invitedBy == request.auth.uid &&
+          request.resource.data.username is string &&
+          request.resource.data.username ==
+            get(/databases/$(database)/documents/profiles/$(userId)).data.username &&
+          !exists(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
+          request.resource.data.invitedAt == request.time;
+        allow update: if false;
+        allow delete: if isLoggedIn() &&
+          (
+            isOwner(userId) ||
+            communityMemberCan(communityId, 'manageInvitations') ||
+            isModerator()
+          );
+      }
+      match /private/{documentId} {
+        allow read, write: if false;
       }
       match /creations/{creationId} {
         allow read: if true;
@@ -163,17 +284,24 @@ service cloud.firestore {
         // Community nehmen) und sich einmalig für das Showcase bewerben —
         // dabei dürfen nur die Bewerbungsfelder geändert werden.
         allow update: if isLoggedIn() && (
-            isCommunityStaff(communityId) || isModerator() ||
+            communityMemberCan(communityId, 'manageCreations') ||
+            communityMemberCan(communityId, 'manageShowcases') ||
+            isModerator() ||
             (
                 resource.data.userId == request.auth.uid &&
                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appliedForShowcase', 'appliedAt']) &&
                 request.resource.data.appliedForShowcase == true &&
+                communityMemberCan(communityId, 'applyShowcase') &&
                 !('appliedForShowcase' in resource.data && resource.data.appliedForShowcase == true) &&
                 // Bereits geshowcaste Creations können sich nicht erneut bewerben
                 !('showcaseVideoUrl' in resource.data && resource.data.showcaseVideoUrl != null)
             )
         );
-        allow delete: if isLoggedIn() && (isCommunityStaff(communityId) || isModerator() || resource.data.userId == request.auth.uid);
+        allow delete: if isLoggedIn() && (
+          communityMemberCan(communityId, 'manageCreations') ||
+          isModerator() ||
+          resource.data.userId == request.auth.uid
+        );
       }
     }
 
@@ -225,6 +353,12 @@ service cloud.firestore {
       allow read: if true;
     }
 
+    // Invitation hub: an authenticated user can query only invitation documents
+    // whose userId field is their own UID.
+    match /{path=**}/invites/{userId} {
+      allow read: if isLoggedIn() && resource.data.userId == request.auth.uid;
+    }
+
     // Kompakter Suchindex (ein Doc pro Spiel), wird nur von Cloud Functions
     // (Admin SDK, umgeht Rules) geschrieben — Clients lesen ihn für die Suche.
     match /searchIndex/{gameId} {
@@ -234,6 +368,14 @@ service cloud.firestore {
 
     // Community-Suchindex (ein Doc pro Community), analog nur von Functions gepflegt.
     match /communitySearchIndex/{communityId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Nutzer-Suchindex (userSearchIndex/all, ggf. später Shards), nur von der
+    // Cloud Function onProfileWrite (Admin SDK) gepflegt — Clients lesen ihn für
+    // die Nutzersuche (HomePage, Einladungen).
+    match /userSearchIndex/{shardId} {
       allow read: if true;
       allow write: if false;
     }
@@ -282,7 +424,14 @@ service cloud.firestore {
 
       match /communityMemberships/{communityId} {
         allow read: if true;
-        allow write: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) &&
+          existsAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
+          request.resource.data.roles ==
+            getAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)).data.roles;
+        allow update: if isAdmin();
+        allow delete: if (isOwner(userId) &&
+          !existsAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId))) ||
+          isAdmin();
       }
     }
 

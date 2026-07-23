@@ -6,6 +6,13 @@ import { ICONS } from '../../../utils/helpers';
 import Icon from '../../ui/Icon';
 import InfoBox from '../../ui/InfoBox';
 import { SectionCard, SaveBar, getTextColorForBackground } from './ui';
+import RankPermissionsEditor, {
+  FixedRankPermissionsInfo,
+} from '../../community/RankPermissionsEditor';
+import {
+  getRankPermissionFields,
+  withDefaultRankPermissions,
+} from '../../../utils/communityPermissions';
 
 const GRAB_HANDLE_ICON = 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5';
 
@@ -17,7 +24,9 @@ const RanksSection = ({ community, setModalMessage }) => {
     community.ranks?.filter((r) => r.name !== 'Owner' && r.name !== 'Moderator').sort((a, b) => a.weight - b.weight) || [];
 
   const [ranks, setRanks] = useState(
-    initialCustom.length > 0 ? initialCustom : [{ name: 'Member', color: '#6B7280', imageUrl: '', discordRoleId: '' }]
+    initialCustom.length > 0
+      ? initialCustom.map(withDefaultRankPermissions)
+      : [withDefaultRankPermissions({ name: 'Member', color: '#6B7280', imageUrl: '', discordRoleId: '' })]
   );
   const [defaultRankIndex, setDefaultRankIndex] = useState(() => {
     const index = (initialCustom.length > 0 ? initialCustom : [{ name: 'Member' }]).findIndex(
@@ -29,12 +38,12 @@ const RanksSection = ({ community, setModalMessage }) => {
     community.ranks?.find((r) => r.name === 'Owner') || { name: 'Owner', color: '#EF4444', imageUrl: '' }
   );
   const [moderatorRankData, setModeratorRankData] = useState(
-    community.ranks?.find((r) => r.name === 'Moderator') || {
+    withDefaultRankPermissions(community.ranks?.find((r) => r.name === 'Moderator') || {
       name: 'Moderator',
       color: '#3B82F6',
       imageUrl: '',
       discordRoleId: '',
-    }
+    }, 'moderator')
   );
 
   const [dirty, setDirty] = useState(false);
@@ -67,7 +76,7 @@ const RanksSection = ({ community, setModalMessage }) => {
 
   const addRank = (name = '', color = '#4F46E5', discordRoleId = '') => {
     if (ranks.length < 90) {
-      setRanks([...ranks, { name, color, imageUrl: '', discordRoleId }]);
+      setRanks([...ranks, withDefaultRankPermissions({ name, color, imageUrl: '', discordRoleId })]);
       touch();
     }
   };
@@ -98,7 +107,12 @@ const RanksSection = ({ community, setModalMessage }) => {
     try {
       const specialRanks = [
         { ...ownerRankData, name: 'Owner', weight: 0, discordRoleId: '' },
-        { ...moderatorRankData, name: 'Moderator', weight: 1 },
+        {
+          ...moderatorRankData,
+          ...getRankPermissionFields(moderatorRankData, 'moderator'),
+          name: 'Moderator',
+          weight: 1,
+        },
       ];
       const customRanksToSave = ranks
         .filter((r) => r.name.trim() !== '')
@@ -107,6 +121,7 @@ const RanksSection = ({ community, setModalMessage }) => {
           color: rank.color,
           imageUrl: rank.imageUrl || '',
           discordRoleId: rank.discordRoleId || '',
+          ...getRankPermissionFields(rank),
           weight: specialRanks.length + index,
         }));
       const ranksToSave = [...specialRanks, ...customRanksToSave];
@@ -124,7 +139,7 @@ const RanksSection = ({ community, setModalMessage }) => {
   };
 
   return (
-    <SectionCard title="Ranks" description="'Owner' and 'Moderator' are fixed ranks. You can add and reorder custom ranks below them.">
+    <SectionCard title="Ranks & Permissions" description="'Owner' and 'Moderator' are fixed ranks with different management permissions. You can add and reorder custom ranks below them.">
       <div className="p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800 rounded-r-lg text-sm space-y-2">
         <p>
           Ranks are the roles members can hold in your community. Each rank has a name, color and optional image,
@@ -183,6 +198,9 @@ const RanksSection = ({ community, setModalMessage }) => {
               className="w-full p-2 border rounded-lg"
             />
             <div className="mt-2"><InfoBox /></div>
+            <div className="mt-2">
+              <FixedRankPermissionsInfo role="owner" />
+            </div>
           </div>
         </div>
 
@@ -219,6 +237,13 @@ const RanksSection = ({ community, setModalMessage }) => {
             />
           </div>
           <div className="mt-2 pl-7"><InfoBox /></div>
+          <div className="mt-2 pl-7">
+            <RankPermissionsEditor
+              rank={moderatorRankData}
+              role="moderator"
+              onChange={handleModeratorRankChange}
+            />
+          </div>
         </div>
 
         {/* Custom ranks */}
@@ -279,6 +304,10 @@ const RanksSection = ({ community, setModalMessage }) => {
                   />
                 </div>
                 <div className="mt-2"><InfoBox /></div>
+                <RankPermissionsEditor
+                  rank={rank}
+                  onChange={(field, value) => handleRankChange(index, field, value)}
+                />
               </div>
               <div className="flex flex-col space-y-2 flex-shrink-0">
                 <input
@@ -304,7 +333,7 @@ const RanksSection = ({ community, setModalMessage }) => {
         </button>
       </div>
 
-      <SaveBar dirty={dirty} saving={saving} onSave={handleSave} label="Save Ranks" />
+      <SaveBar dirty={dirty} saving={saving} onSave={handleSave} label="Save Ranks & Permissions" />
     </SectionCard>
   );
 };

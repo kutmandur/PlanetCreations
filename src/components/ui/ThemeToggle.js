@@ -9,12 +9,20 @@ const MOON = "M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9
 // The default (no explicit choice) follows the OS setting; see src/utils/theme.js.
 const ThemeToggle = () => {
   const [theme, setThemeState] = useState('light');
+  const [showCommunityColorCoachmark, setShowCommunityColorCoachmark] =
+    useState(false);
 
   useEffect(() => {
     const syncTheme = (event) => setThemeState(event.detail || getEffectiveTheme());
+    const syncCoachmark = (event) =>
+      setShowCommunityColorCoachmark(event.detail === true);
     syncTheme({});
     window.addEventListener('pc-theme-change', syncTheme);
-    return () => window.removeEventListener('pc-theme-change', syncTheme);
+    window.addEventListener('pc-theme-coachmark', syncCoachmark);
+    return () => {
+      window.removeEventListener('pc-theme-change', syncTheme);
+      window.removeEventListener('pc-theme-coachmark', syncCoachmark);
+    };
   }, []);
 
   const toggle = () => {
@@ -24,14 +32,39 @@ const ThemeToggle = () => {
   };
 
   return (
-    <button
-      onClick={toggle}
-      className="p-2 rounded-full hover:bg-gray-700 text-gray-300"
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      <Icon path={theme === 'dark' ? SUN : MOON} className="w-6 h-6" />
-    </button>
+    <div className="relative">
+      <button
+        onClick={toggle}
+        className="p-2 rounded-full hover:bg-gray-700 text-gray-300"
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      >
+        <Icon path={theme === 'dark' ? SUN : MOON} className="w-6 h-6" />
+      </button>
+
+      {showCommunityColorCoachmark && (
+        <div className="absolute right-0 top-full z-[70] mt-1 w-64">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="ml-auto mr-2 h-7 w-7 animate-pulse text-red-500 drop-shadow"
+          >
+            <path d="M12 20V5m0 0L6.5 10.5M12 5l5.5 5.5" />
+          </svg>
+          <div
+            role="tooltip"
+            className="rounded-xl border border-red-200 bg-white p-3 text-left text-xs font-semibold leading-relaxed text-gray-700 shadow-xl dark:border-red-900 dark:bg-gray-800 dark:text-gray-100"
+          >
+            Try your community color in both Day and Night mode.
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

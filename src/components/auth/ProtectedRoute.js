@@ -3,8 +3,21 @@ import { Navigate, useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
+import {
+    hasAnyCommunityManagementPermission,
+    hasCommunityPermission,
+} from '../../utils/communityPermissions';
 
-const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommunityOwnership, setShowRickRoll }) => {
+const ProtectedRoute = ({
+    children,
+    user,
+    userProfile,
+    requiredRole,
+    checkCommunityOwnership,
+    requiredCommunityPermission,
+    checkEventManagement,
+    setShowRickRoll,
+}) => {
     // Die Community kann je nach Route direkt in den Params stehen (:id beim
     // Community-Manager, :communityId beim Event-Erstellen) oder muss über das
     // Event-Dokument aufgelöst werden (:eventId bei /event/…/edit|manage).
@@ -37,14 +50,16 @@ const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommun
             }
 
             // Check for community-specific staff roles
-            if (checkCommunityOwnership && (communityId || eventId)) {
+            if ((checkCommunityOwnership || requiredCommunityPermission || checkEventManagement) && (communityId || eventId)) {
                 if (userProfile.role === 'admin' || userProfile.role === 'moderator') {
                     setIsAuthorized(true);
                     return;
                 }
                 let effectiveCommunityId = communityId;
-                if (!effectiveCommunityId && eventId) {
+                let eventData = null;
+                if (eventId) {
                     const eventSnap = await getDoc(doc(db, 'events', eventId));
+                    eventData = eventSnap.exists() ? eventSnap.data() : null;
                     effectiveCommunityId = eventSnap.exists() ? eventSnap.data().communityId : null;
                 }
                 if (!effectiveCommunityId) {
@@ -52,15 +67,43 @@ const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommun
                     return;
                 }
                 const memberRef = doc(db, 'communitys', effectiveCommunityId, 'members', user.uid);
-                const memberSnap = await getDoc(memberRef);
-                if (memberSnap.exists()) {
-                    const memberData = memberSnap.data();
-                    if (memberData.roles?.includes('owner') || memberData.roles?.includes('moderator')) {
-                        setIsAuthorized(true);
-                        return;
-                    }
+                const [memberSnap, communitySnap] = await Promise.all([
+                    getDoc(memberRef),
+                    getDoc(doc(db, 'communitys', effectiveCommunityId)),
+                ]);
+                const memberData = memberSnap.exists() ? memberSnap.data() : null;
+                const communityData = communitySnap.exists() ? communitySnap.data() : null;
+
+                if (checkEventManagement) {
+                    setIsAuthorized(
+                        hasCommunityPermission(
+                            communityData,
+                            memberData,
+                            'manageEvents'
+                        ) ||
+                        (
+                            eventData?.creatorId === user.uid &&
+                            hasCommunityPermission(
+                                communityData,
+                                memberData,
+                                'createEvents'
+                            )
+                        )
+                    );
+                    return;
                 }
-                setIsAuthorized(false);
+                if (requiredCommunityPermission) {
+                    setIsAuthorized(hasCommunityPermission(
+                        communityData,
+                        memberData,
+                        requiredCommunityPermission
+                    ));
+                    return;
+                }
+                setIsAuthorized(
+                    checkCommunityOwnership &&
+                    hasAnyCommunityManagementPermission(communityData, memberData)
+                );
                 return;
             }
 
@@ -69,7 +112,16 @@ const ProtectedRoute = ({ children, user, userProfile, requiredRole, checkCommun
         };
 
         checkPermissions();
-    }, [user, userProfile, requiredRole, checkCommunityOwnership, communityId, eventId]);
+    }, [
+        user,
+        userProfile,
+        requiredRole,
+        checkCommunityOwnership,
+        requiredCommunityPermission,
+        checkEventManagement,
+        communityId,
+        eventId,
+    ]);
 
     // Handle the user not being logged in at all.
     if (!user) {

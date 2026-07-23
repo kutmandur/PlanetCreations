@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { db, auth } from '../../firebase/config';
-import { doc, getDoc, setDoc, writeBatch, arrayRemove, collection, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { db } from '../../firebase/config';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { removeCommunityCreation } from '../../firebase/community';
 import ManagedCreationCard from './ManagedCreationCard';
 import { getGameColor } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
@@ -103,31 +104,10 @@ const CreationManager = ({ creations, setCreations, communityId, setModalMessage
     };
 
     const handleUnlink = async (creation) => {
-        const batch = writeBatch(db);
-        const creationRef = doc(db, 'creations', creation.id);
         try {
-            // communityAssignments frisch aus dem Dokument lesen — die Manager-Liste
-            // kommt aus dem Kompakt-Index, der dieses Feld nicht enthält
-            const creationSnap = await getDoc(creationRef);
-            const assignments = creationSnap.exists() ? (creationSnap.data().communityAssignments || []) : [];
-            const communityAssignment = assignments.find(ca => ca.communityId === communityId);
-            batch.update(creationRef, {
-                communityIds: arrayRemove(communityId),
-                ...(communityAssignment ? { communityAssignments: arrayRemove(communityAssignment) } : {})
-            });
-            const linkRef = doc(db, 'communitys', communityId, 'creations', creation.id);
-            batch.delete(linkRef);
-            const reportRef = doc(collection(db, 'reports'));
-            batch.set(reportRef, {
-                targetId: creation.id,
-                targetType: 'creation',
-                targetTitle: creation.title,
-                reason: `Removed from community by moderator/owner.`,
-                reporterId: auth.currentUser.uid,
-                timestamp: serverTimestamp(),
-            });
+            await removeCommunityCreation(communityId, creation.id);
             // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
-            await batch.commit();
+            setCreations(prev => prev.filter(item => item.id !== creation.id));
             setModalMessage("Creation has been unlinked from the community and a report has been filed.");
         } catch (error) {
             setModalMessage(`Error unlinking creation: ${error.message}`);

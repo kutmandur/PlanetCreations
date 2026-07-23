@@ -8,6 +8,7 @@ import SocialSection from './communitySettings/SocialSection';
 import RanksSection from './communitySettings/RanksSection';
 import DiscordSection from './communitySettings/DiscordSection';
 import DangerZoneSection from './communitySettings/DangerZoneSection';
+import MembershipSection from './communitySettings/MembershipSection';
 
 // iOS/iPadOS "Settings"-style panel: category list (sidebar on desktop, drill-down on
 // mobile) + a detail pane. Merges the former "Settings" tab and "Edit Community" form.
@@ -19,18 +20,21 @@ const CommunitySettingsManager = ({
   setModalMessage,
   setPasswordConfirm,
   isOwner,
-  isModerator,
   onTransferComplete,
   onDeleted,
 }) => {
-  const canManageDanger = isOwner || isModerator;
+  const canManageDanger = isOwner || userProfile?.role === 'admin';
+  const canManageMembership = isOwner || userProfile?.role === 'admin';
 
   const CATEGORIES = [
     { id: 'general', label: 'General', hint: 'Name & description', icon: ICONS.pencil, tint: 'bg-gray-500' },
     { id: 'appearance', label: 'Appearance', hint: 'Color, images & creation card', icon: ICONS.star, tint: 'bg-pink-500' },
     { id: 'games', label: 'Games', hint: 'Allowed games & main game', icon: ICONS.checklist, tint: 'bg-emerald-500' },
     { id: 'social', label: 'Social Links', hint: 'Linked profiles', icon: ICONS.share, tint: 'bg-sky-500' },
-    { id: 'ranks', label: 'Ranks', hint: 'Roles & Discord sync', icon: ICONS.shieldCheck, tint: 'bg-amber-500' },
+    { id: 'ranks', label: 'Ranks & Permissions', hint: 'Roles, permissions & Discord', icon: ICONS.shieldCheck, tint: 'bg-amber-500' },
+    ...(canManageMembership
+      ? [{ id: 'membership', label: 'Membership', hint: 'Joining, applications & invites', icon: ICONS.userPlus, tint: 'bg-teal-500' }]
+      : []),
     { id: 'discord', label: 'Discord', hint: 'Link your server', icon: ICONS.users, tint: 'bg-indigo-500' },
     ...(canManageDanger
       ? [{ id: 'danger', label: 'Danger Zone', hint: 'Transfer or delete', icon: ICONS.trash, tint: 'bg-red-500' }]
@@ -67,6 +71,8 @@ const CommunitySettingsManager = ({
         return <SocialSection community={community} setModalMessage={setModalMessage} />;
       case 'ranks':
         return <RanksSection community={community} setModalMessage={setModalMessage} />;
+      case 'membership':
+        return <MembershipSection community={community} setModalMessage={setModalMessage} />;
       case 'discord':
         return <DiscordSection community={community} setModalMessage={setModalMessage} />;
       case 'danger':

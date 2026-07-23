@@ -10,7 +10,7 @@ import { ICONS } from '../../utils/helpers';
 // Community-Manager-Tab "Events": Events erstellen/bearbeiten/verwalten.
 // Zeigt ALLE Events der Community (auch unsichtbare) — der öffentliche
 // Events-Tab auf der Community-Seite ist dafür für Owner und Nutzer identisch.
-const EventsManager = ({ community, userProfile, setModalMessage }) => {
+const EventsManager = ({ community, userProfile, setModalMessage, canCreateEvents = true }) => {
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -42,18 +42,22 @@ const EventsManager = ({ community, userProfile, setModalMessage }) => {
 
     return (
         <div>
-            <div className="text-center mb-8">
+            {canCreateEvents && <div className="text-center mb-8">
                 <Link to={`/community/${community.id}/create-event`} state={{ communityName: community.name }}>
                     <button className="bg-[--theme-color] hover:brightness-90 text-white font-bold py-2 px-6 rounded-lg">
                         Create New Event
                     </button>
                 </Link>
-            </div>
+            </div>}
 
             {events.length === 0 ? (
                 <div className="text-center text-gray-500 py-10 bg-gray-50 rounded-lg border max-w-3xl mx-auto">
                     <h3 className="text-xl font-bold">No Events Yet</h3>
-                    <p className="mt-2">Create your community's first event above.</p>
+                    <p className="mt-2">
+                        {canCreateEvents
+                            ? "Create your community's first event above."
+                            : 'There are no community events to manage yet.'}
+                    </p>
                 </div>
             ) : (
                 <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">

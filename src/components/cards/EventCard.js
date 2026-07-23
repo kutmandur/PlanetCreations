@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { getEffectiveCommunityPermissions } from '../../utils/communityPermissions';
 
 // showStatus: undefined = automatisch (Staff sieht Badge), true/false = erzwingen.
 // Der öffentliche Community-Tab übergibt false (Owner-Ansicht = Nutzer-Ansicht),
@@ -60,11 +61,15 @@ const EventCard = ({ event, community, userProfile, showStatus }) => {
 
     const isSiteStaff = userProfile && ['admin', 'moderator'].includes(userProfile.role);
     
-    // Check if the current user is staff within this specific community
     const currentUserMembership = community?.members?.find(m => m.id === userProfile?.uid);
-    const isCommunityStaff = currentUserMembership?.roles.some(r => ['owner', 'moderator'].includes(r));
+    const canManageCommunityEvents = getEffectiveCommunityPermissions(
+        community,
+        currentUserMembership
+    ).manageEvents;
 
-    const showVisibility = showStatus !== undefined ? showStatus : (isSiteStaff || isCommunityStaff);
+    const showVisibility = showStatus !== undefined
+        ? showStatus
+        : (isSiteStaff || canManageCommunityEvents);
 
     return (
         <Link to={`/event/${event.id}`}>

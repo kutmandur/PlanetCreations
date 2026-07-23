@@ -7,6 +7,7 @@ import InstallHelp from './InstallHelp';
 import PreloadLink from './PreloadLink';
 import ViewModeToggle from './ViewModeToggle';
 import ThemeToggle from './ThemeToggle';
+import ProfileImage from './ProfileImage';
 import { preloadRoute } from '../../utils/preload';
 import { hardReloadApp } from '../../utils/appRefresh';
 
@@ -111,7 +112,7 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                             </div>
                             <div className="relative" ref={profileMenuRef}>
                                 <button onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)} className="flex items-center space-x-2">
-                                    <img src={userProfile?.profilePictureUrl || 'https://placehold.co/40x40/e2e8f0/64748b?text=P'} alt="Profile" className="w-10 h-10 rounded-full object-cover" />
+                                    <ProfileImage src={userProfile?.profilePictureUrl} alt="Profile" className="w-10 h-10 rounded-full object-cover" />
                                 </button>
                                 {isProfileMenuOpen && (
                                     <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-30">

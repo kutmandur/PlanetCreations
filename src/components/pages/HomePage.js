@@ -7,6 +7,7 @@ import { doc, collection, query, where, onSnapshot, getDoc, getDocs, limit, orde
 import { getGameColor, ICONS } from '../../utils/helpers';
 import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../utils/creationCache';
 import { fetchSearchIndex } from '../../firebase/searchIndexService';
+import { searchUsers as searchUsersFromIndex } from '../../firebase/userIndexService';
 import { rankCreations, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
 import { getGame } from '../../utils/gamesRegistry';
@@ -446,6 +447,8 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     }, [homeState.activeCategory, categories, loading]);
 
     useEffect(() => {
+        let cancelled = false;
+
         const searchUsers = async () => {
             if (homeState.searchTerm.trim() === '') {
                 setUserSearchResults([]);
@@ -454,26 +457,21 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
             }
             setIsSearching(true);
             try {
-                const searchTermLower = homeState.searchTerm.toLowerCase();
-                const usersQuery = query(
-                    collection(db, 'profiles'),
-                    where('username_lowercase', '>=', searchTermLower),
-                    where('username_lowercase', '<=', searchTermLower + '\uf8ff'),
-                    limit(10)
-                );
-                const userSnapshot = await getDocs(usersQuery);
-                const users = userSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setUserSearchResults(users);
+                const users = await searchUsersFromIndex(homeState.searchTerm, 10);
+                if (!cancelled) setUserSearchResults(users);
             } catch (error) {
                 console.error("Error searching users:", error);
             } finally {
-                setIsSearching(false);
+                if (!cancelled) setIsSearching(false);
             }
         };
         const debounceTimer = setTimeout(() => {
             searchUsers();
         }, 300);
-        return () => clearTimeout(debounceTimer);
+        return () => {
+            cancelled = true;
+            clearTimeout(debounceTimer);
+        };
     }, [homeState.searchTerm]);
 
     // Interessen-Signal für "gesettelte" Suchen (zählt nur, wenn der Begriff

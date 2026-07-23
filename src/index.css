@@ -8,6 +8,14 @@ html, body, #root {
 @tailwind components;
 @tailwind utilities;
 
+.profile-content-swipe {
+  scrollbar-width: none;
+}
+
+.profile-content-swipe::-webkit-scrollbar {
+  display: none;
+}
+
 html {
   overflow-y: scroll;
 }

@@ -17,9 +17,18 @@ export const SectionCard = ({ title, description, children }) => (
 );
 
 // Labelled field wrapper: bold label + optional helper text + control.
-export const Field = ({ label, hint, children }) => (
+export const Field = ({ label, labelAccessory, hint, children }) => (
   <div>
-    {label && <label className="block text-gray-700 dark:text-gray-200 font-semibold mb-1.5">{label}</label>}
+    {(label || labelAccessory) && (
+      <div className="mb-1.5 flex items-center gap-2">
+        {label && (
+          <label className="block font-semibold text-gray-700 dark:text-gray-200">
+            {label}
+          </label>
+        )}
+        {labelAccessory}
+      </div>
+    )}
     {hint && <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">{hint}</p>}
     {children}
   </div>

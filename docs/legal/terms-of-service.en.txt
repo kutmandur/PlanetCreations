@@ -1,0 +1,125 @@
+TERMS OF SERVICE
+
+Last updated: 23 July 2026
+
+1. About PlanetCreations
+
+PlanetCreations ("PlanetCreations", the "Service") is a privately operated, non-commercial and free-to-use fan project run by Don Reichau from Switzerland (the "Operator").
+
+PlanetCreations is not affiliated with, sponsored by, or endorsed by Frontier Developments plc. Planet Coaster, Planet Coaster 2, Planet Zoo, Frontier and related names, logos, game assets and trademarks belong to their respective owners.
+
+These Terms govern the hosted website, community features and PlanetCreations desktop client. Any licence published with the source code applies only to the material covered by that licence. It does not automatically apply to the hosted Service, PlanetCreations names or logos, third-party material, or content submitted by users.
+
+By creating an account or using an account-based feature, you agree to these Terms. If you are not legally able to agree to them yourself, you may use the Service only with permission from your parent or legal guardian.
+
+2. Accounts
+
+You must provide accurate account information, keep your login credentials secure and notify the Operator if you believe your account has been compromised. You are responsible for activity performed through your account unless it resulted from circumstances outside your reasonable control.
+
+Firebase Authentication, a service provided by Google, handles email and password authentication. PlanetCreations does not receive your plain-text password.
+
+Usernames and other public profile information may be visible worldwide. Do not publish personal information that you do not want to be public.
+
+3. Free and non-commercial service
+
+The Service is currently provided free of charge as a non-commercial fan project. There is no entitlement to continued availability, particular functions, permanent storage, support, or future updates.
+
+The Operator may change, suspend or discontinue functions when reasonably necessary, including for security, legal, technical or cost reasons. Where practicable, material changes will be announced in advance.
+
+4. User content and external media
+
+"User Content" includes profile information, creation descriptions, comments, community and event content, links, media URLs, share codes, and uploaded PlanetCreations savegame packages.
+
+You retain any rights you hold in your User Content. Rights in game assets and other third-party material remain with their respective owners.
+
+You grant the Operator a worldwide, non-exclusive, royalty-free licence to host, cache, copy, technically process, display and make your User Content available solely as necessary to operate, secure and improve the Service. This licence ends when the relevant content is deleted, except where a limited continued copy is technically necessary, legally required, or already downloaded by another user.
+
+PlanetCreations does not currently provide native image or video hosting. Images, videos and custom-media resources are generally supplied as links to external services. Those services have their own terms and privacy practices, and visitors' devices may connect directly to them when external content is displayed.
+
+You must not submit content that:
+
+- is illegal, fraudulent, deceptive or malicious;
+- infringes copyright, trademark, privacy, personality or other rights;
+- contains malware, harmful code or files intended to interfere with a device or service;
+- contains pornography, sexual exploitation, graphic violence or unlawful hate content;
+- harasses, threatens, bullies or unlawfully discriminates against another person;
+- impersonates another person or organisation;
+- contains confidential information or personal data you are not permitted to disclose;
+- constitutes spam, phishing or manipulation of votes, rankings or platform functions; or
+- violates the applicable game licence, platform rules or the terms of a linked third-party service.
+
+5. Savegame uploads and downloads
+
+Registered users may optionally attach supported savegame files to their creations through the PlanetCreations desktop client. The client packages a selected game file as a signed .PlanetCreations archive containing the savegame and technical metadata. The current maximum upload size is 300 MB.
+
+Before uploading, you must confirm that the creation is your own or that you otherwise have all permissions necessary to upload and share it. Do not include secrets, personal information, malicious data, paid third-party material that may not be redistributed, or content that violates the applicable game's terms.
+
+Uploaded packages are checked for the supported package format, signature, account association, game and file type. This technical validation does not confirm copyright ownership, legality, compatibility, quality or the complete absence of harmful content.
+
+Completed savegame packages are stored in a private Cloudflare R2 bucket configured with EU jurisdiction. They are not exposed through a permanent public bucket URL. If a savegame is attached to a publicly accessible creation, however, other people can request a temporary download link and download the package. The temporary link currently expires after ten minutes.
+
+By attaching a savegame, you authorise the Operator to store, verify, copy and deliver the package through the Service. You also permit recipients to download and use the package for their personal, non-commercial gameplay, subject to the applicable game's licence and third-party rights. This permission does not authorise recipients to sell the package, falsely claim authorship, or redistribute third-party material contrary to its licence.
+
+An unfinished, rejected or cancelled temporary upload is normally deleted immediately and is additionally subject to an automatic lifecycle deletion after approximately one day. A completed package is normally deleted when you remove the attachment, delete the associated creation, or delete your account. Technical deletion and cache expiry may take a limited additional period.
+
+PlanetCreations is a sharing service, not a guaranteed backup service. Keep your own original savegame and independent backups. Downloads and installations are used at your own risk. Although signed packages are verified before installation, no system can guarantee uninterrupted downloads, compatibility with every game version, or freedom from all defects.
+
+6. Communities, collaborations and moderation
+
+Community owners and authorised community ranks may manage membership, invitations, applications, roles, events and community content according to their configured permissions. They must use those functions fairly and only for their intended purpose.
+
+The Operator may investigate reports and may remove or restrict content, revoke invitations, limit functions, issue warnings, suspend accounts or terminate accounts where reasonably necessary to enforce these Terms, protect users or the Service, or comply with law. There is no obligation to proactively monitor every item of User Content.
+
+If you believe that a creation is illegal, violates these Terms or infringes your rights, you can use the Report feature available on each creation page. Describe the issue as precisely as possible. The report is associated with the relevant creation and your signed-in account so that it can be reviewed by authorised moderators.
+
+If you cannot use the Report feature, or if a claim requires supporting documents or a detailed rights-holder notice, email info@planetcreations.net and include the relevant URL or creation ID, an explanation of the issue, your contact details and, where applicable, evidence that you hold or represent the affected rights. Reports and claims will be reviewed as promptly and impartially as reasonably possible.
+
+7. Other users' content
+
+User Content reflects the views and responsibility of the user who submitted it. The Operator does not endorse it and does not guarantee that it is accurate, lawful, available or suitable for a particular purpose.
+
+Do not rely on PlanetCreations as the sole location of important information or files. If you download another user's package, you are responsible for checking that your use is permitted and for maintaining local backups before installation.
+
+8. Third-party services
+
+The Service relies on third-party infrastructure and integrations, including Google Firebase, Cloudflare R2, GitHub, Discord and user-selected external media hosts. Their services may be unavailable, changed or governed by additional terms. PlanetCreations is not responsible for a third-party service beyond the extent required by applicable law.
+
+9. Data and privacy summary
+
+The Operator processes account, profile, creation, community, event, moderation, notification and technical data to provide and secure the Service. Optional features may additionally process Discord connection data, push-notification tokens or interest preferences when you enable them.
+
+Google Firebase provides authentication, database, hosting, cloud-function and notification infrastructure. Google generally acts as a processor for customer data under its applicable data-processing terms, although some service and diagnostic data may be processed by Google under its own terms.
+
+Cloudflare R2 stores uploaded savegame packages. Cloudflare generally acts as a processor under its Data Processing Addendum. External images, videos and links remain with the external providers selected by users.
+
+Data is retained for as long as required for the relevant account or feature, security and abuse prevention, compliance with law, or the establishment and defence of legal claims. Public content remains until it is deleted by an authorised user or moderator. Account deletion initiates deletion of the account and associated content, subject to limited technical, legal and security retention.
+
+Depending on the law applicable to you, you may have rights to information, access, correction, deletion, restriction, objection or data portability. Requests can be sent to info@planetcreations.net. You may also have the right to contact the Swiss Federal Data Protection and Information Commissioner (FDPIC/EDÖB) or, where the EU GDPR applies, a competent EU supervisory authority.
+
+10. Liability
+
+The Service and user-provided content are provided on an "as available" basis. The Operator does not guarantee uninterrupted operation, permanent storage, the accuracy of User Content, compatibility with all systems or game versions, or that every defect will be corrected.
+
+To the maximum extent permitted by applicable law, the Operator is not liable for indirect or consequential loss, loss of game progress, loss of data, loss caused by User Content, or disruption caused by third-party services. You are responsible for keeping independent backups before installing, replacing or restoring game files.
+
+Nothing in these Terms excludes or limits liability for intent, gross negligence, personal injury, or any other liability that cannot lawfully be excluded or limited.
+
+11. Ending use of the Service
+
+You may stop using the Service at any time. You can remove an attached savegame from its creation and can request or initiate deletion of your account using the available account functions.
+
+The Operator may suspend or terminate access for a serious or repeated breach of these Terms, a security threat, unlawful activity, or a legal requirement. Where appropriate and reasonably possible, the Operator will provide notice or an opportunity to correct the issue.
+
+12. Changes to these Terms
+
+These Terms may be updated to reflect changes to the Service, law or security requirements. Material changes will be communicated in an appropriate manner before they take effect where reasonably possible. If consent to a change is legally required, it will be requested separately.
+
+13. Governing law
+
+These Terms are governed by Swiss law to the extent that a choice of law is permitted. Mandatory protections and mandatory places of jurisdiction under the law applicable to a user remain unaffected.
+
+14. Contact
+
+Operator: Don Reichau
+Email: info@planetcreations.net
+Legal notice: https://planetcreations.net/#/impressum

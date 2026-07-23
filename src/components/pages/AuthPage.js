@@ -121,7 +121,12 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     username: finalUsername, // Original case for display
                     username_lowercase: usernameLower, // Lowercase for searching
                     role: 'user', // Add initial role for correct display in search
-                    bio: '', country: '', profilePictureUrl: '', favoriteGame: getDefaultGameId(), ownedDlcs: {}
+                    bio: '',
+                    country: '',
+                    profilePictureUrl: '',
+                    profileBannerUrl: '',
+                    favoriteGame: getDefaultGameId(),
+                    ownedDlcs: {},
                 });
 
                 batch.set(usernameRef, { email: email.toLowerCase() });
