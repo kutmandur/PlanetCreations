@@ -41,6 +41,57 @@ const PROFILE_SOCIALS = [
     { field: 'website', title: 'Website', platform: getPlatform('website'), href: p => p.website },
 ];
 
+const ProfileLinks = ({
+    activeSocials,
+    className,
+    hasProfileBanner,
+    onShare,
+    profile,
+    themeHex,
+}) => (
+    <div className={className} aria-label="Profile links">
+        <button
+            onClick={onShare}
+            title="Share Profile"
+            aria-label="Share Profile"
+            className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition ${
+                hasProfileBanner
+                    ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm hover:bg-white/25'
+                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-white'
+            }`}
+        >
+            <Icon path={ICONS.share} className="h-5 w-5" />
+        </button>
+        {activeSocials.map((social) => (
+            <a
+                key={social.field}
+                href={social.href(profile)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={social.title}
+                aria-label={social.title}
+                className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors hover:text-white ${
+                    hasProfileBanner
+                        ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm'
+                        : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                }`}
+                onMouseEnter={(event) => {
+                    event.currentTarget.style.backgroundColor = themeHex;
+                }}
+                onMouseLeave={(event) => {
+                    event.currentTarget.style.backgroundColor = '';
+                }}
+            >
+                <Icon
+                    path={social.platform.icon}
+                    solid={social.platform.solid}
+                    className="h-5 w-5"
+                />
+            </a>
+        ))}
+    </div>
+);
+
 const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setConfirmation, userIdOverride }) => {
     const { userId: userIdFromUrl } = useParams();
     const userId = userIdOverride || userIdFromUrl;
@@ -59,6 +110,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     const [selectedGame, setSelectedGame] = useState('all');
     const [activeSection, setActiveSection] = useState('Creations');
+    const [activePanel, setActivePanel] = useState(0); // 0 = Creations/Showcases, 1 = Memberships (mobile swipe)
     const [filterState, setFilterState] = useState({ searchTerm: '', status: 'all', rank: 'all', tag: '', dlc: 'all' });
 
     const [showcases, setShowcases] = useState(null); // null = noch nicht geladen
@@ -69,6 +121,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const [followerCount, setFollowerCount] = useState(0);
     const [isFollowingBusy, setIsFollowingBusy] = useState(false);
     const [profileBannerFailed, setProfileBannerFailed] = useState(false);
+    const [profileMobileBannerFailed, setProfileMobileBannerFailed] = useState(false);
     const tabRefs = useRef([]);
     const contentSwipeRef = useRef(null);
     const [gliderStyle, setGliderStyle] = useState({});
@@ -134,6 +187,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         setLoadingMemberships(true);
         setShowcases(null);
         setActiveSection('Creations');
+        setActivePanel(0);
         setFilterState({ searchTerm: '', status: 'all', rank: 'all', tag: '', dlc: 'all' });
 
         const fetchInitialCreations = async () => {
@@ -423,9 +477,29 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         }
     };
 
+    // Mobile: die beiden Panels (Creations/Showcases ↔ Memberships) liegen in
+    // einem horizontalen Snap-Container. Pfeile scrollen programmatisch, der
+    // Scroll-Listener hält den Sticky-Titel mit dem sichtbaren Panel synchron.
+    const scrollToPanel = useCallback((index) => {
+        const element = contentSwipeRef.current;
+        if (!element) return;
+        element.scrollTo({ left: index * element.clientWidth, behavior: 'smooth' });
+        setActivePanel(index);
+    }, []);
+
+    const handleSwipeScroll = useCallback((event) => {
+        const element = event.currentTarget;
+        if (!element.clientWidth) return;
+        const index = Math.round(element.scrollLeft / element.clientWidth);
+        setActivePanel((prev) => (prev !== index ? index : prev));
+    }, []);
+
     useEffect(() => { setFollowerCount(profile?.followers?.length || 0); }, [profile]);
     useEffect(() => { setIsFollowing((userProfile?.following || []).includes(userId)); }, [userProfile, userId]);
     useEffect(() => { setProfileBannerFailed(false); }, [profile?.profileBannerUrl]);
+    useEffect(() => {
+        setProfileMobileBannerFailed(false);
+    }, [profile?.profileMobileBannerUrl]);
 
     const handleFollow = async () => {
         if (!user || !userProfile) { setModalMessage("You must be logged in to follow."); return; }
@@ -507,7 +581,15 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         profile?.profileBannerUrl && isSafeHttpUrl(profile.profileBannerUrl)
             ? profile.profileBannerUrl
             : '';
-    const hasProfileBanner = Boolean(profileBannerUrl && !profileBannerFailed);
+    const profileMobileBannerUrl =
+        profile?.profileMobileBannerUrl && isSafeHttpUrl(profile.profileMobileBannerUrl)
+            ? profile.profileMobileBannerUrl
+            : '';
+    const hasDesktopProfileBanner = Boolean(profileBannerUrl && !profileBannerFailed);
+    const hasMobileProfileBanner = Boolean(
+        profileMobileBannerUrl && !profileMobileBannerFailed
+    );
+    const hasProfileBanner = hasDesktopProfileBanner || hasMobileProfileBanner;
     const hasBio = Boolean(profile?.bio?.trim());
 
     return (
@@ -524,12 +606,22 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         : undefined
                 }
             >
-                {hasProfileBanner && (
+                {hasDesktopProfileBanner && (
                     <img
                         src={profileBannerUrl}
                         alt=""
                         onError={() => setProfileBannerFailed(true)}
-                        className="absolute inset-0 h-full w-full object-cover"
+                        className={`absolute inset-0 h-full w-full object-cover ${
+                            hasMobileProfileBanner ? 'hidden lg:block' : 'block'
+                        }`}
+                    />
+                )}
+                {hasMobileProfileBanner && (
+                    <img
+                        src={profileMobileBannerUrl}
+                        alt=""
+                        onError={() => setProfileMobileBannerFailed(true)}
+                        className="absolute inset-0 h-full w-full object-cover lg:hidden"
                     />
                 )}
                 {hasProfileBanner && (
@@ -538,16 +630,16 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
                 <div className="relative flex min-h-[22rem] items-start gap-3 p-5 sm:gap-6 sm:p-8">
                     <div className="hidden w-10 flex-shrink-0 sm:block" aria-hidden="true" />
-                    <div className="min-w-0 flex-1 self-stretch">
+                    <div className="min-w-0 flex-1 lg:self-stretch">
                         <div
                             className={
                                 hasBio
-                                    ? 'grid h-full items-center gap-6 lg:grid-cols-3'
-                                    : 'flex h-full items-center justify-center'
+                                    ? 'grid items-center gap-6 lg:h-full lg:grid-cols-3'
+                                    : 'flex items-center justify-center lg:h-full'
                             }
                         >
                             <div
-                                className={`relative mt-10 flex w-full max-w-xs flex-col items-center rounded-[2rem] border-2 px-5 pb-6 pt-20 text-center shadow-xl backdrop-blur-md sm:mt-12 ${
+                                className={`relative mx-auto mt-10 flex w-full max-w-xs flex-col items-center rounded-[2rem] border-2 px-5 pb-6 pt-20 text-center shadow-xl backdrop-blur-md sm:mt-12 lg:mx-0 ${
                                     hasBio ? 'lg:col-start-1' : ''
                                 } ${
                                     hasProfileBanner
@@ -710,52 +802,27 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                 </div>
                             )}
                         </div>
+
+                        <div className="mt-5 w-full overflow-x-auto pb-1 lg:hidden">
+                            <ProfileLinks
+                                activeSocials={activeSocials}
+                                className="flex w-max min-w-full items-center justify-center gap-2 px-1"
+                                hasProfileBanner={hasProfileBanner}
+                                onShare={handleShare}
+                                profile={profile}
+                                themeHex={themeHex}
+                            />
+                        </div>
                     </div>
 
-                    <div
-                        className="flex flex-shrink-0 flex-col items-center gap-2"
-                        aria-label="Profile links"
-                    >
-                        <button
-                            onClick={handleShare}
-                            title="Share Profile"
-                            aria-label="Share Profile"
-                            className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
-                                hasProfileBanner
-                                    ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm hover:bg-white/25'
-                                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300 hover:text-gray-900 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-white'
-                            }`}
-                        >
-                            <Icon path={ICONS.share} className="h-5 w-5" />
-                        </button>
-                        {activeSocials.map((social) => (
-                            <a
-                                key={social.field}
-                                href={social.href(profile)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={social.title}
-                                aria-label={social.title}
-                                className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:text-white ${
-                                    hasProfileBanner
-                                        ? 'border border-white/20 bg-black/30 text-white backdrop-blur-sm'
-                                        : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                                }`}
-                                onMouseEnter={(event) => {
-                                    event.currentTarget.style.backgroundColor = themeHex;
-                                }}
-                                onMouseLeave={(event) => {
-                                    event.currentTarget.style.backgroundColor = '';
-                                }}
-                            >
-                                <Icon
-                                    path={social.platform.icon}
-                                    solid={social.platform.solid}
-                                    className="h-5 w-5"
-                                />
-                            </a>
-                        ))}
-                    </div>
+                    <ProfileLinks
+                        activeSocials={activeSocials}
+                        className="hidden flex-shrink-0 flex-col items-center gap-2 lg:flex"
+                        hasProfileBanner={hasProfileBanner}
+                        onShare={handleShare}
+                        profile={profile}
+                        themeHex={themeHex}
+                    />
                 </div>
             </div>
 
@@ -828,14 +895,49 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                     </>
                 )}
 
+                {/* Mobile: klebender Titel mit Pfeil zum Wechseln der beiden Panels.
+                    Bewusst außerhalb des Swipe-Containers, damit position: sticky
+                    relativ zum <main>-Scrollbereich klebt (der Swipe-Container ist
+                    durch overflow-x selbst ein Scrollport und würde das brechen). */}
+                <div className="sticky top-0 z-30 -mx-4 mb-4 flex items-center justify-center bg-gray-100 px-4 py-3 dark:bg-gray-900 lg:hidden">
+                    {activePanel === 1 && (
+                        <button
+                            type="button"
+                            onClick={() => scrollToPanel(0)}
+                            aria-label="Show creations"
+                            className="absolute left-4 flex h-9 w-9 items-center justify-center rounded-full bg-gray-200 text-gray-700 transition hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                        >
+                            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+                        </button>
+                    )}
+                    <h3 className="px-14 text-center text-2xl font-bold text-gray-800 dark:text-gray-100">
+                        {activePanel === 0
+                            ? activeSection === 'Showcases'
+                                ? `Showcases featuring ${profile?.username || 'this user'}`
+                                : `Creations by ${profile?.username || 'this user'}`
+                            : 'Community Memberships'}
+                    </h3>
+                    {activePanel === 0 && (
+                        <button
+                            type="button"
+                            onClick={() => scrollToPanel(1)}
+                            aria-label="Show community memberships"
+                            className="absolute right-4 flex h-9 w-9 items-center justify-center rounded-full bg-gray-200 text-gray-700 transition hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                        >
+                            <Icon path={ICONS.chevronRight} className="h-5 w-5" />
+                        </button>
+                    )}
+                </div>
+
                 <div
                     ref={contentSwipeRef}
+                    onScroll={handleSwipeScroll}
                     className="profile-content-swipe -mx-4 flex snap-x snap-mandatory items-start overflow-x-auto lg:mx-0 lg:grid lg:snap-none lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)] lg:gap-8 lg:overflow-visible"
                 >
                     <div className="w-full min-w-full flex-none snap-start px-4 lg:min-w-0 lg:flex-auto lg:px-0">
                         {activeSection === 'Creations' && (
                             <>
-                                <h3 className="mb-4 text-center text-2xl font-bold text-gray-800 dark:text-gray-100">
+                                <h3 className="mb-4 hidden text-center text-2xl font-bold text-gray-800 dark:text-gray-100 lg:block">
                                     Creations by {profile?.username || 'this user'}
                                 </h3>
                                 {visibleCreations.length > 0 ? (
@@ -875,7 +977,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
                         {activeSection === 'Showcases' && (
                             <>
-                                <h3 className="mb-4 text-center text-2xl font-bold">
+                                <h3 className="mb-4 hidden text-center text-2xl font-bold lg:block">
                                     Showcases featuring {profile?.username || 'this user'}
                                 </h3>
                                 {loadingShowcases || showcases === null ? (
@@ -953,7 +1055,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
                     <aside className="w-full min-w-full flex-none snap-start px-4 lg:min-w-0 lg:flex-auto lg:px-0">
                         <div className="lg:sticky lg:top-24">
-                            <h3 className="mb-4 text-center text-2xl font-bold text-gray-800 dark:text-gray-100">
+                            <h3 className="mb-4 hidden text-center text-2xl font-bold text-gray-800 dark:text-gray-100 lg:block">
                                 Community Memberships
                             </h3>
                             <div className="space-y-6">

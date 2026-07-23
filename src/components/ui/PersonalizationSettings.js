@@ -18,7 +18,7 @@ import {
 //  - Feed-Slider: persönliche Gewichtung der Feed-Anteile (überschreibt das
 //    globale Admin-Default; unabhängig vom Opt-in — nur der Interessen-Anteil
 //    läuft ohne Opt-in leer und ist deshalb ausgegraut)
-const PersonalizationSettings = ({ user, setModalMessage, setConfirmation }) => {
+const PersonalizationSettings = ({ user, setModalMessage, setConfirmation, embedded = false }) => {
     const [enabled, setEnabled] = useState(getPersonalizationConsent() === true);
     const [saving, setSaving] = useState(false);
 
@@ -94,9 +94,9 @@ const PersonalizationSettings = ({ user, setModalMessage, setConfirmation }) => 
     };
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold mb-2">Personalized Recommendations</h2>
-            <p className="text-gray-600 mb-4">
+        <div className={embedded ? '' : 'bg-white p-6 rounded-lg shadow-md'}>
+            {!embedded && <h2 className="text-2xl font-bold mb-2">Personalized Recommendations</h2>}
+            <p className={`text-gray-600 dark:text-gray-300 mb-4 ${embedded ? 'text-center' : ''}`}>
                 When enabled, your tag clicks, searches and viewed creations personalize
                 the "Recommended" home feed. Only an aggregated tag list is stored — no
                 history. Nothing is collected while this is off.
@@ -121,8 +121,8 @@ const PersonalizationSettings = ({ user, setModalMessage, setConfirmation }) => 
             </button>
 
             <div className="mt-6 pt-6 border-t">
-                <h3 className="text-lg font-bold mb-1">Feed mix</h3>
-                <p className="text-sm text-gray-500 mb-4">
+                <h3 className={`text-lg font-bold mb-1 ${embedded ? 'text-center' : ''}`}>Feed mix</h3>
+                <p className={`text-sm text-gray-500 mb-4 ${embedded ? 'text-center' : ''}`}>
                     How much of what do you want to see in your Recommended feed?
                     {!enabled && ' ("Matches my interests" needs personalization enabled.)'}
                 </p>

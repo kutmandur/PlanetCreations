@@ -36,7 +36,7 @@ import GoLiveModal from './components/modals/GoLiveModal';
 import { readLiveSession, setLiveSession } from './utils/liveStream';
 import { readOverlayQr, setOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
 import { registerQueryClient } from './utils/appRefresh';
-import PersonalizationConsentModal from './components/modals/PersonalizationConsentModal';
+import ProfileSetupWizard from './components/modals/ProfileSetupWizard';
 import useInterestSync from './hooks/useInterestSync';
 import { loadGamesRegistry, getDefaultGameId, getGame } from './utils/gamesRegistry';
 import ClientDashboard from './components/pages/ClientDashboard';
@@ -104,6 +104,8 @@ const AppContent = () => {
     const [blacklist, setBlacklist] = useState([]);
     const [showRickRoll, setShowRickRoll] = useState(false);
     const [isBugReportOpen, setIsBugReportOpen] = useState(false);
+    const [profileWizardDismissed, setProfileWizardDismissed] = useState(false);
+    const [wizardLeaveSignal, setWizardLeaveSignal] = useState(0);
 
     // While the user follows the OS setting (no explicit theme choice), apply live
     // dark/light changes from the system.
@@ -116,7 +118,9 @@ const AppContent = () => {
 
     // Interessen-Sync (Personalisierung): hydriert bei Login, flusht beim
     // Verlassen, triggert einmalig das Opt-in-Popover.
-    const { needsConsentPrompt, answerConsent } = useInterestSync(user);
+    // needsConsentPrompt/das alte Consent-Popover entfällt: die Personalisierungs-
+    // Frage ist jetzt Teil des Profil-Setup-Wizards (Feed-Schritt).
+    const { answerConsent } = useInterestSync(user);
 
     const [communitysState, setCommunitysState] = useState({
         searchTerm: '', sortBy: 'memberCount', activeTab: 'Browser', activeGameFilter: 'all',
@@ -462,12 +466,14 @@ const AppContent = () => {
     // If dismissed, the user can re-enable from Settings or the install dialog.
     useEffect(() => {
         if (!user || !isStandalone()) return;
+        // First-login users get the push prompt inside the setup wizard instead.
+        if (userProfile?.needsProfileSetup) return;
         if (getPushPermission() !== 'default') return;
         const flag = `pushAutoPrompted-${user.uid}`;
         if (localStorage.getItem(flag)) return;
         localStorage.setItem(flag, '1');
         enablePush(user.uid).catch(() => {});
-    }, [user]);
+    }, [user, userProfile?.needsProfileSetup]);
 
     const handleLogout = async () => {
         try {
@@ -510,6 +516,20 @@ const AppContent = () => {
     }
 
     const showNewCreationButton = user && location.pathname === '/';
+    const showProfileWizard = Boolean(
+        user && userProfile && !isOfflineMode && !isGameOverlay &&
+        userProfile.needsProfileSetup && !profileWizardDismissed
+    );
+
+    // Während des Wizards Klicks im Header abfangen (außer dem Theme-Toggle, der
+    // data-wizard-allow trägt) und den Nutzer erst fragen, ob er den Wizard
+    // wirklich verlassen will. capture verhindert, dass Links/Buttons navigieren.
+    const handleHeaderGuard = (event) => {
+        if (event.target.closest('[data-wizard-allow]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setWizardLeaveSignal((value) => value + 1);
+    };
 
     return (
         <>
@@ -556,7 +576,13 @@ const AppContent = () => {
                 </div>
             )}
 
-            <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} onReportBug={() => setIsBugReportOpen(true)} />
+            {showProfileWizard ? (
+                <div className="flex-shrink-0" onClickCapture={handleHeaderGuard}>
+                    <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} setModalMessage={setModalMessage} onReportBug={() => setIsBugReportOpen(true)} />
+                </div>
+            ) : (
+                <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} onReportBug={() => setIsBugReportOpen(true)} />
+            )}
 
             {showVerificationBanner && !isOfflineMode && (
                 <div className="bg-yellow-400 text-center p-2 text-yellow-900 font-semibold flex-shrink-0">
@@ -565,9 +591,24 @@ const AppContent = () => {
                 </div>
             )}
             
-            <main className="flex-1 min-h-0 overflow-y-auto">
+            <main className={`flex-1 min-h-0 overflow-y-auto ${showProfileWizard ? '[scrollbar-gutter:stable]' : ''}`}>
                 <ErrorBoundary>
                     <Suspense fallback={<div className="h-full flex justify-center items-center"><Spinner /></div>}>
+                        {showProfileWizard ? (
+                            <ProfileSetupWizard
+                                user={user}
+                                userProfile={userProfile}
+                                setModalMessage={setModalMessage}
+                                setConfirmation={setConfirmation}
+                                blacklist={blacklist}
+                                leaveSignal={wizardLeaveSignal}
+                                onConsent={answerConsent}
+                                onComplete={(patch) => {
+                                    setUserProfile(prev => ({ ...prev, ...patch }));
+                                    setProfileWizardDismissed(true);
+                                }}
+                            />
+                        ) : (
                         <Routes>
                             <Route path="/client/dashboard" element={<ClientDashboard user={user} />} />
                             <Route path="/" element={<HomePage user={user} userProfile={userProfile} activeTab={activeTab} setActiveTab={setActiveTab} homeState={homeState} setHomeState={setHomeState} />} />
@@ -597,19 +638,20 @@ const AppContent = () => {
                             <Route path="/admin" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="admin" setShowRickRoll={setShowRickRoll}><AdminPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setPasswordConfirm={setPasswordConfirm} /></ProtectedRoute>} />
                             <Route path="/moderation" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="moderator" setShowRickRoll={setShowRickRoll}><ModerationPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setStrikeModal={setStrikeModal} setPasswordConfirm={setPasswordConfirm} setConfirmation={setConfirmation} blacklist={blacklist} /></ProtectedRoute>} />
                         </Routes>
+                        )}
                     </Suspense>
                 </ErrorBoundary>
             </main>
             
-            {!isOfflineMode && <ToggleViewButton />}
+            {!isOfflineMode && !showProfileWizard && <ToggleViewButton />}
 
-            {showNewCreationButton && (
+            {showNewCreationButton && !showProfileWizard && (
                 <PreloadLink to="/create">
                     <FloatingActionButton activeTab={activeTab} />
                 </PreloadLink>
             )}
 
-            {!isOfflineMode && (
+            {!isOfflineMode && !showProfileWizard && (
                 <footer className="text-center px-4 py-3 text-gray-500 flex-shrink-0">
                     <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 text-sm">
                         <span>&copy; 2025 PlanetCreations.net</span>
@@ -627,9 +669,6 @@ const AppContent = () => {
                     setModalMessage={setModalMessage}
                     blacklist={blacklist}
                 />
-            )}
-            {needsConsentPrompt && user && !isOfflineMode && (
-                <PersonalizationConsentModal onAnswer={answerConsent} />
             )}
             <CookieConsent />
         </div>

@@ -74,7 +74,9 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                         </PreloadLink>
                     )}
 
-                    <ThemeToggle />
+                    <span data-wizard-allow className="flex items-center">
+                        <ThemeToggle />
+                    </span>
 
                     {user ? (
                         <>

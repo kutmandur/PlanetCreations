@@ -150,6 +150,7 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
     const [activeSectionId, setActiveSectionId] = useState('profile');
     const [mobileSectionOpen, setMobileSectionOpen] = useState(false);
     const [profileBannerFailed, setProfileBannerFailed] = useState(false);
+    const [profileMobileBannerFailed, setProfileMobileBannerFailed] = useState(false);
     const navigate = useNavigate();
     const games = useGames();
 
@@ -227,6 +228,10 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
     useEffect(() => {
         setProfileBannerFailed(false);
     }, [profileData?.profileBannerUrl]);
+
+    useEffect(() => {
+        setProfileMobileBannerFailed(false);
+    }, [profileData?.profileMobileBannerUrl]);
 
     const openSection = (sectionId) => {
         setActiveSectionId(sectionId);
@@ -311,6 +316,15 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
         }
 
         if (
+            profileData.profileMobileBannerUrl?.trim() &&
+            !isSafeHttpUrl(profileData.profileMobileBannerUrl)
+        ) {
+            focusSection('profile');
+            setModalMessage('The mobile profile banner must be a valid http(s) URL.');
+            return;
+        }
+
+        if (
             profileData.profileColor &&
             !isValidProfileColor(profileData.profileColor)
         ) {
@@ -348,6 +362,16 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
 
     const profileImageUrl = profileData.profilePictureUrl?.trim();
     const profileBannerUrl = profileData.profileBannerUrl?.trim();
+    const profileMobileBannerUrl = profileData.profileMobileBannerUrl?.trim();
+    const isUsingMobilePreviewBanner = Boolean(
+        profileMobileBannerUrl && !profileMobileBannerFailed
+    );
+    const mobilePreviewBannerUrl =
+        isUsingMobilePreviewBanner
+            ? profileMobileBannerUrl
+            : profileBannerUrl && !profileBannerFailed
+                ? profileBannerUrl
+                : '';
 
     return (
         <div
@@ -530,6 +554,117 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                                     placeholder="https://..."
                                 />
                                 <InfoBox />
+                            </Field>
+
+                            <Field
+                                label="Mobile profile banner URL"
+                                hint="Optional. Recommended size: 1080 × 1920 px (9:16). The mobile header grows with the bio, so use an extendable background and keep essential details within the central 60%; cropping varies with bio length and screen height."
+                                htmlFor="profileMobileBannerUrl"
+                            >
+                                <input
+                                    type="url"
+                                    inputMode="url"
+                                    name="profileMobileBannerUrl"
+                                    id="profileMobileBannerUrl"
+                                    value={profileData.profileMobileBannerUrl || ''}
+                                    onChange={handleChange}
+                                    className={inputClass}
+                                    placeholder="https://..."
+                                />
+                                <InfoBox />
+
+                                <div className="mt-4">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                                            Mobile banner preview
+                                        </p>
+                                        {!profileMobileBannerUrl && profileBannerUrl && (
+                                            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+                                                Desktop banner fallback
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div
+                                        className="relative mx-auto min-h-[30rem] w-full max-w-xs overflow-hidden rounded-2xl border border-gray-200 shadow-sm dark:border-gray-700"
+                                        style={{
+                                            background: `linear-gradient(135deg, ${color.hex}, ${color.hoverHex})`,
+                                        }}
+                                    >
+                                        {mobilePreviewBannerUrl && (
+                                            <img
+                                                src={mobilePreviewBannerUrl}
+                                                alt=""
+                                                onError={() => {
+                                                    if (isUsingMobilePreviewBanner) {
+                                                        setProfileMobileBannerFailed(true);
+                                                    } else {
+                                                        setProfileBannerFailed(true);
+                                                    }
+                                                }}
+                                                className="absolute inset-0 h-full w-full object-cover"
+                                            />
+                                        )}
+                                        {mobilePreviewBannerUrl && (
+                                            <div className="absolute inset-0 hidden bg-gradient-to-b from-black/45 via-black/20 to-black/55 dark:block" />
+                                        )}
+
+                                        <div className="relative flex min-h-[30rem] flex-col items-center justify-center gap-4 p-4 pt-16">
+                                            <div
+                                                className={`relative mt-8 flex w-full flex-col items-center rounded-[2rem] border-2 px-4 pb-5 pt-16 text-center shadow-xl backdrop-blur-md ${
+                                                    mobilePreviewBannerUrl
+                                                        ? 'bg-black/35 text-white'
+                                                        : 'bg-gray-50/95 text-gray-800 dark:bg-gray-900/60 dark:text-white'
+                                                }`}
+                                                style={{ borderColor: color.hex }}
+                                            >
+                                                <ProfileImage
+                                                    src={profileImageUrl}
+                                                    alt="Mobile profile preview"
+                                                    className="absolute -top-12 left-1/2 h-24 w-24 -translate-x-1/2 rounded-full border-4 bg-white object-cover shadow-lg dark:bg-gray-800"
+                                                    style={{ borderColor: color.hex }}
+                                                />
+                                                <p className="text-2xl font-bold">
+                                                    {profileData.username || 'Your profile'}
+                                                </p>
+                                                {profileData.country && (
+                                                    <p
+                                                        className={`mt-1 text-sm ${
+                                                            mobilePreviewBannerUrl
+                                                                ? 'text-white/75'
+                                                                : 'text-gray-500 dark:text-gray-400'
+                                                        }`}
+                                                    >
+                                                        {profileData.country}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {profileData.bio?.trim() && (
+                                                <div
+                                                    className={`w-full rounded-2xl border-2 p-4 text-left shadow-lg backdrop-blur-md ${
+                                                        mobilePreviewBannerUrl
+                                                            ? 'bg-black/35 text-white'
+                                                            : 'bg-gray-50/90 text-gray-700 dark:bg-gray-900/60 dark:text-gray-200'
+                                                    }`}
+                                                    style={{ borderColor: color.hex }}
+                                                >
+                                                    <p
+                                                        className={`mb-2 text-xs font-bold uppercase tracking-[0.18em] ${
+                                                            mobilePreviewBannerUrl
+                                                                ? 'text-white/55'
+                                                                : 'text-gray-400 dark:text-gray-500'
+                                                        }`}
+                                                    >
+                                                        About
+                                                    </p>
+                                                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                                                        {profileData.bio}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
                             </Field>
 
                             <Field
