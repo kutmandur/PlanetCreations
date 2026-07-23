@@ -125,8 +125,10 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     country: '',
                     profilePictureUrl: '',
                     profileBannerUrl: '',
+                    profileMobileBannerUrl: '',
                     favoriteGame: getDefaultGameId(),
                     ownedDlcs: {},
+                    needsProfileSetup: true, // triggers the first-login profile setup wizard
                 });
 
                 batch.set(usernameRef, { email: email.toLowerCase() });

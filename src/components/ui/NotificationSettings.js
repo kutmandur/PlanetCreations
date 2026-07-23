@@ -16,7 +16,7 @@ const TYPES = [
 // Global notification preferences + push opt-in. Prefs live on the inbox doc
 // (users/{uid}/meta/inbox.prefs); a missing entry defaults to on for both
 // channels. Per-community event toggles live on the community page.
-const NotificationSettings = ({ user, setModalMessage }) => {
+const NotificationSettings = ({ user, setModalMessage, embedded = false }) => {
     const [prefs, setPrefs] = useState({});
     const [loading, setLoading] = useState(true);
     const [pushSupported, setPushSupported] = useState(false);
@@ -81,9 +81,9 @@ const NotificationSettings = ({ user, setModalMessage }) => {
     };
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold mb-2">Notifications</h2>
-            <p className="text-gray-600 mb-4">
+        <div className={embedded ? '' : 'bg-white p-6 rounded-lg shadow-md'}>
+            {!embedded && <h2 className="text-2xl font-bold mb-2">Notifications</h2>}
+            <p className={`text-gray-600 dark:text-gray-300 mb-4 ${embedded ? 'text-center' : ''}`}>
                 Choose what you get notified about. “In-app” shows in the bell; “Push” also
                 sends a notification to this device when the site is closed.
             </p>
