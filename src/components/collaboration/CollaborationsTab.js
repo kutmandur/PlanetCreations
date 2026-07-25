@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/config';
 import { fetchUserCollaborations } from '../../firebase/collaboration';
 import CollaborationCard from '../cards/CollaborationCard';
 import PendingInvitations from './PendingInvitations';
@@ -12,7 +10,6 @@ import { ICONS } from '../../utils/helpers';
 const CollaborationsTab = ({ user, userProfile, setModalMessage }) => {
     const isRunningInElectron = window.electronAPI?.isElectron;
     const [collaborations, setCollaborations] = useState([]);
-    const [memberCounts, setMemberCounts] = useState({});
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
@@ -28,17 +25,6 @@ const CollaborationsTab = ({ user, userProfile, setModalMessage }) => {
         try {
             const collabs = await fetchUserCollaborations(user.uid);
             setCollaborations(collabs);
-
-            // Fetch member counts
-            const counts = {};
-            for (const collab of collabs) {
-                const membersSnap = await getDoc(doc(db, 'collaborations', collab.id));
-                if (membersSnap.exists()) {
-                    // Count will be fetched via real-time listener below
-                    counts[collab.id] = 0;
-                }
-            }
-            setMemberCounts(counts);
         } catch (error) {
             console.error('Error loading collaborations:', error);
         } finally {
@@ -54,25 +40,6 @@ const CollaborationsTab = ({ user, userProfile, setModalMessage }) => {
         // Refresh collaborations when an invitation is accepted
         setRefreshKey(prev => prev + 1);
     };
-
-    // Real-time listener for member counts
-    useEffect(() => {
-        if (collaborations.length === 0) return;
-
-        const unsubscribers = collaborations.map(collab => {
-            return onSnapshot(
-                collection(db, 'collaborations', collab.id, 'members'),
-                (snapshot) => {
-                    setMemberCounts(prev => ({
-                        ...prev,
-                        [collab.id]: snapshot.size
-                    }));
-                }
-            );
-        });
-
-        return () => unsubscribers.forEach(unsub => unsub());
-    }, [collaborations]);
 
     const filteredCollaborations = collaborations.filter(collab => {
         const matchesSearch = collab.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -167,7 +134,7 @@ const CollaborationsTab = ({ user, userProfile, setModalMessage }) => {
                         <CollaborationCard
                             key={collab.id}
                             collaboration={collab}
-                            memberCount={memberCounts[collab.id] || 0}
+                            memberCount={collab.memberIds?.length || 0}
                         />
                     ))}
                 </div>

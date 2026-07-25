@@ -10,6 +10,7 @@ import FloatingActionButtonCommunity from '../ui/FloatingActionButtonCommunity';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
 import AllEventsPage from './AllEventsPage';
 import CommunitySuggestions from '../ui/CommunitySuggestions';
+import CollaborationsTab from '../collaboration/CollaborationsTab';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import { getEnabledGameIds } from '../../utils/gamesRegistry';
@@ -332,15 +333,12 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 );
             
             case 'Collaborations':
-                // Feature ist noch nicht freigegeben – vorerst nur Teaser anzeigen.
                 return (
-                    <div className="max-w-xl mx-auto mt-12 text-center bg-white dark:bg-gray-800 rounded-xl shadow-md p-10">
-                        <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-3">Collaborations</h2>
-                        <p className="text-xl font-semibold text-yellow-600 mb-2">Coming soon!</p>
-                        <p className="text-gray-500">
-                            Work on shared creations with other members of your communities. This feature is currently in development and will be available soon.
-                        </p>
-                    </div>
+                    <CollaborationsTab
+                        user={user}
+                        userProfile={userProfile}
+                        setModalMessage={setModalMessage}
+                    />
                 );
 
             default:

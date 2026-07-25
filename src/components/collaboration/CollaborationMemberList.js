@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { updateMemberRole, removeMember, fetchCollaborationPendingInvitations, cancelInvitation } from '../../firebase/collaboration';
+import { updateMemberRole, removeMember, fetchCollaborationPendingInvitations, cancelInvitation, fetchCollaborationApplications, respondToApplication } from '../../firebase/collaboration';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import SendInviteModal from '../modals/SendInviteModal';
@@ -21,14 +21,32 @@ const CollaborationMemberList = ({
 }) => {
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [pendingInvites, setPendingInvites] = useState([]);
+    const [pendingApplications, setPendingApplications] = useState([]);
 
     useEffect(() => {
         if (isOwner) {
             fetchCollaborationPendingInvitations(collaborationId)
                 .then(setPendingInvites)
                 .catch(err => console.error('Error loading invites:', err));
+            fetchCollaborationApplications(collaborationId)
+                .then(setPendingApplications)
+                .catch(err => console.error('Error loading applications:', err));
         }
     }, [collaborationId, isOwner]);
+
+    const handleApplication = async (application, approve) => {
+        try {
+            await respondToApplication(collaborationId, application.id, approve);
+            setPendingApplications(prev => prev.filter(a => a.id !== application.id));
+            setModalMessage(
+                approve
+                    ? `${application.username} has been added — they'll appear in the list on the next refresh.`
+                    : `Application from ${application.username} declined.`
+            );
+        } catch (error) {
+            setModalMessage(`Error: ${error.message}`);
+        }
+    };
 
     const handleCancelInvite = (invite) => {
         setConfirmation({
@@ -120,6 +138,46 @@ const CollaborationMemberList = ({
                                 >
                                     Cancel
                                 </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Pending Applications (application join mode) */}
+            {isOwner && pendingApplications.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <h3 className="font-medium text-indigo-800 mb-3 flex items-center gap-2">
+                        <Icon path={ICONS.userPlus} className="w-5 h-5" />
+                        Join Requests ({pendingApplications.length})
+                    </h3>
+                    <div className="space-y-2">
+                        {pendingApplications.map(application => (
+                            <div key={application.id} className="bg-white rounded-lg p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <Link to={`/profile/${application.id}`} className="font-medium text-gray-800 hover:text-purple-600">
+                                            {application.username}
+                                        </Link>
+                                        {application.message && (
+                                            <p className="text-sm text-gray-500 truncate" title={application.message}>{application.message}</p>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                        <button
+                                            onClick={() => handleApplication(application, true)}
+                                            className="bg-green-500 hover:bg-green-600 text-white text-sm font-bold py-1.5 px-3 rounded-lg transition-colors"
+                                        >
+                                            Approve
+                                        </button>
+                                        <button
+                                            onClick={() => handleApplication(application, false)}
+                                            className="bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-bold py-1.5 px-3 rounded-lg transition-colors"
+                                        >
+                                            Decline
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         ))}
                     </div>

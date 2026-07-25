@@ -551,7 +551,9 @@ service cloud.firestore {
         request.auth.uid in resource.data.memberIds ||
         isModerator()
       );
-      allow create: if isLoggedIn();
+      // Nur über die createCollaboration Cloud Function (Admin-SDK umgeht Rules):
+      // verhindert gefälschte ownerId/memberIds und ungeprüfte Docs.
+      allow create: if false;
       allow update: if isCollaborationOwnerOrMod(collaborationId) ||
         // Mitglieder dürfen bei memberIds NUR sich selbst hinzufügen (Beitritt/Invite)
         // oder entfernen (Verlassen) — nie andere Mitglieder ändern/entfernen.
@@ -569,15 +571,25 @@ service cloud.firestore {
 
       match /members/{userId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isLoggedIn() && (
-          // Owner adding first member (themselves) during creation
-          (isOwner(userId) && request.resource.data.role == 'owner') ||
-          // Joining via invite code
-          isOwner(userId)
-        );
+        // Member-Docs entstehen NUR über Cloud Functions (createCollaboration,
+        // joinCollaborationByInviteCode, acceptCollaborationInvitation). Direkter
+        // Client-Create ist verboten — sonst könnte sich jeder Eingeloggte selbst
+        // mit role:'owner' in eine beliebige Collaboration schreiben.
+        allow create: if false;
         allow update: if isCollaborationOwnerOrMod(collaborationId);
         // Allow mods to delete members even if no owner exists (orphaned collaborations)
         allow delete: if isCollaborationOwnerOrMod(collaborationId) || isOwner(userId) || isModerator();
+      }
+
+      match /applications/{applicantId} {
+        // Owner/Mitglieder sehen alle Bewerbungen; der Bewerber sieht seine eigene.
+        allow read: if isCollaborationMember(collaborationId) || isModerator() ||
+          (isLoggedIn() && applicantId == request.auth.uid);
+        // Bewerbungen entstehen/ändern sich NUR über Cloud Functions
+        // (applyToCollaboration, respondToCollaborationApplication).
+        allow create, update: if false;
+        // Owner/Mods dürfen aufräumen (z. B. beim Löschen der Collaboration).
+        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
       }
 
       match /files/{fileId} {
