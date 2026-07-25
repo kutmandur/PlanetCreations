@@ -6,7 +6,6 @@ import {
     getDocs,
     getDoc,
     addDoc,
-    setDoc,
     updateDoc,
     deleteDoc,
     writeBatch,
@@ -34,42 +33,18 @@ const MAX_VERSIONS_PER_USER_LIMITED = 1;
  * @returns {string} The ID of the created collaboration.
  */
 export const createCollaboration = async (userId, data) => {
-    const { title, description, game } = data;
-
-    // Get username first
-    const profileSnap = await getDoc(doc(db, 'profiles', userId));
-    const username = profileSnap.exists() ? profileSnap.data().username : 'Unknown';
-
-    // Generate invite code
-    const inviteCode = generateInviteCode();
-
-    // Create collaboration document
-    const collaborationRef = await addDoc(collection(db, 'collaborations'), {
-        title,
-        description,
-        game, // 'planet-coaster-2' or 'planet-zoo'
-        ownerId: userId,
-        memberIds: [userId], // Array for querying user's collaborations
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        status: 'active', // 'active', 'completed', 'archived'
-        inviteCode,
-        storage: {
-            totalBytes: 0,
-            limitBytes: STORAGE_LIMIT,
-            fileCount: 0
-        }
+    // Serverseitig anlegen (Cloud Function): das Admin-SDK umgeht die Rules, sodass
+    // die Firestore-Regel Client-Create verbieten kann und ownerId/memberIds nicht
+    // fälschbar sind. `userId` bleibt für die Signatur erhalten (kommt server aus dem Auth-Context).
+    const callable = httpsCallable(getFunctions(), 'createCollaboration');
+    const result = await callable({
+        title: data.title,
+        description: data.description,
+        game: data.game,
+        joinMode: data.joinMode,
+        password: data.password,
     });
-
-    // Add owner as first member using setDoc (not updateDoc)
-    const memberRef = doc(db, 'collaborations', collaborationRef.id, 'members', userId);
-    await setDoc(memberRef, {
-        role: 'owner',
-        joinedAt: serverTimestamp(),
-        username
-    });
-
-    return collaborationRef.id;
+    return result.data.collaborationId;
 };
 
 /**
@@ -184,6 +159,64 @@ export const joinCollaborationByCode = async (userId, inviteCode) => {
 };
 
 /**
+ * Read-only join info for an invite code (so the join page can render the right UI
+ * per joinMode). Returns { collaborationId, title, joinMode, alreadyMember, applicationStatus }.
+ */
+export const getCollaborationJoinInfo = async (inviteCode) => {
+    const callable = httpsCallable(getFunctions(), 'getCollaborationJoinInfo');
+    const result = await callable({ inviteCode });
+    return result.data;
+};
+
+/** Join a password-gated collaboration. */
+export const joinCollaborationByPassword = async (inviteCode, password) => {
+    const callable = httpsCallable(getFunctions(), 'joinCollaborationByPassword');
+    const result = await callable({ inviteCode, password });
+    return result.data.collaborationId;
+};
+
+/** Apply to an application-gated collaboration (owner approves later). */
+export const applyToCollaboration = async (inviteCode, message = '') => {
+    const callable = httpsCallable(getFunctions(), 'applyToCollaboration');
+    const result = await callable({ inviteCode, message });
+    return result.data;
+};
+
+/** Owner: approve/decline a pending application. */
+export const respondToApplication = async (collaborationId, applicantId, approve) => {
+    const callable = httpsCallable(getFunctions(), 'respondToCollaborationApplication');
+    await callable({ collaborationId, applicantId, approve });
+};
+
+/** Fetch pending applications for a collaboration (owner/member on-demand read). */
+export const fetchCollaborationApplications = async (collaborationId) => {
+    const snap = await getDocs(query(
+        collection(db, 'collaborations', collaborationId, 'applications'),
+        where('status', '==', 'pending')
+    ));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+/** Owner: update collaboration settings (title/description/join mode/password). Server-side & hashed. */
+export const updateCollaborationSettings = async (collaborationId, settings) => {
+    const callable = httpsCallable(getFunctions(), 'updateCollaborationSettings');
+    await callable({ collaborationId, ...settings });
+};
+
+/** Start a build session (advisory turn-lock; estimateMin sizes the fallback expiry). */
+export const startBuildSession = async (collaborationId, estimateMin = 60) => {
+    const callable = httpsCallable(getFunctions(), 'startBuildSession');
+    const result = await callable({ collaborationId, estimateMin });
+    return result.data;
+};
+
+/** End the current build session (manual log-off / auto on game close / owner force-release). */
+export const endBuildSession = async (collaborationId, force = false) => {
+    const callable = httpsCallable(getFunctions(), 'endBuildSession');
+    await callable({ collaborationId, force });
+};
+
+/**
  * Leave a collaboration.
  * @param {string} collaborationId - The collaboration ID.
  * @param {string} userId - The user leaving.
@@ -272,6 +305,10 @@ export const deleteCollaboration = async (collaborationId) => {
     // Delete pending invitations
     const invitesSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'invitations'));
     invitesSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Delete applications
+    const applicationsSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'applications'));
+    applicationsSnap.docs.forEach(doc => batch.delete(doc.ref));
 
     // Delete the collaboration document
     batch.delete(doc(db, 'collaborations', collaborationId));
@@ -374,62 +411,10 @@ export const sendInvitation = async (collaborationId, senderId, targetUserId, ro
  * @param {string} userId - The user accepting.
  */
 export const acceptInvitation = async (collaborationId, inviteId, userId) => {
-    const inviteRef = doc(db, 'collaborations', collaborationId, 'invitations', inviteId);
-    const inviteSnap = await getDoc(inviteRef);
-
-    if (!inviteSnap.exists()) {
-        throw new Error('Invitation not found.');
-    }
-
-    const invite = inviteSnap.data();
-    if (invite.targetUserId !== userId) {
-        throw new Error('This invitation is not for you.');
-    }
-
-    if (invite.status !== 'pending') {
-        throw new Error('This invitation has already been processed.');
-    }
-
-    // Get username
-    const profileSnap = await getDoc(doc(db, 'profiles', userId));
-    const username = profileSnap.exists() ? profileSnap.data().username : 'Unknown';
-
-    // Add as member and update invitation status
-    const batch = writeBatch(db);
-
-    // Add member
-    const memberRef = doc(db, 'collaborations', collaborationId, 'members', userId);
-    batch.set(memberRef, {
-        role: invite.role,
-        joinedAt: serverTimestamp(),
-        username
-    });
-
-    // Update memberIds
-    batch.update(doc(db, 'collaborations', collaborationId), {
-        memberIds: arrayUnion(userId)
-    });
-
-    // Update invitation status
-    batch.update(inviteRef, {
-        status: 'accepted',
-        respondedAt: serverTimestamp()
-    });
-
-    // Update user's invite
-    const userInvitesQuery = query(
-        collection(db, 'users', userId, 'collaborationInvites'),
-        where('inviteId', '==', inviteId)
-    );
-    const userInvitesSnap = await getDocs(userInvitesQuery);
-    userInvitesSnap.docs.forEach(docSnap => {
-        batch.update(docSnap.ref, {
-            status: 'accepted',
-            respondedAt: serverTimestamp()
-        });
-    });
-
-    await batch.commit();
+    // Serverseitig: das Member-Doc wird von der Cloud Function geschrieben, damit
+    // niemand clientseitig ein Member-Doc mit beliebiger Rolle anlegen kann.
+    const callable = httpsCallable(getFunctions(), 'acceptCollaborationInvitation');
+    await callable({ collaborationId, inviteId });
 };
 
 /**

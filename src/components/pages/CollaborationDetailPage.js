@@ -9,7 +9,9 @@ import {
     checkOutFile,
     addTodo,
     toggleTodo,
-    deleteTodo
+    deleteTodo,
+    startBuildSession,
+    endBuildSession
 } from '../../firebase/collaboration';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
@@ -51,9 +53,36 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
 
-    // Check if any file is currently checked out
-    const activeCheckout = files.find(f => f.checkedOutBy);
-    const isBuilding = !!activeCheckout;
+    // Advisory build lock (turn-taking): who's building right now, with a fallback expiry.
+    const buildLock = collaboration?.buildLock;
+    const lockActive = !!(buildLock && buildLock.activeBuilderId && buildLock.expiresAt && buildLock.expiresAt.toMillis() > Date.now());
+    const iAmBuilder = lockActive && buildLock.activeBuilderId === user?.uid;
+
+    const formatTimeLeft = (ts) => {
+        const mins = Math.max(0, Math.round((ts.toMillis() - Date.now()) / 60000));
+        if (mins < 60) return `~${mins} min`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `~${h}h${m ? ` ${m}m` : ''}`;
+    };
+
+    const handleStartBuild = async () => {
+        try {
+            await startBuildSession(collaborationId, 60);
+            setModalMessage("You're logged on to build — others will see the park is in use.");
+        } catch (error) {
+            setModalMessage(error.message);
+        }
+    };
+
+    const handleStopBuild = async (force = false) => {
+        try {
+            await endBuildSession(collaborationId, force);
+            setModalMessage(force ? 'Build lock released.' : 'You logged off — the park is free again.');
+        } catch (error) {
+            setModalMessage(error.message);
+        }
+    };
 
     // Load collaboration data
     useEffect(() => {
@@ -318,10 +347,6 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
         ? Math.round((collaboration.storage.totalBytes / collaboration.storage.limitBytes) * 100)
         : 0;
 
-    const builderUsername = activeCheckout
-        ? members.find(m => m.id === activeCheckout.checkedOutBy)?.username || 'Someone'
-        : null;
-
     // Get recent work sessions (last 10)
     const recentSessions = workSessions.slice(0, 10);
 
@@ -331,6 +356,49 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
 
     const renderProjectTab = () => (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Build lock (turn-taking) */}
+            <div className={`lg:col-span-3 rounded-xl border p-5 shadow-sm ${lockActive ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                        <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-white ${lockActive ? 'bg-red-500' : 'bg-green-500'}`}>
+                            <Icon path={lockActive ? ICONS.lockClosed : ICONS.checkCircle} className="w-5 h-5" />
+                        </span>
+                        <div>
+                            {lockActive ? (
+                                <>
+                                    <p className="font-bold text-gray-800">{iAmBuilder ? 'You are building' : `${buildLock.username || 'Someone'} is building`}</p>
+                                    <p className="text-sm text-gray-500">
+                                        Don't open the park until it's free{buildLock.expiresAt ? ` · auto-frees in ${formatTimeLeft(buildLock.expiresAt)}` : ''}.
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="font-bold text-gray-800">The park is free to build</p>
+                                    <p className="text-sm text-gray-500">Log on before you start so nobody opens it at the same time.</p>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {!lockActive && userRole && userRole !== 'viewer' && (
+                            <button onClick={handleStartBuild} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                Start building
+                            </button>
+                        )}
+                        {lockActive && iAmBuilder && (
+                            <button onClick={() => handleStopBuild(false)} className="bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                Log off
+                            </button>
+                        )}
+                        {lockActive && !iAmBuilder && hasOwnerPermissions && (
+                            <button onClick={() => handleStopBuild(true)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                Force release
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             {/* Left Column - Upload Cards */}
             <div className="lg:col-span-2 space-y-4">
                 <div className="flex items-center justify-between mb-2">
@@ -596,6 +664,22 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left Column - General Settings */}
             <div className="space-y-6">
+                {/* Edit settings (owner) */}
+                {hasOwnerPermissions && (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                        <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                            <Icon path={ICONS.cog} className="w-5 h-5 text-purple-500" />
+                            Collaboration Settings
+                        </h3>
+                        <button
+                            onClick={() => navigate(`/collaboration/${collaboration.id}/edit`)}
+                            className="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-2.5 px-4 rounded-lg transition-colors"
+                        >
+                            Edit title, description &amp; access
+                        </button>
+                    </div>
+                )}
+
                 {/* Invite Code */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
                     <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
@@ -772,7 +856,7 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
 
             {/* Header Banner with Build Status */}
             <div className={`rounded-2xl p-6 mb-6 transition-colors duration-300 ${
-                isBuilding ? 'bg-red-500' : 'bg-green-500'
+                lockActive ? 'bg-red-500' : 'bg-green-500'
             }`}>
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                     <div className="text-white">
@@ -787,8 +871,8 @@ const CollaborationDetailPage = ({ user, userProfile, setModalMessage, setConfir
                         <div className="flex items-center gap-2 mb-3">
                             <span className="w-3 h-3 rounded-full bg-white animate-pulse" />
                             <span className="font-medium">
-                                {isBuilding
-                                    ? `${builderUsername} is currently building...`
+                                {lockActive
+                                    ? `${iAmBuilder ? 'You are' : `${buildLock.username || 'Someone'} is`} currently building...`
                                     : 'Available - Ready to edit'}
                             </span>
                         </div>

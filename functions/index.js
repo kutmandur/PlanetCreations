@@ -2562,6 +2562,18 @@ exports.joinCollaborationByInviteCode = functions.https.onCall(async (data, cont
         throw new functions.https.HttpsError('not-found', 'Invalid or expired invite code.');
     }
 
+    // Der Invite-Code lässt nur in 'invite'-Modus direkt beitreten; password/
+    // application laufen über joinCollaborationByPassword bzw. applyToCollaboration.
+    const collabData = snap.docs[0].data();
+    if ((collabData.joinMode || 'invite') !== 'invite') {
+        throw new functions.https.HttpsError(
+            'failed-precondition',
+            collabData.joinMode === 'password'
+                ? 'This collaboration requires a join password.'
+                : 'This collaboration requires you to apply to join.'
+        );
+    }
+
     const collaborationId = snap.docs[0].id;
     const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
     const memberSnap = await memberRef.get();
@@ -2573,17 +2585,444 @@ exports.joinCollaborationByInviteCode = functions.https.onCall(async (data, cont
     const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
 
     const batch = db.batch();
-    batch.set(memberRef, {
-        role: 'editor',
-        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-        username,
-    });
+    batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
     batch.update(db.doc(`collaborations/${collaborationId}`), {
         memberIds: admin.firestore.FieldValue.arrayUnion(userId),
     });
     await batch.commit();
 
     return { collaborationId };
+});
+
+// 8-stelliger Invite-Code (A–Z0–9). Serverseitig erzeugt.
+function generateCollaborationInviteCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
+
+// Standard-Member-Doc. Beitreten = Zustimmung, dass Beiträge in der veröffentlichten
+// Creation genannt werden dürfen (Widerruf nur einstimmig — siehe Publish-Flow).
+function buildCollaborationMemberDoc(role, username) {
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    return {
+        role,
+        joinedAt: now,
+        username,
+        publishConsent: { agreed: true, at: now },
+    };
+}
+
+// --- Collaboration serverseitig anlegen: verhindert, dass Clients ownerId/memberIds
+//     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
+exports.createCollaboration = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const title = ((data && data.title) || '').trim();
+    const description = ((data && data.description) || '').trim();
+    const game = (data && data.game) || '';
+    if (title.length < 3 || title.length > 50) {
+        throw new functions.https.HttpsError('invalid-argument', 'Title must be 3–50 characters.');
+    }
+    if (description.length > 500) {
+        throw new functions.https.HttpsError('invalid-argument', 'Description must be 500 characters or fewer.');
+    }
+    if (game !== 'planet-coaster-2' && game !== 'planet-zoo') {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid game.');
+    }
+
+    // Join-Gating: invite (Code/Direkteinladung) | password | application (Owner bestätigt).
+    const joinMode = ['invite', 'password', 'application'].includes(data && data.joinMode)
+        ? data.joinMode
+        : 'invite';
+    let passwordFields = {};
+    if (joinMode === 'password') {
+        const pw = ((data && data.password) || '').trim();
+        if (pw.length < 4) {
+            throw new functions.https.HttpsError('invalid-argument', 'Join password must be at least 4 characters.');
+        }
+        const passwordSalt = crypto.randomBytes(16).toString('hex');
+        const passwordHash = crypto.createHash('sha256').update(passwordSalt + pw).digest('hex');
+        passwordFields = { passwordSalt, passwordHash };
+    }
+
+    const profileSnap = await db.doc(`profiles/${userId}`).get();
+    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+
+    const collaborationRef = db.collection('collaborations').doc();
+    const batch = db.batch();
+    batch.set(collaborationRef, {
+        title,
+        description,
+        game,
+        ownerId: userId,
+        memberIds: [userId],
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: 'active',
+        joinMode,
+        ...passwordFields,
+        inviteCode: generateCollaborationInviteCode(),
+        storage: { totalBytes: 0, limitBytes: 500 * 1024 * 1024, fileCount: 0 },
+    });
+    batch.set(collaborationRef.collection('members').doc(userId), buildCollaborationMemberDoc('owner', username));
+    await batch.commit();
+
+    return { collaborationId: collaborationRef.id };
+});
+
+// --- Einladung annehmen (serverseitig, damit Member-Docs nicht clientseitig mit
+//     beliebiger Rolle geschrieben werden können). ---
+exports.acceptCollaborationInvitation = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    const inviteId = ((data && data.inviteId) || '').trim();
+    if (!collaborationId || !inviteId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration or invite id.');
+    }
+
+    const inviteRef = db.doc(`collaborations/${collaborationId}/invitations/${inviteId}`);
+    const inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Invitation not found.');
+    }
+    const invite = inviteSnap.data();
+    if (invite.targetUserId !== userId) {
+        throw new functions.https.HttpsError('permission-denied', 'This invitation is not for you.');
+    }
+    if (invite.status !== 'pending') {
+        throw new functions.https.HttpsError('failed-precondition', 'This invitation has already been processed.');
+    }
+
+    const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
+    if ((await memberRef.get()).exists) {
+        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
+    }
+
+    const role = invite.role === 'viewer' ? 'viewer' : 'editor';
+    const profileSnap = await db.doc(`profiles/${userId}`).get();
+    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+
+    const batch = db.batch();
+    batch.set(memberRef, buildCollaborationMemberDoc(role, username));
+    batch.update(db.doc(`collaborations/${collaborationId}`), {
+        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+    });
+    batch.update(inviteRef, {
+        status: 'accepted',
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    const userInvites = await db.collection(`users/${userId}/collaborationInvites`)
+        .where('inviteId', '==', inviteId)
+        .get();
+    userInvites.forEach((docSnap) => batch.update(docSnap.ref, {
+        status: 'accepted',
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }));
+    await batch.commit();
+
+    return { ok: true };
+});
+
+// Hilfsfunktion: aktive Collaboration per Invite-Code finden (serverseitig, damit
+// Clients nicht per Code über alle Collaborations listen können).
+async function findCollaborationByCode(code) {
+    const snap = await db.collection('collaborations')
+        .where('inviteCode', '==', code)
+        .where('status', '==', 'active')
+        .limit(1)
+        .get();
+    if (snap.empty) {
+        throw new functions.https.HttpsError('not-found', 'Invalid or expired invite code.');
+    }
+    return snap.docs[0];
+}
+
+// --- Join-Infos zum Code (read-only): damit die Join-Seite die richtige UI je
+//     nach joinMode zeigen kann, ohne dass Clients per Code listen dürfen. ---
+exports.getCollaborationJoinInfo = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const code = ((data && data.inviteCode) || '').trim();
+    if (!code) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invite code is required.');
+    }
+    const collabDoc = await findCollaborationByCode(code);
+    const collab = collabDoc.data();
+    const memberSnap = await db.doc(`collaborations/${collabDoc.id}/members/${context.auth.uid}`).get();
+    let applicationStatus = null;
+    if ((collab.joinMode || 'invite') === 'application') {
+        const appSnap = await db.doc(`collaborations/${collabDoc.id}/applications/${context.auth.uid}`).get();
+        if (appSnap.exists) applicationStatus = appSnap.data().status || null;
+    }
+    return {
+        collaborationId: collabDoc.id,
+        title: collab.title || '',
+        joinMode: collab.joinMode || 'invite',
+        alreadyMember: memberSnap.exists,
+        applicationStatus,
+    };
+});
+
+// --- Beitritt per Passwort (nur joinMode === 'password'). ---
+exports.joinCollaborationByPassword = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const code = ((data && data.inviteCode) || '').trim();
+    const password = ((data && data.password) || '').trim();
+    if (!code || !password) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invite code and password are required.');
+    }
+    const collabDoc = await findCollaborationByCode(code);
+    const collab = collabDoc.data();
+    if ((collab.joinMode || 'invite') !== 'password') {
+        throw new functions.https.HttpsError('failed-precondition', 'This collaboration does not use a join password.');
+    }
+    const hash = crypto.createHash('sha256').update((collab.passwordSalt || '') + password).digest('hex');
+    if (hash !== collab.passwordHash) {
+        throw new functions.https.HttpsError('permission-denied', 'Incorrect password.');
+    }
+    const memberRef = db.doc(`collaborations/${collabDoc.id}/members/${userId}`);
+    if ((await memberRef.get()).exists) {
+        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
+    }
+    const profileSnap = await db.doc(`profiles/${userId}`).get();
+    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+    const batch = db.batch();
+    batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
+    batch.update(collabDoc.ref, { memberIds: admin.firestore.FieldValue.arrayUnion(userId) });
+    await batch.commit();
+    return { collaborationId: collabDoc.id };
+});
+
+// --- Beitrittsantrag stellen (nur joinMode === 'application'). ---
+exports.applyToCollaboration = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const code = ((data && data.inviteCode) || '').trim();
+    const message = ((data && data.message) || '').trim().slice(0, 300);
+    if (!code) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invite code is required.');
+    }
+    const collabDoc = await findCollaborationByCode(code);
+    const collab = collabDoc.data();
+    if ((collab.joinMode || 'invite') !== 'application') {
+        throw new functions.https.HttpsError('failed-precondition', 'This collaboration does not accept applications.');
+    }
+    if ((await db.doc(`collaborations/${collabDoc.id}/members/${userId}`).get()).exists) {
+        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
+    }
+    const appRef = db.doc(`collaborations/${collabDoc.id}/applications/${userId}`);
+    const existing = await appRef.get();
+    if (existing.exists && existing.data().status === 'pending') {
+        throw new functions.https.HttpsError('already-exists', 'You already have a pending application.');
+    }
+    const profileSnap = await db.doc(`profiles/${userId}`).get();
+    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+    await appRef.set({
+        userId,
+        username,
+        message,
+        status: 'pending',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { collaborationId: collabDoc.id, status: 'pending' };
+});
+
+// --- Owner: Bewerbung annehmen (fügt Member hinzu) bzw. ablehnen. ---
+exports.respondToCollaborationApplication = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const ownerId = context.auth.uid;
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    const applicantId = ((data && data.applicantId) || '').trim();
+    const approve = Boolean(data && data.approve);
+    if (!collaborationId || !applicantId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration or applicant id.');
+    }
+    const collabRef = db.doc(`collaborations/${collaborationId}`);
+    const collabSnap = await collabRef.get();
+    if (!collabSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
+    }
+    if (collabSnap.data().ownerId !== ownerId) {
+        throw new functions.https.HttpsError('permission-denied', 'Only the owner can respond to applications.');
+    }
+    const appRef = db.doc(`collaborations/${collaborationId}/applications/${applicantId}`);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists || appSnap.data().status !== 'pending') {
+        throw new functions.https.HttpsError('failed-precondition', 'No pending application for this user.');
+    }
+
+    if (!approve) {
+        await appRef.update({ status: 'declined', respondedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return { ok: true, approved: false };
+    }
+
+    const memberRef = db.doc(`collaborations/${collaborationId}/members/${applicantId}`);
+    const batch = db.batch();
+    if (!(await memberRef.get()).exists) {
+        batch.set(memberRef, buildCollaborationMemberDoc('editor', appSnap.data().username || 'Unknown'));
+        batch.update(collabRef, { memberIds: admin.firestore.FieldValue.arrayUnion(applicantId) });
+    }
+    batch.update(appRef, { status: 'accepted', respondedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await batch.commit();
+    return { ok: true, approved: true };
+});
+
+// --- Owner: Collaboration-Einstellungen bearbeiten (Titel/Beschreibung/Join-Modus/
+//     Passwort). Passwort-Hashing läuft serverseitig; game ist nicht änderbar. ---
+exports.updateCollaborationSettings = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    if (!collaborationId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration id.');
+    }
+    const ref = db.doc(`collaborations/${collaborationId}`);
+    const snap = await ref.get();
+    if (!snap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
+    }
+    if (snap.data().ownerId !== userId) {
+        throw new functions.https.HttpsError('permission-denied', 'Only the owner can edit settings.');
+    }
+
+    const update = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    if (typeof (data && data.title) === 'string') {
+        const title = data.title.trim();
+        if (title.length < 3 || title.length > 50) {
+            throw new functions.https.HttpsError('invalid-argument', 'Title must be 3–50 characters.');
+        }
+        update.title = title;
+    }
+    if (typeof (data && data.description) === 'string') {
+        if (data.description.length > 500) {
+            throw new functions.https.HttpsError('invalid-argument', 'Description must be 500 characters or fewer.');
+        }
+        update.description = data.description.trim();
+    }
+    if (data && ['invite', 'password', 'application'].includes(data.joinMode)) {
+        update.joinMode = data.joinMode;
+        if (data.joinMode === 'password') {
+            const pw = ((data && data.password) || '').trim();
+            if (pw) {
+                if (pw.length < 4) {
+                    throw new functions.https.HttpsError('invalid-argument', 'Join password must be at least 4 characters.');
+                }
+                const passwordSalt = crypto.randomBytes(16).toString('hex');
+                update.passwordSalt = passwordSalt;
+                update.passwordHash = crypto.createHash('sha256').update(passwordSalt + pw).digest('hex');
+            } else if (!snap.data().passwordHash) {
+                throw new functions.https.HttpsError('invalid-argument', 'A join password is required for password mode.');
+            }
+        } else {
+            update.passwordHash = admin.firestore.FieldValue.delete();
+            update.passwordSalt = admin.firestore.FieldValue.delete();
+        }
+    }
+    await ref.update(update);
+    return { ok: true };
+});
+
+// --- Build-Session starten (advisory Turn-Lock: nur einer baut gleichzeitig). ---
+//     Ende primär per Log-off/Spiel-Schließen (endBuildSession); Fallback ist der
+//     estimate-basierte expiresAt, ab dem jeder lazy übernehmen darf.
+exports.startBuildSession = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    if (!collaborationId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration id.');
+    }
+    let estimateMin = Number(data && data.estimateMin);
+    if (!Number.isFinite(estimateMin) || estimateMin <= 0) estimateMin = 60;
+    estimateMin = Math.min(Math.max(Math.round(estimateMin), 5), 480); // 5 min – 8 h
+
+    const ref = db.doc(`collaborations/${collaborationId}`);
+    const snap = await ref.get();
+    if (!snap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
+    }
+    const memberSnap = await db.doc(`collaborations/${collaborationId}/members/${userId}`).get();
+    if (!memberSnap.exists) {
+        throw new functions.https.HttpsError('permission-denied', 'You are not a member of this collaboration.');
+    }
+    if (memberSnap.data().role === 'viewer') {
+        throw new functions.https.HttpsError('permission-denied', 'Viewers cannot build.');
+    }
+
+    const nowMs = Date.now();
+    const lock = snap.data().buildLock;
+    if (lock && lock.activeBuilderId && lock.activeBuilderId !== userId &&
+        lock.expiresAt && lock.expiresAt.toMillis() > nowMs) {
+        throw new functions.https.HttpsError('failed-precondition', `${lock.username || 'Someone'} is currently building.`);
+    }
+
+    const graceMs = 30 * 60 * 1000; // Fallback-Puffer über die Schätzung hinaus
+    const username = memberSnap.data().username || 'Unknown';
+    await ref.update({
+        buildLock: {
+            activeBuilderId: userId,
+            username,
+            startedAt: admin.firestore.Timestamp.fromMillis(nowMs),
+            estimateMin,
+            expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + estimateMin * 60000 + graceMs),
+        },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true, expiresAt: nowMs + estimateMin * 60000 + graceMs };
+});
+
+// --- Build-Session beenden (Log-off / Spiel-Schließen / manueller Button).
+//     `force` erlaubt dem Owner, einen fremden hängenden Lock zu lösen. ---
+exports.endBuildSession = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+    }
+    const userId = context.auth.uid;
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    const force = Boolean(data && data.force);
+    if (!collaborationId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration id.');
+    }
+    const ref = db.doc(`collaborations/${collaborationId}`);
+    const snap = await ref.get();
+    if (!snap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
+    }
+    const lock = snap.data().buildLock;
+    if (!lock || !lock.activeBuilderId) {
+        return { ok: true }; // bereits frei
+    }
+    const isActiveBuilder = lock.activeBuilderId === userId;
+    const isOwner = snap.data().ownerId === userId;
+    if (!isActiveBuilder && !(force && isOwner)) {
+        throw new functions.https.HttpsError('permission-denied', 'Only the active builder or the owner can end this session.');
+    }
+    await ref.update({
+        buildLock: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true };
 });
 
 // --- Benachrichtigung: Creation ins Showcase aufgenommen bzw. Bewerbung angenommen ---
