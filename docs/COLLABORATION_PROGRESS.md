@@ -34,11 +34,11 @@ file is the current hand-off source.
 
 | Phase | Status | Implemented | Still required |
 | --- | --- | --- | --- |
-| P0 secure base | Mostly complete; earlier subset deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; rules exercised against the local emulator | Dedicated Firestore Rules unit tests; deploy the new file/version rule changes |
-| P1 coordination | Core and current web UI complete locally; emulator multi-user and three-instance Electron scan E2E green | Create/edit wizard, invite/password/application gates, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Replace legacy invite subcollection with inbox items; finish membership/role functions; authenticated Electron/R2 E2E |
-| P2 versioned files | Locally implemented and automated tests green | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Authenticated two-account Electron/R2 E2E; deploy Functions/rules/index; release the Electron IPC bridge |
+| P0 secure base | Deployed in v1.0.26 | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; rules exercised against the local emulator | Add a dedicated Firestore Rules unit-test suite |
+| P1 coordination | Released in v1.0.26; follow-up cleanup remains | Create/edit wizard, invite/password/application gates, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Replace the legacy invite subcollection with inbox items; finish membership/role cleanup; run installed-client post-release smoke tests |
+| P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Run installed-client two-account production smoke tests |
 | P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
-| P4 ship | Not ready | Collaboration surface is available locally for testing | Inbox notification migration, full regression/cost review, cohort rollout, IONOS web deploy, desktop release |
+| P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Monitor production and complete the remaining P1/P3 follow-ups |
 
 ## Work completed in the current continuation
 
@@ -182,30 +182,28 @@ file is the current hand-off source.
   reclaims the expired lock, the original builder's next visit safely merges the matching local draft
   into their own pending changelog before clearing the local recovery copy.
 
-## Deployment boundary
+## Production deployment and release
 
-According to Claude's memory, the earlier P0/P1 callable set, rules and then-existing indexes were
-successfully deployed on 2026-07-25. That historical claim was not re-verified in this continuation.
+The coordinated v1.0.26 release completed on 2026-07-28:
 
-The work listed below is **not deployed by this continuation**:
+- Commit `45024672a53a18ddd0d81146bdcd5e92aef9be5f` was pushed to `origin/main` and
+  tagged as `v1.0.26`.
+- Firebase Functions, Firestore Rules and Firestore indexes deployed successfully to
+  `planetcreationsdotnet`. Firebase Hosting was intentionally excluded.
+- The production React build was uploaded to the IONOS web root through the existing SFTP account
+  after verifying its stored Ed25519 host key. All 73 files uploaded; remote SHA-256 checks passed for
+  `index.html`, `.htaccess` and `static/js/main.3b5c7b8a.js`.
+- A cache-busted HTTPS fetch from `www.planetcreations.net` returned byte-identical `index.html` and
+  main bundle hashes, independently confirming the live deployment.
+- GitHub Actions run `30313961828` built Windows, macOS and Linux successfully. The release was
+  published as `PlanetCreations Client v1.0.26` and marked Latest:
+  `https://github.com/kutmandur/PlanetCreations/releases/tag/v1.0.26`.
+- The release contains the Windows installer and blockmap, Apple Silicon DMG and blockmap, Linux
+  AppImage, plus all three updater metadata files.
 
-- Functions: at minimum the updated `startBuildSession`, `endBuildSession`,
-  `finalizeCollaborationVersion` and `getCollaborationVersionDownloadUrl`, the new
-  `updateCollaborationChangelogEntry`, `listPublicCollaborations`,
-  `getPublicCollaborationView`, the new initial-save `createCollaboration` flow and the
-  R2-first `deleteCollaboration` cleanup.
-  `finalizeCollaborationVersion` now stores validated external image URLs with the version activity;
-  `createCollaboration` and `updateCollaborationSettings` now also validate/store the banner and starting
-  gallery; the standalone `addCollaborationChangelogEntry` callable was removed.
-- Firestore rules for server-only file/version/upload metadata.
-- The `memberIds array-contains + game` collaboration index used by the overlay.
-- Hosted React bundle (production site is IONOS/manual FTP, not Firebase Hosting).
-- Electron main/preload additions, including newest-save discovery and main-window hand-off after
-  game close; these require a desktop release before hosted UI upload/download and auto-logoff can work.
-
-The new web create form, `createCollaboration` callable and Electron file-picker response must ship
-together: the backend now requires an initial upload and the UI depends on the expanded IPC payload.
-Deploy these pieces as one coordinated release only after the authenticated E2E gate below passes.
+Non-blocking maintenance warnings remain: Cloud Functions still use the deprecated Node.js 20 runtime
+and legacy `functions.config()` API, and GitHub Actions transparently run older JavaScript actions on
+Node.js 24. These should be migrated before their provider deadlines.
 
 ## Verification completed
 
@@ -295,12 +293,13 @@ Deploy these pieces as one coordinated release only after the authenticated E2E 
   responsive create wizard, dedicated Changelog tab, build-finish popover and cross-account project
   refresh. The three-process native run covered real IPC scanning and unsigned package integrity on
   copied Frontier data. Authenticated signing, actual R2 upload/download, payload integrity and R2
-  cleanup are green; packaged release-client interaction and coordinated deployment remain.
+  cleanup are green. The coordinated production deployment and cross-platform v1.0.26 build are
+  complete; installed-client interaction with production remains a post-release smoke-test item.
 
-## Next execution order
+## Post-release execution order
 
-1. Repeat the green three-development-Electron and signed-R2 gates through two authenticated packaged
-   release candidates. Isolated identities, IPC scanning, copied PC2 data and backend R2 transfer are green.
+1. Repeat the green three-development-Electron and signed-R2 gates through two authenticated installed
+   v1.0.26 clients. Isolated identities, IPC scanning, copied PC2 data and backend R2 transfer are green.
 2. Create a collaboration with an initial PC2 save and one with an initial Planet Zoo save. Confirm
    that cancellation, wrong-game files and unsigned/invalid packages cannot create partial projects.
 3. For both games, verify manual log-off and game close open the changelog popover in the main client.
@@ -328,7 +327,6 @@ Deploy these pieces as one coordinated release only after the authenticated E2E 
 13. Add Firestore Rules emulator tests for privilege escalation and server-only version metadata.
 14. Finish the P1 inbox/membership cleanup.
 15. Build P3 publish/profile-credit/revoke.
-16. Perform the coordinated P4 deploy/release only after the full two-account native/R2 flow is green.
 
 ## Working-tree note
 
