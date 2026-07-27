@@ -35,6 +35,16 @@ import BugReportModal from './components/modals/BugReportModal';
 import GoLiveModal from './components/modals/GoLiveModal';
 import { readLiveSession, setLiveSession } from './utils/liveStream';
 import { readOverlayQr, setOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
+import {
+    endBuildSession,
+    fetchUserCollaborationsForGame,
+} from './firebase/collaboration';
+import { endRememberedCollaborationBuild } from './utils/collaborationBuildSession';
+import {
+    findCollaborationVersionUpdates,
+    readInstalledCollaborationVersions,
+} from './utils/collaborationVersionUpdates';
+import { dispatchCollaborationAvailable } from './utils/collaborationAvailability';
 import { registerQueryClient } from './utils/appRefresh';
 import ProfileSetupWizard from './components/modals/ProfileSetupWizard';
 import useInterestSync from './hooks/useInterestSync';
@@ -89,6 +99,7 @@ const AppContent = () => {
     const navigate = useNavigate();
     const isGameOverlay = Boolean(window.electronAPI?.isGameOverlay);
     const [isOverlayExpanded, setIsOverlayExpanded] = useState(false);
+    const [activeGameId, setActiveGameId] = useState(null);
     const isOfflineMode = location.pathname.startsWith('/client');
     const [user, setUser] = useState(null);
     const [userProfile, setUserProfile] = useState(null);
@@ -132,6 +143,7 @@ const AppContent = () => {
     const clientQueueProcessingRef = useRef(false);
     const clientQueueRetryTimerRef = useRef(null);
     const lastRemoteOverlayQrRef = useRef(null);
+    const collaborationUpdateOfferRef = useRef('');
     const [goLivePrompt, setGoLivePrompt] = useState(null);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
@@ -147,6 +159,128 @@ const AppContent = () => {
             if (typeof unsubscribe === 'function') unsubscribe();
         };
     }, [isGameOverlay]);
+
+    useEffect(() => {
+        if (!isGameOverlay || !window.electronAPI?.getActiveGame) return undefined;
+        let cancelled = false;
+        window.electronAPI.getActiveGame()
+            .then((gameId) => { if (!cancelled) setActiveGameId(gameId || null); })
+            .catch(() => {});
+        const unsubscribe = window.electronAPI.onActiveGameChanged?.((gameId) => {
+            setActiveGameId(gameId || null);
+        });
+        return () => {
+            cancelled = true;
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, [isGameOverlay]);
+
+    useEffect(() => {
+        if (!isGameOverlay || !user?.uid || !activeGameId ||
+            !window.electronAPI?.setOverlayExpanded) {
+            if (!activeGameId) collaborationUpdateOfferRef.current = '';
+            return undefined;
+        }
+        let cancelled = false;
+        const checkForCollaborationUpdates = async () => {
+            try {
+                const collaborations = await fetchUserCollaborationsForGame(
+                    user.uid,
+                    activeGameId,
+                );
+                const updates = findCollaborationVersionUpdates(
+                    collaborations,
+                    readInstalledCollaborationVersions(user.uid),
+                );
+                if (cancelled || updates.length === 0) return;
+                const signature = [
+                    user.uid,
+                    activeGameId,
+                    ...updates.map((update) => (
+                        `${update.collaborationId}:${update.currentVersion.versionId}`
+                    )),
+                ].join('|');
+                if (collaborationUpdateOfferRef.current === signature) return;
+                collaborationUpdateOfferRef.current = signature;
+                const expanded = await window.electronAPI.setOverlayExpanded(true);
+                if (!cancelled && expanded) setIsOverlayExpanded(true);
+            } catch (error) {
+                console.warn(
+                    'Could not check collaboration versions at game start:',
+                    error.message,
+                );
+            }
+        };
+        checkForCollaborationUpdates();
+        window.addEventListener('online', checkForCollaborationUpdates);
+        return () => {
+            cancelled = true;
+            window.removeEventListener('online', checkForCollaborationUpdates);
+        };
+    }, [activeGameId, isGameOverlay, user?.uid]);
+
+    useEffect(() => {
+        if (isGameOverlay || !user?.uid || !window.electronAPI?.onGameProcessStopped) return undefined;
+
+        const endRememberedBuild = async (gameId, pendingOnly = false) => {
+            try {
+                const result = await endRememberedCollaborationBuild({
+                    userId: user.uid,
+                    gameId,
+                    pendingOnly,
+                    endSession: (
+                        collaborationId,
+                        endedAtMillis,
+                        buildDraft,
+                        buildSessionId,
+                    ) => endBuildSession(
+                        collaborationId,
+                        false,
+                        endedAtMillis,
+                        buildDraft,
+                        buildSessionId,
+                    ),
+                });
+                if (result.ended && result.collaborationId) {
+                    await window.electronAPI.showMainWindow?.();
+                    navigate(`/collaboration/${result.collaborationId}`, {
+                        state: {
+                            openChangelog: true,
+                            source: 'build-ended',
+                            changelogEntryId: result.changelogEntryId || null,
+                            changelogUserId: result.changelogUserId || user.uid,
+                            username: result.username || null,
+                            createdAtMillis: result.createdAtMillis || Date.now(),
+                            changelog: result.changelog ||
+                                result.buildDraft?.changelog ||
+                                '',
+                            completedTodos: result.completedTodos ||
+                                result.buildDraft?.completedTodos ||
+                                [],
+                        },
+                    });
+                }
+                return result;
+            } catch (error) {
+                // The local pending marker intentionally survives retryable failures.
+                console.warn('Collaboration auto-logoff is pending:', error.message);
+                return null;
+            }
+        };
+
+        // Retry a previous offline/crash-assisted logoff at boot and whenever the
+        // renderer comes back online. This is still event-driven: no heartbeat.
+        endRememberedBuild(undefined, true);
+        const handleOnline = () => endRememberedBuild(undefined, true);
+        window.addEventListener('online', handleOnline);
+        const unsubscribe = window.electronAPI.onGameProcessStopped(({ gameId } = {}) => {
+            if (gameId) endRememberedBuild(gameId);
+        });
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, [isGameOverlay, navigate, user?.uid]);
 
     useEffect(() => {
         if (!window.electronAPI?.isHostedWebView) return;
@@ -219,10 +353,17 @@ const AppContent = () => {
                     notificationUnsubscribe = onSnapshot(inboxRef, (snap) => {
                         const nextNotifications = snap.exists() ? (snap.data().items || []) : [];
                         const nextIds = new Set(nextNotifications.map(item => item?.id).filter(Boolean));
+                        const incomingNotifications =
+                            notificationInboxInitializedRef.current
+                                ? nextNotifications.filter((item) => (
+                                    item?.id &&
+                                    !knownNotificationIdsRef.current.has(item.id)
+                                ))
+                                : [];
 
                         if (!isGameOverlay && notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
-                            nextNotifications
-                                .filter(item => item?.id && !item.isRead && !knownNotificationIdsRef.current.has(item.id))
+                            incomingNotifications
+                                .filter(item => !item.isRead)
                                 .slice(0, 5)
                                 .reverse()
                                 .forEach(item => {
@@ -233,6 +374,9 @@ const AppContent = () => {
                                     }).catch(error => console.warn('Could not show system notification:', error));
                                 });
                         }
+                        incomingNotifications.forEach(
+                            dispatchCollaborationAvailable,
+                        );
 
                         knownNotificationIdsRef.current = nextIds;
                         notificationInboxInitializedRef.current = true;
@@ -512,7 +656,12 @@ const AppContent = () => {
     }
 
     if (isGameOverlay && !isOverlayExpanded) {
-        return <GameOverlayWidget unreadCount={notifications.filter(notification => !notification.isRead).length} />;
+        return (
+            <GameOverlayWidget
+                unreadCount={notifications.filter(notification => !notification.isRead).length}
+                activeGameId={activeGameId}
+            />
+        );
     }
 
     const showNewCreationButton = user && location.pathname === '/';
@@ -533,7 +682,18 @@ const AppContent = () => {
 
     return (
         <>
-        {isGameOverlay && <GameOverlayChrome />}
+        {isGameOverlay && (
+            <GameOverlayChrome
+                user={user}
+                activeGameId={activeGameId}
+                currentPath={location.pathname}
+                onOpenCollaboration={(collaborationId, state = null) => navigate(
+                    `/collaboration/${collaborationId}`,
+                    { state },
+                )}
+                setModalMessage={setModalMessage}
+            />
+        )}
         <div className={`h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900 ${isGameOverlay ? 'pt-10' : ''}`}>
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
@@ -622,7 +782,7 @@ const AppContent = () => {
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
                             <Route path="/client-info" element={<ClientInfoPage />} />
-                            <Route path="/collaboration/:collaborationId" element={<CollaborationDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
+                            <Route path="/collaboration/:collaborationId" element={<ProtectedRoute user={user} userProfile={userProfile}><CollaborationDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} /></ProtectedRoute>} />
                             <Route path="/collaboration/join/:inviteCode" element={<JoinCollaborationPage user={user} setModalMessage={setModalMessage} />} />
 
                             <Route path="/settings" element={<ProtectedRoute user={user} userProfile={userProfile}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></ProtectedRoute>} />

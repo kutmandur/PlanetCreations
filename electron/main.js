@@ -12,6 +12,9 @@ const log = require('electron-log');
 const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
+const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
+const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
+const { resolveDevServerUrl } = require('./modules/DevServerUrl');
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
@@ -19,6 +22,7 @@ const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMe
 
 const isDev = !app.isPackaged;
 const useHostedUiInDev = isDev && process.env.PLANETCREATIONS_USE_HOSTED_UI === '1';
+const devServerUrl = resolveDevServerUrl(process.env.PLANETCREATIONS_DEV_SERVER_URL);
 const AUTO_START_ARG = '--autostart';
 const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
 const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
@@ -26,6 +30,8 @@ let mainWindow;
 let tray;
 let gameOverlayWindow;
 let gameProcessTimer;
+let activeGameId = null;
+let gameProcessCheckInFlight = false;
 let updateCheckTimer;
 let overlayDragState = null;
 let isGameOverlayExpanded = false;
@@ -38,7 +44,6 @@ let streamingIntegration = null;
 // auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
 let overlayForcedVisible = false;
 const activeNotifications = new Set();
-const GAME_PROCESS_NAME = 'PlanetCoaster2.exe';
 const OVERLAY_MIN_SIZE = 56;
 // 640 statt 180: Im QR-Modus zeigt der Puck das volle Sharing-Template, in dem
 // der QR nur ~37% der Bildbreite ausmacht — Streamer müssen ihn groß genug
@@ -49,18 +54,18 @@ const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const PRODUCTION_WEB_ORIGIN = 'https://planetcreations.net';
 
 function getBundledAppUrl() {
-    return isDev ? 'http://localhost:3000' : pathToFileURL(path.join(__dirname, '../build/index.html')).toString();
+    return isDev ? devServerUrl : pathToFileURL(path.join(__dirname, '../build/index.html')).toString();
 }
 
 function getHostedAppUrl() {
-    return isDev && !useHostedUiInDev ? 'http://localhost:3000' : PRODUCTION_WEB_ORIGIN;
+    return isDev && !useHostedUiInDev ? devServerUrl : PRODUCTION_WEB_ORIGIN;
 }
 
 function isAllowedAppUrl(rawUrl) {
     try {
         const parsed = new URL(rawUrl);
         if (parsed.origin === PRODUCTION_WEB_ORIGIN || parsed.origin === 'https://www.planetcreations.net') return true;
-        if (isDev && parsed.origin === 'http://localhost:3000') return true;
+        if (isDev && parsed.origin === devServerUrl) return true;
         if (parsed.protocol !== 'file:') return false;
         const filePath = path.resolve(fileURLToPath(parsed));
         const allowedRoots = [path.resolve(__dirname, '../build'), path.resolve(__dirname, '../public')];
@@ -369,22 +374,45 @@ function setOverlayExpanded(expanded) {
     return true;
 }
 
-function isPlanetCoaster2Running() {
-    if (process.platform !== 'win32') return Promise.resolve(false);
+function detectActiveGame() {
+    if (process.platform !== 'win32') return Promise.resolve(null);
     return new Promise((resolve) => {
-        execFile('tasklist.exe', ['/FI', `IMAGENAME eq ${GAME_PROCESS_NAME}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (error, stdout = '') => {
-            resolve(!error && stdout.toLowerCase().includes(GAME_PROCESS_NAME.toLowerCase()));
+        execFile('tasklist.exe', ['/FO', 'CSV', '/NH'], { windowsHide: true }, (error, stdout = '') => {
+            if (error) {
+                log.warn('Unable to inspect running games:', error.message);
+                resolve(undefined);
+                return;
+            }
+            resolve(detectActiveGameFromTasklist(stdout));
         });
     });
 }
 
 async function updateGameOverlayVisibility() {
-    const running = overlayForcedVisible || await isPlanetCoaster2Running();
-    if (running) {
-        const overlay = createGameOverlayWindow();
-        if (!overlay.isVisible()) overlay.showInactive();
-    } else if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
-        gameOverlayWindow.hide();
+    if (gameProcessCheckInFlight) return;
+    gameProcessCheckInFlight = true;
+    try {
+        const detectedGameId = await detectActiveGame();
+        // `undefined` means tasklist failed. Keep the previous state so a transient
+        // OS error cannot falsely end a collaboration build session.
+        if (detectedGameId !== undefined && detectedGameId !== activeGameId) {
+            const previousGameId = activeGameId;
+            activeGameId = detectedGameId;
+            if (previousGameId) {
+                broadcastToAppWindows('game-process-stopped', { gameId: previousGameId });
+            }
+            broadcastToAppWindows('active-game-changed', activeGameId);
+        }
+
+        const running = overlayForcedVisible || Boolean(activeGameId);
+        if (running) {
+            const overlay = createGameOverlayWindow();
+            if (!overlay.isVisible()) overlay.showInactive();
+        } else if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
+            gameOverlayWindow.hide();
+        }
+    } finally {
+        gameProcessCheckInFlight = false;
     }
 }
 
@@ -945,6 +973,10 @@ ipcMain.handle('get-overlay-forced', (event) => {
     requireTrustedIpcSender(event, true);
     return overlayForcedVisible;
 });
+ipcMain.handle('get-active-game', (event) => {
+    requireTrustedIpcSender(event, true);
+    return activeGameId;
+});
 ipcMain.handle('set-overlay-forced', (event, value) => {
     requireTrustedIpcSender(event, true);
     return setOverlayForcedVisible(value === true);
@@ -996,6 +1028,121 @@ ipcMain.handle('set-overlay-expanded', (event, expanded) => {
 ipcMain.handle('get-client-identity', (event) => {
     requireTrustedIpcSender(event, true);
     return getClientIdentity();
+});
+ipcMain.handle('show-main-window', (event) => {
+    requireTrustedIpcSender(event, true);
+    showMainWindow();
+    return true;
+});
+ipcMain.handle('get-latest-collaboration-file', (event, gameId, expectedFileName) => {
+    requireTrustedIpcSender(event, true);
+    try {
+        const frontierPath = getFrontierPathForInstall();
+        const gameFiles = scanGamesFromPath(frontierPath);
+        return findLatestCollaborationSave(gameFiles, gameId, expectedFileName);
+    } catch (error) {
+        return {
+            success: false,
+            message: error.message || 'The latest collaboration save could not be found.',
+        };
+    }
+});
+ipcMain.handle('select-collaboration-file', async (event, gameId) => {
+    requireTrustedIpcSender(event, true);
+    const extensionsByGame = {
+        'planet-coaster-2': ['park2', 'blpr2', 'prkauto2'],
+        'planet-zoo': ['zoo', 'pzblueprint', 'zooauto'],
+    };
+    const extensions = extensionsByGame[gameId];
+    if (!extensions) {
+        return { success: false, message: 'The collaboration game is not supported.' };
+    }
+    const result = await dialog.showOpenDialog({
+        title: 'Choose the collaboration save file',
+        defaultPath: getStoredPath() || app.getPath('documents'),
+        filters: [{ name: 'Supported game files', extensions }],
+        properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, status: 'canceled' };
+    }
+    const filePath = result.filePaths[0];
+    const extension = path.extname(filePath).toLowerCase().slice(1);
+    if (!extensions.includes(extension) || !isValidGameFile(filePath)) {
+        return { success: false, message: 'The selected file does not match the collaboration game.' };
+    }
+    const stats = fs.statSync(filePath);
+    return {
+        success: true,
+        filePath,
+        fileName: path.basename(filePath),
+        fileSize: stats.size,
+        modifiedAt: stats.mtime.toISOString(),
+    };
+});
+ipcMain.handle('save-collaboration-version', async (event, payload) => {
+    requireTrustedIpcSender(event, true);
+    const downloadUrl = typeof payload?.downloadUrl === 'string' ? payload.downloadUrl : '';
+    const expectedGameId = typeof payload?.gameId === 'string' ? payload.gameId : '';
+    let tempPath = null;
+    try {
+        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        const verification = await verifyBackup(tempPath);
+        if (verification.status !== 'verified' || verification.metadata?.packageType !== 'creation') {
+            throw new Error(verification.error || 'The collaboration package could not be verified.');
+        }
+        if (expectedGameId && verification.metadata.gameId !== expectedGameId) {
+            throw new Error('The downloaded package does not match the collaboration game.');
+        }
+        const originalFileName = path.basename(verification.metadata.originalFileName || '');
+        if (!isValidGameFile(originalFileName)) {
+            throw new Error('The collaboration package contains an invalid game-file name.');
+        }
+        const rawSuggestedTargetPath =
+            typeof payload?.suggestedTargetPath === 'string'
+                ? payload.suggestedTargetPath.trim()
+                : '';
+        const suggestedTargetPath =
+            rawSuggestedTargetPath.length <= 4096 &&
+            path.isAbsolute(rawSuggestedTargetPath)
+                ? path.resolve(rawSuggestedTargetPath)
+                : '';
+        const canReuseSuggestedTarget = Boolean(
+            suggestedTargetPath &&
+            fs.existsSync(suggestedTargetPath) &&
+            isValidGameFile(suggestedTargetPath) &&
+            path.extname(suggestedTargetPath).toLowerCase() ===
+                path.extname(originalFileName).toLowerCase(),
+        );
+        const result = await dialog.showSaveDialog({
+            title: 'Save collaboration version',
+            defaultPath: canReuseSuggestedTarget
+                ? suggestedTargetPath
+                : path.join(
+                    getStoredPath() || app.getPath('documents'),
+                    originalFileName,
+                ),
+            filters: [{
+                name: 'Supported game file',
+                extensions: [path.extname(originalFileName).slice(1)],
+            }],
+        });
+        if (result.canceled || !result.filePath) {
+            return { success: false, status: 'canceled' };
+        }
+        return restoreBackup(app, tempPath, result.filePath);
+    } catch (error) {
+        log.error('Collaboration version download failed:', error);
+        return { success: false, status: 'error', message: error.message };
+    } finally {
+        if (tempPath && fs.existsSync(tempPath)) {
+            try {
+                fs.unlinkSync(tempPath);
+            } catch (error) {
+                log.warn('Could not remove collaboration download temp file:', error);
+            }
+        }
+    }
 });
 ipcMain.handle('install-queued-creation', async (event, payload) => {
     requireTrustedIpcSender(event, true);

@@ -1,38 +1,58 @@
-import React, { useState, useEffect } from 'react';
-import { fetchUserPendingInvitations, acceptInvitation, declineInvitation } from '../../firebase/collaboration';
+import React, { useEffect, useState } from 'react';
+import {
+    acceptInvitation,
+    declineInvitation,
+    fetchUserPendingInvitations,
+} from '../../firebase/collaboration';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
 
-const PendingInvitations = ({ userId, setModalMessage, onInvitationHandled }) => {
+const formatTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const diff = Math.max(0, Date.now() - date.getTime());
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+    return date.toLocaleDateString();
+};
+
+const PendingInvitations = ({
+    userId,
+    setModalMessage,
+    onInvitationHandled,
+}) => {
     const [invitations, setInvitations] = useState([]);
     const [loading, setLoading] = useState(true);
     const [processingId, setProcessingId] = useState(null);
 
     useEffect(() => {
-        if (!userId) return;
-
-        const loadInvitations = async () => {
-            try {
-                const invites = await fetchUserPendingInvitations(userId);
-                setInvitations(invites);
-            } catch (error) {
-                console.error('Error loading invitations:', error);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        loadInvitations();
+        if (!userId) return undefined;
+        let mounted = true;
+        fetchUserPendingInvitations(userId)
+            .then((items) => { if (mounted) setInvitations(items); })
+            .catch((error) => console.error('Error loading invitations:', error))
+            .finally(() => { if (mounted) setLoading(false); });
+        return () => { mounted = false; };
     }, [userId]);
 
-    const handleAccept = async (invite) => {
-        setProcessingId(invite.id);
+    const handleInvitation = async (invitation, accept) => {
+        setProcessingId(invitation.id);
         try {
-            await acceptInvitation(invite.collaborationId, invite.inviteId, userId);
-            setInvitations(prev => prev.filter(i => i.id !== invite.id));
-            setModalMessage(`You've joined "${invite.collaborationTitle}"!`);
-            if (onInvitationHandled) onInvitationHandled();
+            if (accept) {
+                await acceptInvitation(invitation.collaborationId, invitation.inviteId, userId);
+            } else {
+                await declineInvitation(invitation.collaborationId, invitation.inviteId, userId);
+            }
+            setInvitations((current) => current.filter((item) => item.id !== invitation.id));
+            setModalMessage(
+                accept
+                    ? `You've joined "${invitation.collaborationTitle}".`
+                    : 'Invitation declined.',
+            );
+            onInvitationHandled?.();
         } catch (error) {
             setModalMessage(`Error: ${error.message}`);
         } finally {
@@ -40,97 +60,61 @@ const PendingInvitations = ({ userId, setModalMessage, onInvitationHandled }) =>
         }
     };
 
-    const handleDecline = async (invite) => {
-        setProcessingId(invite.id);
-        try {
-            await declineInvitation(invite.collaborationId, invite.inviteId, userId);
-            setInvitations(prev => prev.filter(i => i.id !== invite.id));
-            setModalMessage('Invitation declined.');
-        } catch (error) {
-            setModalMessage(`Error: ${error.message}`);
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
-    const formatTime = (timestamp) => {
-        if (!timestamp) return '';
-        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-        const now = new Date();
-        const diff = now - date;
-        const minutes = Math.floor(diff / 60000);
-        const hours = Math.floor(diff / 3600000);
-        const days = Math.floor(diff / 86400000);
-
-        if (minutes < 1) return 'just now';
-        if (minutes < 60) return `${minutes}m ago`;
-        if (hours < 24) return `${hours}h ago`;
-        if (days < 7) return `${days}d ago`;
-        return date.toLocaleDateString();
-    };
-
-    if (loading) {
-        return null; // Don't show anything while loading
-    }
-
-    if (invitations.length === 0) {
-        return null; // No pending invitations
-    }
+    if (loading || invitations.length === 0) return null;
 
     return (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-            <div className="flex items-center gap-2 mb-3">
-                <Icon path={ICONS.envelope} className="w-5 h-5 text-yellow-600" />
-                <h3 className="font-medium text-yellow-800">
-                    Pending Invitations ({invitations.length})
-                </h3>
+        <section className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 shadow-sm dark:border-amber-900/70 dark:bg-amber-950/30">
+            <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4 dark:border-amber-900/70">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-200/70 dark:bg-amber-900/60">
+                    <Icon path={ICONS.envelope} className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+                </span>
+                <div>
+                    <h3 className="font-bold text-amber-950 dark:text-amber-100">Collaboration invitations</h3>
+                    <p className="text-sm text-amber-700 dark:text-amber-300">
+                        {invitations.length} {invitations.length === 1 ? 'team is' : 'teams are'} waiting for your response.
+                    </p>
+                </div>
             </div>
 
-            <div className="space-y-3">
-                {invitations.map(invite => (
-                    <div
-                        key={invite.id}
-                        className="bg-white rounded-lg p-4 border border-yellow-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                        <div className="flex-1">
-                            <p className="font-medium text-gray-800">
-                                {invite.collaborationTitle}
-                            </p>
-                            <p className="text-sm text-gray-500">
-                                Invited by <span className="font-medium">{invite.senderUsername}</span> as{' '}
-                                <span className="font-medium capitalize">{invite.role}</span>
-                                {' · '}
-                                {formatTime(invite.createdAt)}
-                            </p>
+            <div className="divide-y divide-amber-200 dark:divide-amber-900/70">
+                {invitations.map((invitation) => {
+                    const processing = processingId === invitation.id;
+                    return (
+                        <div key={invitation.id} className="flex flex-col gap-4 bg-white/70 p-5 dark:bg-gray-900/20 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                                <p className="truncate font-bold text-gray-900 dark:text-gray-100">{invitation.collaborationTitle}</p>
+                                <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                                    Invited by <span className="font-semibold">{invitation.senderUsername}</span>
+                                    {' · '}
+                                    <span className="capitalize">{invitation.role}</span>
+                                    {' · '}
+                                    {formatTime(invitation.createdAt)}
+                                </p>
+                            </div>
+                            <div className="flex flex-none gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => handleInvitation(invitation, false)}
+                                    disabled={processing}
+                                    className="flex-1 rounded-xl border border-gray-300 px-4 py-2 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 sm:flex-none"
+                                >
+                                    Decline
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleInvitation(invitation, true)}
+                                    disabled={processing}
+                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50 sm:flex-none"
+                                >
+                                    {processing ? <Spinner size="small" /> : <Icon path={ICONS.check} className="h-4 w-4" />}
+                                    Accept
+                                </button>
+                            </div>
                         </div>
-
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => handleDecline(invite)}
-                                disabled={processingId === invite.id}
-                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors disabled:opacity-50"
-                            >
-                                Decline
-                            </button>
-                            <button
-                                onClick={() => handleAccept(invite)}
-                                disabled={processingId === invite.id}
-                                className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
-                            >
-                                {processingId === invite.id ? (
-                                    <Spinner size="small" />
-                                ) : (
-                                    <>
-                                        <Icon path={ICONS.check} className="w-4 h-4" />
-                                        Accept
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
-        </div>
+        </section>
     );
 };
 

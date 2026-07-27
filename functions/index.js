@@ -1,6 +1,11 @@
 const functions = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const {
+    FieldPath,
+    FieldValue,
+    Timestamp,
+} = require("firebase-admin/firestore");
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
@@ -13,6 +18,7 @@ const {
     HeadObjectCommand,
     CopyObjectCommand,
     DeleteObjectCommand,
+    ListObjectsV2Command,
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const {
@@ -27,7 +33,37 @@ const {
     hashCommunityPassword,
     verifyCommunityPassword,
 } = require("./communityMembership");
-
+const {
+    COLLABORATION_FILE_ID,
+    buildCollaborationStoragePrefix,
+    buildCollaborationVersionStorageKey,
+    canDownloadCollaborationVersion,
+    getCollaborationRetentionLimit,
+    getNextVersionNumber,
+    getVersionNumber,
+    isCollaborationStorageObjectKey,
+    isCollaborationVersionStorageKey,
+    requireSafeId,
+    selectPrunableVersions,
+    shouldPromotePendingVersion,
+} = require("./collaborationVersioning");
+const {
+    buildCollaborationReleaseNotification,
+    calculateWorkDurationMinutes,
+    getCollaborationReleaseRecipientIds,
+    getMissingSaveWarning,
+    isChangelogOwner,
+    canAttachPendingSave,
+} = require("./collaborationChangelogState");
+const {
+    PUBLIC_COLLABORATION_VISIBILITY,
+    normalizeCollaborationVisibility,
+    buildPublicCollaborationSummary,
+    sanitizePublicMember,
+    sanitizePublicVersion,
+    sanitizePublicUpload,
+    sanitizePublicTodo,
+} = require("./collaborationPublicView");
 admin.initializeApp();
 const db = admin.firestore();
 
@@ -349,7 +385,7 @@ exports.registerDesktopClient = functions.https.onCall(async (data, context) => 
     }
 
     const userRef = db.doc(`users/${uid}`);
-    const now = admin.firestore.Timestamp.now();
+    const now = Timestamp.now();
     await db.runTransaction(async (tx) => {
         const userSnap = await tx.get(userRef);
         if (!userSnap.exists) {
@@ -427,8 +463,8 @@ exports.enqueueClientInstall = functions.https.onCall(async (data, context) => {
             type: "install_creation",
             creationId,
             creationTitle: String(creation.title || "Creation").slice(0, 200),
-            requestedAt: admin.firestore.Timestamp.fromMillis(nowMs),
-            expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + CLIENT_COMMAND_TTL_MS),
+            requestedAt: Timestamp.fromMillis(nowMs),
+            expiresAt: Timestamp.fromMillis(nowMs + CLIENT_COMMAND_TTL_MS),
             status: "pending",
             attempts: 0,
         });
@@ -436,7 +472,7 @@ exports.enqueueClientInstall = functions.https.onCall(async (data, context) => {
             uid,
             clientId,
             items,
-            updatedAt: admin.firestore.Timestamp.fromMillis(nowMs),
+            updatedAt: Timestamp.fromMillis(nowMs),
         }, {merge: true});
         return {queued: true, commandId, queueSize: items.length};
     });
@@ -470,7 +506,7 @@ exports.claimClientInstall = functions.https.onCall(async (data, context) => {
         });
 
         if (commandIndex < 0) {
-            if (changed) tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.now()}, {merge: true});
+            if (changed) tx.set(queueRef, {items, updatedAt: Timestamp.now()}, {merge: true});
             const nextAttemptAt = items.reduce((next, item) => {
                 const candidate = item.status === "processing" ? queueTimestampMillis(item.leaseUntil) :
                     queueTimestampMillis(item.retryAfter);
@@ -484,12 +520,12 @@ exports.claimClientInstall = functions.https.onCall(async (data, context) => {
             status: "processing",
             attempts: Number(items[commandIndex].attempts || 0) + 1,
             claimedBy: clientId,
-            claimedAt: admin.firestore.Timestamp.fromMillis(nowMs),
-            leaseUntil: admin.firestore.Timestamp.fromMillis(nowMs + CLIENT_COMMAND_LEASE_MS),
+            claimedAt: Timestamp.fromMillis(nowMs),
+            leaseUntil: Timestamp.fromMillis(nowMs + CLIENT_COMMAND_LEASE_MS),
             retryAfter: null,
         };
         items[commandIndex] = claimed;
-        tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+        tx.set(queueRef, {items, updatedAt: Timestamp.fromMillis(nowMs)}, {merge: true});
         return {
             command: {
                 id: claimed.id,
@@ -523,7 +559,7 @@ exports.completeClientInstall = functions.https.onCall(async (data, context) => 
         const item = items[index];
         if (success || permanent || Number(item.attempts || 0) >= 3) {
             items.splice(index, 1);
-            tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+            tx.set(queueRef, {items, updatedAt: Timestamp.fromMillis(nowMs)}, {merge: true});
             return {removed: true};
         }
 
@@ -535,10 +571,10 @@ exports.completeClientInstall = functions.https.onCall(async (data, context) => 
             claimedBy: null,
             claimedAt: null,
             leaseUntil: null,
-            retryAfter: admin.firestore.Timestamp.fromMillis(retryAt),
+            retryAfter: Timestamp.fromMillis(retryAt),
             lastError: String(data?.message || "Install failed").slice(0, 300),
         };
-        tx.set(queueRef, {items, updatedAt: admin.firestore.Timestamp.fromMillis(nowMs)}, {merge: true});
+        tx.set(queueRef, {items, updatedAt: Timestamp.fromMillis(nowMs)}, {merge: true});
         return {removed: false, retryAt};
     });
 });
@@ -587,7 +623,7 @@ exports.getUploadUrl = functions
 
         const uploadId = crypto.randomUUID();
         const objectKey = `temp-uploads/${uid}/${uploadId}.PlanetCreations`;
-        const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + (10 * 60 * 1000));
+        const expiresAt = Timestamp.fromMillis(Date.now() + (10 * 60 * 1000));
         await uploadSessionCollection.doc(uploadId).set({
             uid,
             objectKey,
@@ -599,10 +635,10 @@ exports.getUploadUrl = functions
                 ownershipConfirmed,
                 hostingAccepted,
                 confirmedBy: uid,
-                confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+                confirmedAt: FieldValue.serverTimestamp(),
                 version: 1,
             },
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
             expiresAt,
         });
 
@@ -701,7 +737,7 @@ exports.finalizeBackupUpload = functions
             transaction.update(sessionRef, {
                 status: "processing",
                 creationId,
-                processingAt: admin.firestore.FieldValue.serverTimestamp(),
+                processingAt: FieldValue.serverTimestamp(),
             });
         });
         const bucket = getR2Bucket();
@@ -745,13 +781,13 @@ exports.finalizeBackupUpload = functions
                 backupPackageId: validation.metadata.packageId,
                 backupMediaSetId: validation.metadata.mediaSetId,
                 backupProcessingError: null,
-                backupUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                backupUpdatedAt: FieldValue.serverTimestamp(),
                 backupUploadConsent: session.uploadConsent,
             });
             await sessionRef.update({
                 status: "completed",
                 destinationKey,
-                completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                completedAt: FieldValue.serverTimestamp(),
             }).catch((error) => console.warn("Upload-session completion write failed:", error.message));
             await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey }))
                 .catch((error) => console.warn("R2 temp cleanup after finalization failed:", error.message));
@@ -826,7 +862,7 @@ exports.removeCreationBackup = functions
             backupPackageId: null,
             backupMediaSetId: null,
             backupProcessingError: null,
-            backupUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            backupUpdatedAt: FieldValue.serverTimestamp(),
         });
         return { success: true };
     });
@@ -1127,7 +1163,7 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
         const creationsQuery = db.collection('creations').where('eventIds', 'array-contains', eventId);
         const creationsSnapshot = await creationsQuery.get();
         creationsSnapshot.forEach(creationDoc => {
-            batch.update(creationDoc.ref, { eventIds: admin.firestore.FieldValue.arrayRemove(eventId) });
+            batch.update(creationDoc.ref, { eventIds: FieldValue.arrayRemove(eventId) });
         });
         const votersRef = db.collection('events').doc(eventId).collection('voters');
         const votersSnapshot = await votersRef.get();
@@ -1199,7 +1235,7 @@ exports.onMemberJoin = functions.firestore
     .onCreate(async (snap, context) => {
         const communityId = context.params.communityId;
         const communityRef = db.doc(`communitys/${communityId}`);
-        return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(1) });
+        return communityRef.update({ memberCount: FieldValue.increment(1) });
     });
 
 exports.onMemberLeave = functions.firestore
@@ -1207,7 +1243,7 @@ exports.onMemberLeave = functions.firestore
     .onDelete(async (snap, context) => {
         const communityId = context.params.communityId;
         const communityRef = db.doc(`communitys/${communityId}`);
-        return communityRef.update({ memberCount: admin.firestore.FieldValue.increment(-1) });
+        return communityRef.update({ memberCount: FieldValue.increment(-1) });
     });
 
 const buildCommunityMembershipData = (communityId, communityData, profileData) => {
@@ -1219,14 +1255,14 @@ const buildCommunityMembershipData = (communityId, communityData, profileData) =
             roles,
             perms,
             username: profileData.username || 'Unknown User',
-            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            joinedAt: FieldValue.serverTimestamp(),
         },
         profileMembership: {
             communityId,
             communityName: communityData.name || 'Community',
             roles,
             perms,
-            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            joinedAt: FieldValue.serverTimestamp(),
         },
     };
 };
@@ -1313,7 +1349,7 @@ exports.removeCommunityCreation = functions.https.onCall(async (data, context) =
             ? creationData.communityAssignments
             : [];
         batch.set(creationRef, {
-            communityIds: admin.firestore.FieldValue.arrayRemove(communityId),
+            communityIds: FieldValue.arrayRemove(communityId),
             communityAssignments: assignments.filter(
                 assignment => assignment?.communityId !== communityId
             ),
@@ -1329,7 +1365,7 @@ exports.removeCommunityCreation = functions.https.onCall(async (data, context) =
             : linkSnap.data().title || '',
         reason: 'Removed from community by a community manager.',
         reporterId: context.auth.uid,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
     });
     await batch.commit();
     return { ok: true };
@@ -1545,7 +1581,7 @@ exports.setCommunityJoinPassword = functions.https.onCall(async (data, context) 
     const batch = db.batch();
     batch.set(privateRef, {
         ...passwordData,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
     });
     batch.set(communityRef, {
         hasJoinPassword: true,
@@ -1632,15 +1668,15 @@ exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWri
     // 2) Kompakten Nutzer-Suchindex (userSearchIndex/all) synchron halten. Analog
     //    zu syncCreationToSearchIndex: 1 Doc mit entries-Map (uid -> Eintrag),
     //    Client lädt es mit 1 Read und sucht lokal (Fuse.js).
-    const entryField = new admin.firestore.FieldPath('entries', userId);
+    const entryField = new FieldPath('entries', userId);
     const beforeEntry = isUserIndexable(beforeData) ? buildUserIndexEntry(beforeData) : null;
     const afterEntry = isUserIndexable(normalizedAfterData) ? buildUserIndexEntry(normalizedAfterData) : null;
 
     // Profil gelöscht oder Username entfernt -> vorhandenen Eintrag entfernen.
     if (beforeEntry && !afterEntry) {
         return db.doc('userSearchIndex/all')
-            .update(entryField, admin.firestore.FieldValue.delete(),
-                'count', admin.firestore.FieldValue.increment(-1))
+            .update(entryField, FieldValue.delete(),
+                'count', FieldValue.increment(-1))
             .catch(error => {
                 // Vor dem initialen Backfill existiert das Index-Doc evtl. noch nicht.
                 if (error.code === 5 || error.code === 'not-found') return null;
@@ -1658,8 +1694,8 @@ exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWri
     const isNewEntry = !beforeEntry;
     return db.doc('userSearchIndex/all').set({
         entries: { [userId]: afterEntry },
-        ...(isNewEntry ? { count: admin.firestore.FieldValue.increment(1) } : {}),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(isNewEntry ? { count: FieldValue.increment(1) } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
 });
 
@@ -1873,12 +1909,12 @@ exports.goLive = functions.runWith(LIVE_SECRETS).https.onCall(async (data, conte
         throw new functions.https.HttpsError("failed-precondition", "No live stream was found on this channel.");
     }
 
-    const now = admin.firestore.Timestamp.now();
+    const now = Timestamp.now();
     const liveStream = {
         platform,
         url: parsed.url,
         startedAt: now,
-        expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + LIVE_STREAM_TTL_MS),
+        expiresAt: Timestamp.fromMillis(Date.now() + LIVE_STREAM_TTL_MS),
         verifiedAt: now,
     };
 
@@ -1894,7 +1930,7 @@ exports.goLive = functions.runWith(LIVE_SECRETS).https.onCall(async (data, conte
             const previousSnap = await tx.get(previousRef);
             if (!previousSnap.exists) previousRef = null;
         }
-        if (previousRef) tx.update(previousRef, {liveStream: admin.firestore.FieldValue.delete()});
+        if (previousRef) tx.update(previousRef, {liveStream: FieldValue.delete()});
         tx.update(creationRef, {liveStream});
         tx.set(userRef, {liveCreationId: creationId}, {merge: true});
     });
@@ -1920,8 +1956,8 @@ exports.endLive = functions.https.onCall(async (data, context) => {
             const snap = await tx.get(ref);
             if (snap.exists && snap.data().userId === uid && snap.data().liveStream) clearRefs.push(ref);
         }
-        for (const ref of clearRefs) tx.update(ref, {liveStream: admin.firestore.FieldValue.delete()});
-        if (pointerId) tx.set(userRef, {liveCreationId: admin.firestore.FieldValue.delete()}, {merge: true});
+        for (const ref of clearRefs) tx.update(ref, {liveStream: FieldValue.delete()});
+        if (pointerId) tx.set(userRef, {liveCreationId: FieldValue.delete()}, {merge: true});
     });
 
     // Benachrichtigt auch Desktop-Clients, auf denen der QR remote oder manuell
@@ -1933,12 +1969,12 @@ exports.endLive = functions.https.onCall(async (data, context) => {
             const batch = db.batch();
             const clearCommand = {
                 creationIds: endedCreationIds,
-                setAt: admin.firestore.Timestamp.now(),
+                setAt: Timestamp.now(),
             };
             clientQueuesSnap.docs.forEach((clientDoc) => batch.set(clientDoc.ref, {
-                overlayQr: admin.firestore.FieldValue.delete(),
+                overlayQr: FieldValue.delete(),
                 overlayQrClear: clearCommand,
-                updatedAt: admin.firestore.Timestamp.now(),
+                updatedAt: Timestamp.now(),
             }, {merge: true}));
             await batch.commit();
         }
@@ -1969,15 +2005,15 @@ exports.setClientOverlayQr = functions.https.onCall(async (data, context) => {
         payload = {
             creationId,
             title: String(creationSnap.data().title || "").slice(0, 200),
-            setAt: admin.firestore.Timestamp.now(),
+            setAt: Timestamp.now(),
         };
     }
 
     await getClientQueueRef(uid, clientId).set({
         uid,
         clientId,
-        overlayQr: payload || admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.Timestamp.now(),
+        overlayQr: payload || FieldValue.delete(),
+        updatedAt: Timestamp.now(),
     }, {merge: true});
     return {success: true};
 });
@@ -1990,17 +2026,17 @@ exports.setClientOverlayQr = functions.https.onCall(async (data, context) => {
 exports.sweepLiveStreams = functions.runWith(LIVE_SECRETS).pubsub
     .schedule("every 15 minutes")
     .onRun(async () => {
-        const now = admin.firestore.Timestamp.now();
+        const now = Timestamp.now();
 
         const clearLive = async (docSnap) => {
             const userId = docSnap.data().userId;
             const batch = db.batch();
-            batch.update(docSnap.ref, {liveStream: admin.firestore.FieldValue.delete()});
+            batch.update(docSnap.ref, {liveStream: FieldValue.delete()});
             if (userId) {
                 const userRef = db.doc(`users/${userId}`);
                 const userSnap = await userRef.get();
                 if (userSnap.data()?.liveCreationId === docSnap.id) {
-                    batch.set(userRef, {liveCreationId: admin.firestore.FieldValue.delete()}, {merge: true});
+                    batch.set(userRef, {liveCreationId: FieldValue.delete()}, {merge: true});
                 }
             }
             await batch.commit();
@@ -2088,7 +2124,7 @@ exports.syncCreationToSearchIndex = functions.firestore
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
-        const entryField = new admin.firestore.FieldPath('entries', creationId);
+        const entryField = new FieldPath('entries', creationId);
 
         const gameBefore = before?.game;
         const gameAfter = after?.game;
@@ -2097,8 +2133,8 @@ exports.syncCreationToSearchIndex = functions.firestore
         // Aus dem alten Index entfernen bei Löschung oder Spiel-Wechsel
         if (gameBefore && indexGames.includes(gameBefore) && gameBefore !== gameAfter) {
             await db.doc(`searchIndex/${gameBefore}`)
-                .update(entryField, admin.firestore.FieldValue.delete(),
-                    'count', admin.firestore.FieldValue.increment(-1))
+                .update(entryField, FieldValue.delete(),
+                    'count', FieldValue.increment(-1))
                 .catch(() => null); // Index-Doc existiert evtl. noch nicht
         }
 
@@ -2121,8 +2157,8 @@ exports.syncCreationToSearchIndex = functions.firestore
         // set + merge: atomarer Upsert ohne Vorab-Read, legt das Doc bei Bedarf an
         return db.doc(`searchIndex/${gameAfter}`).set({
             entries: { [creationId]: buildIndexEntry(after) },
-            ...(isNewEntry ? { count: admin.firestore.FieldValue.increment(1) } : {}),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...(isNewEntry ? { count: FieldValue.increment(1) } : {}),
+            updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
     });
 
@@ -2177,7 +2213,7 @@ const rebuildCommunityIndex = async (communityId, creationsById = null) => {
     await db.doc(`communitySearchIndex/${communityId}`).set({
         entries,
         count: Object.keys(entries).length,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
     });
     return Object.keys(entries).length;
 };
@@ -2227,7 +2263,7 @@ const rebuildShowcaseIndex = async (communityId, showcaseId) => {
         videoUrl: videoUrl || null,
         entries,
         count: Object.keys(entries).length,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
     });
 };
 
@@ -2252,12 +2288,12 @@ exports.syncCommunityLinkToIndex = functions.firestore
     .onWrite(async (change, context) => {
         const { communityId, creationId } = context.params;
         const indexRef = db.doc(`communitySearchIndex/${communityId}`);
-        const entryField = new admin.firestore.FieldPath('entries', creationId);
+        const entryField = new FieldPath('entries', creationId);
 
         // Link gelöscht → Eintrag entfernen
         if (!change.after.exists) {
-            return indexRef.update(entryField, admin.firestore.FieldValue.delete(),
-                'count', admin.firestore.FieldValue.increment(-1))
+            return indexRef.update(entryField, FieldValue.delete(),
+                'count', FieldValue.increment(-1))
                 .catch(() => null);
         }
 
@@ -2275,8 +2311,8 @@ exports.syncCommunityLinkToIndex = functions.firestore
 
         return indexRef.set({
             entries: { [creationId]: buildCommunityIndexEntry(creationData, linkData, memberRoles) },
-            ...(change.before.exists ? {} : { count: admin.firestore.FieldValue.increment(1) }),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...(change.before.exists ? {} : { count: FieldValue.increment(1) }),
+            updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
     });
 
@@ -2311,7 +2347,7 @@ exports.syncCreationToCommunityIndexes = functions.firestore
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
-        const entryField = new admin.firestore.FieldPath('entries', creationId);
+        const entryField = new FieldPath('entries', creationId);
 
         const idsBefore = before?.communityIds || [];
         const idsAfter = after?.communityIds || [];
@@ -2320,8 +2356,8 @@ exports.syncCreationToCommunityIndexes = functions.firestore
         const removed = idsBefore.filter(id => !idsAfter.includes(id));
         await Promise.all(removed.map(cid =>
             db.doc(`communitySearchIndex/${cid}`)
-                .update(entryField, admin.firestore.FieldValue.delete(),
-                    'count', admin.firestore.FieldValue.increment(-1))
+                .update(entryField, FieldValue.delete(),
+                    'count', FieldValue.increment(-1))
                 .catch(() => null)
         ));
 
@@ -2349,7 +2385,7 @@ exports.syncCreationToCommunityIndexes = functions.firestore
         await Promise.all(idsAfter.map(cid =>
             db.doc(`communitySearchIndex/${cid}`).set({
                 entries: { [creationId]: creationFields(cid) },
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
             }, { merge: true })
         ));
         return null;
@@ -2375,7 +2411,7 @@ exports.syncMemberRolesToCommunityIndex = functions.firestore
         const updates = [];
         for (const [creationId, entry] of Object.entries(entries)) {
             if (entry.u === userId) {
-                updates.push(new admin.firestore.FieldPath('entries', creationId, 'rk'), rolesAfter);
+                updates.push(new FieldPath('entries', creationId, 'rk'), rolesAfter);
             }
         }
         if (updates.length === 0) return null;
@@ -2450,7 +2486,7 @@ exports.onCreationActivityScore = functions.firestore
         const decayed = decayActivityScore(after.activityScore || 0, lastAt, now);
         await change.after.ref.update({
             activityScore: Math.round((decayed + 1) * 100) / 100,
-            activityAt: admin.firestore.Timestamp.fromMillis(now),
+            activityAt: Timestamp.fromMillis(now),
         });
         return null;
     });
@@ -2536,7 +2572,7 @@ exports.onReportCreated = functions.firestore
             : (r.targetType === 'user' ? 'users' : null);
         if (!col) return null;
         await db.doc(`${col}/${r.targetId}`)
-            .update({ reportCount: admin.firestore.FieldValue.increment(1) })
+            .update({ reportCount: FieldValue.increment(1) })
             .catch(e => console.error('reportCount increment failed:', e.message));
         return null;
     });
@@ -2587,7 +2623,7 @@ exports.joinCollaborationByInviteCode = functions.https.onCall(async (data, cont
     const batch = db.batch();
     batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
     batch.update(db.doc(`collaborations/${collaborationId}`), {
-        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+        memberIds: FieldValue.arrayUnion(userId),
     });
     await batch.commit();
 
@@ -2607,7 +2643,7 @@ function generateCollaborationInviteCode() {
 // Standard-Member-Doc. Beitreten = Zustimmung, dass Beiträge in der veröffentlichten
 // Creation genannt werden dürfen (Widerruf nur einstimmig — siehe Publish-Flow).
 function buildCollaborationMemberDoc(role, username) {
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     return {
         role,
         joinedAt: now,
@@ -2618,63 +2654,490 @@ function buildCollaborationMemberDoc(role, username) {
 
 // --- Collaboration serverseitig anlegen: verhindert, dass Clients ownerId/memberIds
 //     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
-exports.createCollaboration = functions.https.onCall(async (data, context) => {
-    if (!context.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
-    }
-    const userId = context.auth.uid;
-    const title = ((data && data.title) || '').trim();
-    const description = ((data && data.description) || '').trim();
-    const game = (data && data.game) || '';
-    if (title.length < 3 || title.length > 50) {
-        throw new functions.https.HttpsError('invalid-argument', 'Title must be 3–50 characters.');
-    }
-    if (description.length > 500) {
-        throw new functions.https.HttpsError('invalid-argument', 'Description must be 500 characters or fewer.');
-    }
-    if (game !== 'planet-coaster-2' && game !== 'planet-zoo') {
-        throw new functions.https.HttpsError('invalid-argument', 'Invalid game.');
-    }
-
-    // Join-Gating: invite (Code/Direkteinladung) | password | application (Owner bestätigt).
-    const joinMode = ['invite', 'password', 'application'].includes(data && data.joinMode)
-        ? data.joinMode
-        : 'invite';
-    let passwordFields = {};
-    if (joinMode === 'password') {
-        const pw = ((data && data.password) || '').trim();
-        if (pw.length < 4) {
-            throw new functions.https.HttpsError('invalid-argument', 'Join password must be at least 4 characters.');
+exports.createCollaboration = functions
+    .runWith({
+        memory: "1GB",
+        timeoutSeconds: 300,
+        secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
+    })
+    .https.onCall(async (data, context) => {
+        const userId = requireAuthenticated(context);
+        const title = ((data && data.title) || "").trim();
+        const description = ((data && data.description) || "").trim();
+        const game = (data && data.game) || "";
+        const visibility = normalizeCollaborationVisibility(
+            data && data.visibility,
+        );
+        const uploadId = ((data && data.initialUploadId) || "").trim();
+        if (data && data.bannerImageUrl != null &&
+            typeof data.bannerImageUrl !== "string") {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Banner image must be a URL string.",
+            );
         }
-        const passwordSalt = crypto.randomBytes(16).toString('hex');
-        const passwordHash = crypto.createHash('sha256').update(passwordSalt + pw).digest('hex');
-        passwordFields = { passwordSalt, passwordHash };
-    }
+        if (data && data.galleryImageUrls != null &&
+            !Array.isArray(data.galleryImageUrls)) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "The project gallery must be an image URL list.",
+            );
+        }
+        const bannerImageUrl = normalizeCollaborationImageUrl(
+            data && data.bannerImageUrl,
+            "Banner image",
+            true,
+        );
+        const galleryImageUrls = normalizeCollaborationImageUrls(
+            data && data.galleryImageUrls,
+            "The project gallery",
+        );
+        const initialNote = ((data && data.initialNote) || "Initial save")
+            .trim()
+            .slice(0, 500) || "Initial save";
+        if (title.length < 3 || title.length > 50) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Title must be 3–50 characters.",
+            );
+        }
+        if (description.length > 500) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Description must be 500 characters or fewer.",
+            );
+        }
+        if (game !== "planet-coaster-2" && game !== "planet-zoo") {
+            throw new functions.https.HttpsError("invalid-argument", "Invalid game.");
+        }
+        if (!uploadId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "An initial save file is required.",
+            );
+        }
+        try {
+            requireSafeId(uploadId, "Upload ID");
+        } catch (error) {
+            throw new functions.https.HttpsError("invalid-argument", error.message);
+        }
 
-    const profileSnap = await db.doc(`profiles/${userId}`).get();
-    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
+        const joinMode = ["invite", "password", "application"].includes(
+            data && data.joinMode,
+        ) ? data.joinMode : "invite";
+        let passwordFields = {};
+        if (joinMode === "password") {
+            const password = ((data && data.password) || "").trim();
+            if (password.length < 4) {
+                throw new functions.https.HttpsError(
+                    "invalid-argument",
+                    "Join password must be at least 4 characters.",
+                );
+            }
+            const passwordSalt = crypto.randomBytes(16).toString("hex");
+            const passwordHash = crypto
+                .createHash("sha256")
+                .update(passwordSalt + password)
+                .digest("hex");
+            passwordFields = {passwordSalt, passwordHash};
+        }
 
-    const collaborationRef = db.collection('collaborations').doc();
-    const batch = db.batch();
-    batch.set(collaborationRef, {
-        title,
-        description,
-        game,
-        ownerId: userId,
-        memberIds: [userId],
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: 'active',
-        joinMode,
-        ...passwordFields,
-        inviteCode: generateCollaborationInviteCode(),
-        storage: { totalBytes: 0, limitBytes: 500 * 1024 * 1024, fileCount: 0 },
+        const sessionRef = uploadSessionCollection.doc(uploadId);
+        const sessionSnap = await sessionRef.get();
+        if (!sessionSnap.exists || sessionSnap.data().uid !== userId) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Initial-save upload session not found.",
+            );
+        }
+        const session = sessionSnap.data();
+        if (session.status === "completed" && session.collaborationId) {
+            return {
+                collaborationId: session.collaborationId,
+                versionId: session.versionId || null,
+                versionNumber: getVersionNumber(session) || 1,
+                alreadyCreated: true,
+            };
+        }
+        if (session.status !== "pending" ||
+            !session.expiresAt ||
+            session.expiresAt.toMillis() < Date.now()) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The initial-save upload expired or was already used.",
+            );
+        }
+        if (!session.uploadConsent ||
+            session.uploadConsent.ownershipConfirmed !== true ||
+            session.uploadConsent.hostingAccepted !== true ||
+            session.uploadConsent.confirmedBy !== userId ||
+            !isOwnedObjectKey(session.objectKey, userId, "temp-uploads")) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "The initial-save upload session is invalid.",
+            );
+        }
+
+        const profileSnap = await db.doc(`profiles/${userId}`).get();
+        const username = profileSnap.exists ?
+            (profileSnap.data().username || "Unknown") :
+            "Unknown";
+        const collaborationRef = db.collection("collaborations").doc();
+        const memberRef = collaborationRef.collection("members").doc(userId);
+        const fileRef = collaborationRef.collection("files").doc(
+            COLLABORATION_FILE_ID,
+        );
+        const versionRef = fileRef.collection("versions").doc();
+        const uploadRef = collaborationRef.collection("uploads").doc();
+        const destinationKey = buildCollaborationVersionStorageKey(
+            collaborationRef.id,
+            versionRef.id,
+        );
+        const processingToken = crypto.randomUUID();
+
+        await db.runTransaction(async (transaction) => {
+            const latestSession = await transaction.get(sessionRef);
+            if (!latestSession.exists ||
+                latestSession.data().uid !== userId ||
+                latestSession.data().status !== "pending") {
+                throw new functions.https.HttpsError(
+                    "aborted",
+                    "The initial-save upload is already being processed.",
+                );
+            }
+            transaction.update(sessionRef, {
+                status: "processing",
+                processingToken,
+                collaborationId: collaborationRef.id,
+                processingAt: FieldValue.serverTimestamp(),
+            });
+        });
+
+        let copied = false;
+        let committed = false;
+        try {
+            const bucket = getR2Bucket();
+            const head = await getS3().send(new HeadObjectCommand({
+                Bucket: bucket,
+                Key: session.objectKey,
+            }));
+            if (head.ContentLength !== session.expectedSize ||
+                head.ContentLength > MAX_BACKUP_SIZE_BYTES ||
+                head.ContentType !== uploadContentType) {
+                throw new Error(
+                    "The initial save size or content type does not match its upload session.",
+                );
+            }
+            const object = await getS3().send(new GetObjectCommand({
+                Bucket: bucket,
+                Key: session.objectKey,
+            }));
+            const fileBuffer = await r2BodyToBuffer(object.Body);
+            const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
+            const validation = validateBackupBuffer(
+                fileBuffer,
+                publicKey,
+                await getAllowedGameExtensions(),
+            );
+            if (!validation.valid) throw new Error(validation.error);
+            if (validation.metadata.signerUid !== userId) {
+                throw new Error(
+                    "The initial package signer does not match the collaboration owner.",
+                );
+            }
+            if (validation.metadata.gameId !== game) {
+                throw new Error(
+                    "The game in the initial save does not match the collaboration.",
+                );
+            }
+
+            await getS3().send(new CopyObjectCommand({
+                Bucket: bucket,
+                CopySource: encodeCopySource(bucket, session.objectKey),
+                Key: destinationKey,
+                ContentType: uploadContentType,
+                MetadataDirective: "REPLACE",
+            }));
+            copied = true;
+
+            const now = Timestamp.now();
+            const originalFileName =
+                validation.metadata.originalFileName || "save";
+            const currentVersion = {
+                versionId: versionRef.id,
+                number: 1,
+                uploadedBy: userId,
+                uploadedByUsername: username,
+                uploadedAt: now,
+                sizeBytes: head.ContentLength,
+                originalFileName,
+                note: initialNote,
+                changelogEntryId: uploadRef.id,
+                buildEndedAt: now,
+            };
+            await db.runTransaction(async (transaction) => {
+                const latestSession = await transaction.get(sessionRef);
+                if (!latestSession.exists ||
+                    latestSession.data().status !== "processing" ||
+                    latestSession.data().processingToken !== processingToken) {
+                    throw new functions.https.HttpsError(
+                        "aborted",
+                        "The initial-save upload is no longer owned by this request.",
+                    );
+                }
+                transaction.set(collaborationRef, {
+                    title,
+                    description,
+                    game,
+                    visibility,
+                    bannerImageUrl,
+                    galleryImageUrls,
+                    ownerId: userId,
+                    memberIds: [userId],
+                    createdAt: now,
+                    updatedAt: now,
+                    status: "active",
+                    joinMode,
+                    ...passwordFields,
+                    inviteCode: generateCollaborationInviteCode(),
+                    currentVersion,
+                    latestChangelog: {
+                        entryId: uploadRef.id,
+                        userId,
+                        username,
+                        createdAt: now,
+                        hasSave: true,
+                        versionId: versionRef.id,
+                        versionNumber: 1,
+                    },
+                });
+                transaction.set(
+                    memberRef,
+                    buildCollaborationMemberDoc("owner", username),
+                );
+                transaction.set(versionRef, {
+                    versionNumber: 1,
+                    uploadedBy: userId,
+                    uploadedByUsername: username,
+                    uploadedAt: now,
+                    sizeBytes: head.ContentLength,
+                    storageKey: destinationKey,
+                    originalFileName,
+                    fileKind: validation.metadata.fileKind || null,
+                    packageId: validation.metadata.packageId || null,
+                    note: initialNote,
+                    changelogEntryId: uploadRef.id,
+                    buildEndedAt: now,
+                    isCurrentVersion: true,
+                });
+                transaction.set(fileRef, {
+                    name: originalFileName,
+                    type: game,
+                    updatedAt: now,
+                    latestVersionNumber: 1,
+                    currentVersion: {
+                        ...currentVersion,
+                        storageKey: destinationKey,
+                    },
+                });
+                transaction.set(uploadRef, {
+                    kind: "version",
+                    fileId: COLLABORATION_FILE_ID,
+                    versionId: versionRef.id,
+                    fileName: originalFileName,
+                    userId,
+                    username,
+                    changelog: initialNote,
+                    imageUrls: [],
+                    completedTodos: [],
+                    versionNumber: 1,
+                    sizeBytes: head.ContentLength,
+                    workDurationMinutes: null,
+                    hasSave: true,
+                    status: "complete",
+                    createdAt: now,
+                    updatedAt: now,
+                });
+                transaction.update(sessionRef, {
+                    status: "completed",
+                    destinationKey,
+                    collaborationId: collaborationRef.id,
+                    versionId: versionRef.id,
+                    versionNumber: 1,
+                    completedAt: now,
+                });
+            });
+            committed = true;
+            await deleteR2ObjectSafely(
+                session.objectKey,
+                "R2 temp cleanup after collaboration creation failed",
+            );
+            return {
+                collaborationId: collaborationRef.id,
+                versionId: versionRef.id,
+                versionNumber: 1,
+            };
+        } catch (error) {
+            console.error("Collaboration creation failed:", error);
+            await deleteR2ObjectSafely(
+                session.objectKey,
+                "R2 temp cleanup after failed collaboration creation failed",
+            );
+            if (copied && !committed) {
+                await deleteR2ObjectSafely(
+                    destinationKey,
+                    "R2 initial-version cleanup failed",
+                );
+            }
+            await sessionRef.set({
+                status: "rejected",
+                error: error.message,
+                failedAt: FieldValue.serverTimestamp(),
+            }, {merge: true}).catch(() => null);
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                error.message,
+            );
+        }
     });
-    batch.set(collaborationRef.collection('members').doc(userId), buildCollaborationMemberDoc('owner', username));
-    await batch.commit();
 
-    return { collaborationId: collaborationRef.id };
-});
+async function listCollaborationR2ObjectKeys(collaborationId) {
+    const prefix = buildCollaborationStoragePrefix(collaborationId);
+    const keys = [];
+    let continuationToken;
+    do {
+        const result = await getS3().send(new ListObjectsV2Command({
+            Bucket: getR2Bucket(),
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+        }));
+        for (const object of result.Contents || []) {
+            if (!isCollaborationStorageObjectKey(
+                object.Key,
+                collaborationId,
+            )) {
+                throw new Error(
+                    `Unsafe object found below collaboration prefix: ${object.Key}`,
+                );
+            }
+            keys.push(object.Key);
+        }
+        continuationToken = result.IsTruncated ?
+            result.NextContinuationToken :
+            undefined;
+        if (result.IsTruncated && !continuationToken) {
+            throw new Error("R2 did not return a continuation token.");
+        }
+    } while (continuationToken);
+    return keys;
+}
+
+async function deleteR2Objects(objectKeys) {
+    const uniqueKeys = [...new Set(objectKeys)];
+    for (let index = 0; index < uniqueKeys.length; index += 20) {
+        const chunk = uniqueKeys.slice(index, index + 20);
+        await Promise.all(chunk.map((objectKey) =>
+            getS3().send(new DeleteObjectCommand({
+                Bucket: getR2Bucket(),
+                Key: objectKey,
+            })),
+        ));
+    }
+    return uniqueKeys.length;
+}
+
+async function deleteDocumentRefs(documentRefs) {
+    for (let index = 0; index < documentRefs.length; index += 400) {
+        const batch = db.batch();
+        documentRefs.slice(index, index + 400)
+            .forEach((documentRef) => batch.delete(documentRef));
+        await batch.commit();
+    }
+}
+
+// R2 is cleared and verified before Firestore metadata disappears, so a retry
+// can never lose the exact object keys required for storage cleanup.
+exports.deleteCollaboration = functions
+    .runWith({
+        memory: "1GB",
+        timeoutSeconds: 300,
+        secrets: [r2AccessKeyId, r2SecretAccessKey],
+    })
+    .https.onCall(async (data, context) => {
+        const userId = requireAuthenticated(context);
+        const collaborationId =
+            ((data && data.collaborationId) || "").trim();
+        try {
+            requireSafeId(collaborationId, "Collaboration ID");
+        } catch (error) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                error.message,
+            );
+        }
+
+        const collaborationRef = db.doc(
+            `collaborations/${collaborationId}`,
+        );
+        const collaborationSnap = await collaborationRef.get();
+        if (!collaborationSnap.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const siteRole = context.auth.token &&
+            context.auth.token.role;
+        const canDelete =
+            collaborationSnap.data().ownerId === userId ||
+            siteRole === "moderator" ||
+            siteRole === "admin";
+        if (!canDelete) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can delete this collaboration.",
+            );
+        }
+
+        const uploadSessions = await uploadSessionCollection
+            .where("collaborationId", "==", collaborationId)
+            .get();
+        const objectKeys = await listCollaborationR2ObjectKeys(
+            collaborationId,
+        );
+        for (const sessionDocument of uploadSessions.docs) {
+            const session = sessionDocument.data();
+            if (isOwnedObjectKey(
+                session.objectKey,
+                session.uid,
+                "temp-uploads",
+            )) {
+                objectKeys.push(session.objectKey);
+            }
+        }
+
+        const deletedR2ObjectCount = await deleteR2Objects(objectKeys);
+        const remainingKeys = await listCollaborationR2ObjectKeys(
+            collaborationId,
+        );
+        if (remainingKeys.length > 0) {
+            throw new functions.https.HttpsError(
+                "internal",
+                "Collaboration files could not be fully removed from R2.",
+            );
+        }
+
+        await db.recursiveDelete(collaborationRef);
+        await deleteDocumentRefs(
+            uploadSessions.docs.map((document) => document.ref),
+        );
+
+        return {
+            success: true,
+            deletedR2ObjectCount,
+            deletedUploadSessionCount: uploadSessions.size,
+        };
+    });
 
 // --- Einladung annehmen (serverseitig, damit Member-Docs nicht clientseitig mit
 //     beliebiger Rolle geschrieben werden können). ---
@@ -2714,18 +3177,18 @@ exports.acceptCollaborationInvitation = functions.https.onCall(async (data, cont
     const batch = db.batch();
     batch.set(memberRef, buildCollaborationMemberDoc(role, username));
     batch.update(db.doc(`collaborations/${collaborationId}`), {
-        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+        memberIds: FieldValue.arrayUnion(userId),
     });
     batch.update(inviteRef, {
         status: 'accepted',
-        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        respondedAt: FieldValue.serverTimestamp(),
     });
     const userInvites = await db.collection(`users/${userId}/collaborationInvites`)
         .where('inviteId', '==', inviteId)
         .get();
     userInvites.forEach((docSnap) => batch.update(docSnap.ref, {
         status: 'accepted',
-        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        respondedAt: FieldValue.serverTimestamp(),
     }));
     await batch.commit();
 
@@ -2767,9 +3230,90 @@ exports.getCollaborationJoinInfo = functions.https.onCall(async (data, context) 
     return {
         collaborationId: collabDoc.id,
         title: collab.title || '',
+        description: collab.description || '',
+        game: collab.game || null,
+        memberCount: Array.isArray(collab.memberIds) ? collab.memberIds.length : 0,
         joinMode: collab.joinMode || 'invite',
         alreadyMember: memberSnap.exists,
         applicationStatus,
+    };
+});
+
+// Public discovery is served through allowlisted callable responses. The private
+// collaboration document remains member-only because it contains the invite code,
+// password hash and internal build/version pointers.
+exports.listPublicCollaborations = functions.https.onCall(async (data, context) => {
+    requireAuthenticated(context);
+    const snapshot = await db.collection('collaborations')
+        .where('visibility', '==', PUBLIC_COLLABORATION_VISIBILITY)
+        .limit(60)
+        .get();
+    const collaborations = snapshot.docs
+        .map((collaborationDoc) => buildPublicCollaborationSummary(
+            collaborationDoc.id,
+            collaborationDoc.data(),
+        ))
+        .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+    return {collaborations};
+});
+
+exports.getPublicCollaborationView = functions.https.onCall(async (data, context) => {
+    requireAuthenticated(context);
+    const collaborationId = ((data && data.collaborationId) || '').trim();
+    if (!collaborationId) {
+        throw new functions.https.HttpsError(
+            'invalid-argument',
+            'Missing collaboration id.',
+        );
+    }
+    try {
+        requireSafeId(collaborationId, 'Collaboration ID');
+    } catch (error) {
+        throw new functions.https.HttpsError('invalid-argument', error.message);
+    }
+
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const collaborationSnap = await collaborationRef.get();
+    if (!collaborationSnap.exists ||
+        collaborationSnap.data().visibility !== PUBLIC_COLLABORATION_VISIBILITY) {
+        throw new functions.https.HttpsError(
+            'not-found',
+            'Public collaboration not found.',
+        );
+    }
+
+    const [memberSnapshot, versionSnapshot, uploadSnapshot, todoSnapshot] =
+        await Promise.all([
+            collaborationRef.collection('members').limit(100).get(),
+            collaborationRef.collection('files')
+                .doc(COLLABORATION_FILE_ID)
+                .collection('versions')
+                .orderBy('versionNumber', 'desc')
+                .limit(100)
+                .get(),
+            collaborationRef.collection('uploads')
+                .orderBy('createdAt', 'desc')
+                .limit(100)
+                .get(),
+            collaborationRef.collection('todos')
+                .orderBy('createdAt', 'asc')
+                .limit(100)
+                .get(),
+        ]);
+
+    return {
+        collaboration: buildPublicCollaborationSummary(
+            collaborationSnap.id,
+            collaborationSnap.data(),
+        ),
+        members: memberSnapshot.docs.map((memberDoc) =>
+            sanitizePublicMember(memberDoc.id, memberDoc.data())),
+        versions: versionSnapshot.docs.map((versionDoc) =>
+            sanitizePublicVersion(versionDoc.id, versionDoc.data())),
+        uploads: uploadSnapshot.docs.map((uploadDoc) =>
+            sanitizePublicUpload(uploadDoc.id, uploadDoc.data())),
+        todos: todoSnapshot.docs.map((todoDoc) =>
+            sanitizePublicTodo(todoDoc.id, todoDoc.data())),
     };
 });
 
@@ -2801,7 +3345,7 @@ exports.joinCollaborationByPassword = functions.https.onCall(async (data, contex
     const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
     const batch = db.batch();
     batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
-    batch.update(collabDoc.ref, { memberIds: admin.firestore.FieldValue.arrayUnion(userId) });
+    batch.update(collabDoc.ref, { memberIds: FieldValue.arrayUnion(userId) });
     await batch.commit();
     return { collaborationId: collabDoc.id };
 });
@@ -2837,7 +3381,7 @@ exports.applyToCollaboration = functions.https.onCall(async (data, context) => {
         username,
         message,
         status: 'pending',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
     });
     return { collaborationId: collabDoc.id, status: 'pending' };
 });
@@ -2869,7 +3413,7 @@ exports.respondToCollaborationApplication = functions.https.onCall(async (data, 
     }
 
     if (!approve) {
-        await appRef.update({ status: 'declined', respondedAt: admin.firestore.FieldValue.serverTimestamp() });
+        await appRef.update({ status: 'declined', respondedAt: FieldValue.serverTimestamp() });
         return { ok: true, approved: false };
     }
 
@@ -2877,9 +3421,9 @@ exports.respondToCollaborationApplication = functions.https.onCall(async (data, 
     const batch = db.batch();
     if (!(await memberRef.get()).exists) {
         batch.set(memberRef, buildCollaborationMemberDoc('editor', appSnap.data().username || 'Unknown'));
-        batch.update(collabRef, { memberIds: admin.firestore.FieldValue.arrayUnion(applicantId) });
+        batch.update(collabRef, { memberIds: FieldValue.arrayUnion(applicantId) });
     }
-    batch.update(appRef, { status: 'accepted', respondedAt: admin.firestore.FieldValue.serverTimestamp() });
+    batch.update(appRef, { status: 'accepted', respondedAt: FieldValue.serverTimestamp() });
     await batch.commit();
     return { ok: true, approved: true };
 });
@@ -2904,7 +3448,7 @@ exports.updateCollaborationSettings = functions.https.onCall(async (data, contex
         throw new functions.https.HttpsError('permission-denied', 'Only the owner can edit settings.');
     }
 
-    const update = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    const update = { updatedAt: FieldValue.serverTimestamp() };
     if (typeof (data && data.title) === 'string') {
         const title = data.title.trim();
         if (title.length < 3 || title.length > 50) {
@@ -2917,6 +3461,34 @@ exports.updateCollaborationSettings = functions.https.onCall(async (data, contex
             throw new functions.https.HttpsError('invalid-argument', 'Description must be 500 characters or fewer.');
         }
         update.description = data.description.trim();
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'visibility')) {
+        if (!['public', 'unlisted'].includes(data.visibility)) {
+            throw new functions.https.HttpsError(
+                'invalid-argument',
+                'Visibility must be public or unlisted.',
+            );
+        }
+        update.visibility = normalizeCollaborationVisibility(data.visibility);
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'bannerImageUrl')) {
+        update.bannerImageUrl = normalizeCollaborationImageUrl(
+            data.bannerImageUrl,
+            'Banner image',
+            true,
+        );
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'galleryImageUrls')) {
+        if (!Array.isArray(data.galleryImageUrls)) {
+            throw new functions.https.HttpsError(
+                'invalid-argument',
+                'The project gallery must be an image URL list.',
+            );
+        }
+        update.galleryImageUrls = normalizeCollaborationImageUrls(
+            data.galleryImageUrls,
+            'The project gallery',
+        );
     }
     if (data && ['invite', 'password', 'application'].includes(data.joinMode)) {
         update.joinMode = data.joinMode;
@@ -2933,8 +3505,8 @@ exports.updateCollaborationSettings = functions.https.onCall(async (data, contex
                 throw new functions.https.HttpsError('invalid-argument', 'A join password is required for password mode.');
             }
         } else {
-            update.passwordHash = admin.firestore.FieldValue.delete();
-            update.passwordSalt = admin.firestore.FieldValue.delete();
+            update.passwordHash = FieldValue.delete();
+            update.passwordSalt = FieldValue.delete();
         }
     }
     await ref.update(update);
@@ -2953,43 +3525,154 @@ exports.startBuildSession = functions.https.onCall(async (data, context) => {
     if (!collaborationId) {
         throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration id.');
     }
+    try {
+        requireSafeId(collaborationId, 'Collaboration ID');
+    } catch (error) {
+        throw new functions.https.HttpsError('invalid-argument', error.message);
+    }
     let estimateMin = Number(data && data.estimateMin);
+    const acknowledgeMissingSave = Boolean(
+        data && data.acknowledgeMissingSave,
+    );
     if (!Number.isFinite(estimateMin) || estimateMin <= 0) estimateMin = 60;
     estimateMin = Math.min(Math.max(Math.round(estimateMin), 5), 480); // 5 min – 8 h
 
     const ref = db.doc(`collaborations/${collaborationId}`);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
-    }
-    const memberSnap = await db.doc(`collaborations/${collaborationId}/members/${userId}`).get();
-    if (!memberSnap.exists) {
-        throw new functions.https.HttpsError('permission-denied', 'You are not a member of this collaboration.');
-    }
-    if (memberSnap.data().role === 'viewer') {
-        throw new functions.https.HttpsError('permission-denied', 'Viewers cannot build.');
-    }
+    const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
+    const expiredUploadRef = ref.collection("uploads").doc();
+    return db.runTransaction(async (transaction) => {
+        const [snap, memberSnap] = await Promise.all([
+            transaction.get(ref),
+            transaction.get(memberRef),
+        ]);
+        if (!snap.exists) {
+            throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
+        }
+        if (snap.data().status !== 'active') {
+            throw new functions.https.HttpsError('failed-precondition', 'Only active collaborations can be built.');
+        }
+        if (!memberSnap.exists) {
+            throw new functions.https.HttpsError('permission-denied', 'You are not a member of this collaboration.');
+        }
+        if (memberSnap.data().role === 'viewer') {
+            throw new functions.https.HttpsError('permission-denied', 'Viewers cannot build.');
+        }
 
-    const nowMs = Date.now();
-    const lock = snap.data().buildLock;
-    if (lock && lock.activeBuilderId && lock.activeBuilderId !== userId &&
-        lock.expiresAt && lock.expiresAt.toMillis() > nowMs) {
-        throw new functions.https.HttpsError('failed-precondition', `${lock.username || 'Someone'} is currently building.`);
-    }
+        const nowMs = Date.now();
+        const lock = snap.data().buildLock;
+        const lockExpiresAtMs = lock && lock.expiresAt &&
+            typeof lock.expiresAt.toMillis === "function" ?
+            lock.expiresAt.toMillis() :
+            0;
+        if (lock && lock.activeBuilderId && lock.activeBuilderId !== userId &&
+            lockExpiresAtMs > nowMs) {
+            throw new functions.https.HttpsError(
+                'failed-precondition',
+                `${lock.username || 'Someone'} is currently building.`,
+            );
+        }
 
-    const graceMs = 30 * 60 * 1000; // Fallback-Puffer über die Schätzung hinaus
-    const username = memberSnap.data().username || 'Unknown';
-    await ref.update({
-        buildLock: {
-            activeBuilderId: userId,
-            username,
-            startedAt: admin.firestore.Timestamp.fromMillis(nowMs),
-            estimateMin,
-            expiresAt: admin.firestore.Timestamp.fromMillis(nowMs + estimateMin * 60000 + graceMs),
-        },
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        let latestChangelog = snap.data().latestChangelog;
+        if (lock && lock.activeBuilderId && lockExpiresAtMs <= nowMs) {
+            const expiredAtMs = lockExpiresAtMs > 0 ?
+                Math.min(lockExpiresAtMs, nowMs) :
+                nowMs;
+            const endedAt =
+                Timestamp.fromMillis(expiredAtMs);
+            const startedAtMs = lock.startedAt &&
+                typeof lock.startedAt.toMillis === "function" ?
+                lock.startedAt.toMillis() :
+                null;
+            const username = lock.username || "Unknown contributor";
+            const workDurationMinutes = calculateWorkDurationMinutes(
+                startedAtMs,
+                expiredAtMs,
+            );
+            latestChangelog = {
+                entryId: expiredUploadRef.id,
+                userId: lock.activeBuilderId,
+                username,
+                createdAt: endedAt,
+                hasSave: false,
+                versionId: null,
+                versionNumber: null,
+                buildSessionId: lock.sessionId || null,
+            };
+            transaction.set(expiredUploadRef, {
+                kind: "changelog",
+                userId: lock.activeBuilderId,
+                username,
+                changelog: "",
+                imageUrls: [],
+                completedTodos: [],
+                versionId: null,
+                versionNumber: null,
+                fileName: null,
+                sizeBytes: null,
+                hasSave: false,
+                status: "pending-save",
+                buildSessionId: lock.sessionId || null,
+                buildStartedAt: lock.startedAt || null,
+                workDurationMinutes,
+                endedBy: null,
+                endReason: "expired",
+                createdAt: endedAt,
+                updatedAt: endedAt,
+            });
+            if (!acknowledgeMissingSave) {
+                transaction.update(ref, {
+                    buildLock: FieldValue.delete(),
+                    latestChangelog,
+                    updatedAt: endedAt,
+                });
+                return {
+                    ok: false,
+                    requiresMissingSaveConfirmation: true,
+                    missingSave: getMissingSaveWarning(
+                        latestChangelog,
+                        false,
+                    ),
+                };
+            }
+        }
+
+        const missingSave = getMissingSaveWarning(
+            latestChangelog,
+            acknowledgeMissingSave,
+        );
+        if (missingSave) {
+            return {
+                ok: false,
+                requiresMissingSaveConfirmation: true,
+                missingSave,
+            };
+        }
+
+        const graceMs = 30 * 60 * 1000; // Fallback-Puffer über die Schätzung hinaus
+        const expiresAtMs = nowMs + estimateMin * 60000 + graceMs;
+        const buildSessionId = crypto.randomUUID();
+        const collaborationUpdate = {
+            buildLock: {
+                sessionId: buildSessionId,
+                activeBuilderId: userId,
+                username: memberSnap.data().username || 'Unknown',
+                startedAt: Timestamp.fromMillis(nowMs),
+                estimateMin,
+                expiresAt: Timestamp.fromMillis(expiresAtMs),
+            },
+            updatedAt: FieldValue.serverTimestamp(),
+        };
+        if (latestChangelog !== snap.data().latestChangelog) {
+            collaborationUpdate.latestChangelog = latestChangelog;
+        }
+        transaction.update(ref, collaborationUpdate);
+        return {
+            ok: true,
+            buildSessionId,
+            expiresAt: expiresAtMs,
+            editingOlderVersion: Boolean(acknowledgeMissingSave),
+        };
     });
-    return { ok: true, expiresAt: nowMs + estimateMin * 60000 + graceMs };
 });
 
 // --- Build-Session beenden (Log-off / Spiel-Schließen / manueller Button).
@@ -3001,29 +3684,850 @@ exports.endBuildSession = functions.https.onCall(async (data, context) => {
     const userId = context.auth.uid;
     const collaborationId = ((data && data.collaborationId) || '').trim();
     const force = Boolean(data && data.force);
+    const requestedEndedAtMillis = Number(data && data.endedAtMillis);
+    const buildDraft = data && data.buildDraft &&
+        typeof data.buildDraft === "object" ?
+        data.buildDraft :
+        {};
+    const changelogDraft = typeof buildDraft.changelog === "string" ?
+        buildDraft.changelog.trim() :
+        "";
+    if (changelogDraft.length > 1000) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "A changelog can contain up to 1000 characters.",
+        );
+    }
+    const completedTodos = normalizeCollaborationCompletedTodos(
+        buildDraft.completedTodos,
+    );
+    const requestedBuildSessionId =
+        typeof (data && data.buildSessionId) === "string" ?
+            data.buildSessionId.trim() :
+            "";
     if (!collaborationId) {
         throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration id.');
     }
+    try {
+        requireSafeId(collaborationId, 'Collaboration ID');
+        if (requestedBuildSessionId) {
+            requireSafeId(requestedBuildSessionId, 'Build session ID');
+        }
+    } catch (error) {
+        throw new functions.https.HttpsError('invalid-argument', error.message);
+    }
     const ref = db.doc(`collaborations/${collaborationId}`);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
-    }
-    const lock = snap.data().buildLock;
-    if (!lock || !lock.activeBuilderId) {
-        return { ok: true }; // bereits frei
-    }
-    const isActiveBuilder = lock.activeBuilderId === userId;
-    const isOwner = snap.data().ownerId === userId;
-    if (!isActiveBuilder && !(force && isOwner)) {
-        throw new functions.https.HttpsError('permission-denied', 'Only the active builder or the owner can end this session.');
-    }
-    await ref.update({
-        buildLock: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const uploadRef = ref.collection("uploads").doc();
+    const result = await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(ref);
+        if (!snap.exists) {
+            throw new functions.https.HttpsError(
+                'not-found',
+                'Collaboration not found.',
+            );
+        }
+        const lock = snap.data().buildLock;
+        if (!lock || !lock.activeBuilderId) {
+            const latest = snap.data().latestChangelog;
+            if (latest && latest.entryId && latest.hasSave === false &&
+                latest.userId === userId &&
+                (!requestedBuildSessionId ||
+                    !latest.buildSessionId ||
+                    latest.buildSessionId === requestedBuildSessionId)) {
+                const pendingRef = ref
+                    .collection("uploads")
+                    .doc(latest.entryId);
+                const pendingSnap = await transaction.get(pendingRef);
+                let effectiveChangelog = changelogDraft;
+                let effectiveTodos = completedTodos;
+                if (pendingSnap.exists &&
+                    canAttachPendingSave(pendingSnap.data(), userId)) {
+                    const pendingData = pendingSnap.data();
+                    effectiveChangelog =
+                        pendingData.changelog || changelogDraft;
+                    const todoMap = new Map();
+                    [
+                        ...(pendingData.completedTodos || []),
+                        ...completedTodos,
+                    ].forEach((todo) => {
+                        if (todo && todo.id && todo.text) {
+                            todoMap.set(todo.id, todo);
+                        }
+                    });
+                    effectiveTodos = [...todoMap.values()].slice(0, 50);
+                    transaction.update(pendingRef, {
+                        changelog: effectiveChangelog,
+                        completedTodos: effectiveTodos,
+                        updatedAt: Timestamp.now(),
+                    });
+                }
+                return {
+                    ok: true,
+                    alreadyEnded: true,
+                    changelogEntryId: latest.entryId || null,
+                    changelogUserId: latest.userId,
+                    username: latest.username || "Unknown contributor",
+                    createdAtMillis: latest.createdAt &&
+                        typeof latest.createdAt.toMillis === "function" ?
+                        latest.createdAt.toMillis() :
+                        null,
+                    changelog: effectiveChangelog,
+                    completedTodos: effectiveTodos,
+                };
+            }
+            return {ok: true, alreadyEnded: true};
+        }
+
+        const isActiveBuilder = lock.activeBuilderId === userId;
+        const isOwner = snap.data().ownerId === userId;
+        if (!isActiveBuilder && !(force && isOwner)) {
+            throw new functions.https.HttpsError(
+                'permission-denied',
+                'Only the active builder or the owner can end this session.',
+            );
+        }
+        const builderChangelogDraft = isActiveBuilder ?
+            changelogDraft :
+            "";
+        const builderCompletedTodos = isActiveBuilder ?
+            completedTodos :
+            [];
+
+        const builderId = lock.activeBuilderId;
+        const username = lock.username || "Unknown contributor";
+        const startedAtMs = lock.startedAt &&
+            typeof lock.startedAt.toMillis === "function" ?
+                lock.startedAt.toMillis() :
+                null;
+        const serverNowMs = Date.now();
+        const canUseRequestedEnd = isActiveBuilder &&
+            Number.isFinite(requestedEndedAtMillis) &&
+            requestedEndedAtMillis > 0 &&
+            requestedEndedAtMillis <= serverNowMs &&
+            (!Number.isFinite(startedAtMs) ||
+                requestedEndedAtMillis >= startedAtMs);
+        const endedAtMs = canUseRequestedEnd ?
+            Math.round(requestedEndedAtMillis) :
+            serverNowMs;
+        const endedAt =
+            Timestamp.fromMillis(endedAtMs);
+        const workDurationMinutes = calculateWorkDurationMinutes(
+            startedAtMs,
+            endedAtMs,
+        );
+        const pendingEntry = {
+            kind: "changelog",
+            userId: builderId,
+            username,
+            changelog: builderChangelogDraft,
+            imageUrls: [],
+            completedTodos: builderCompletedTodos,
+            versionId: null,
+            versionNumber: null,
+            fileName: null,
+            sizeBytes: null,
+            hasSave: false,
+            status: "pending-save",
+            buildSessionId: lock.sessionId || null,
+            buildStartedAt: lock.startedAt || null,
+            workDurationMinutes,
+            endedBy: userId,
+            createdAt: endedAt,
+            updatedAt: endedAt,
+        };
+        transaction.set(uploadRef, pendingEntry);
+        transaction.update(ref, {
+            buildLock: FieldValue.delete(),
+            latestChangelog: {
+                entryId: uploadRef.id,
+                userId: builderId,
+                username,
+                createdAt: endedAt,
+                hasSave: false,
+                versionId: null,
+                versionNumber: null,
+                buildSessionId: lock.sessionId || null,
+            },
+            updatedAt: endedAt,
+        });
+        return {
+            ok: true,
+            changelogEntryId: uploadRef.id,
+            changelogUserId: builderId,
+            username,
+            createdAtMillis: endedAt.toMillis(),
+            changelog: builderChangelogDraft,
+            completedTodos: builderCompletedTodos,
+            releaseNotification: {
+                builderId,
+                collaborationTitle:
+                    snap.data().title || "Collaboration",
+                username,
+            },
+        };
     });
-    return { ok: true };
+    const {
+        releaseNotification,
+        ...clientResult
+    } = result;
+    if (releaseNotification) {
+        try {
+            const memberSnapshot = await ref.collection("members").get();
+            const recipientIds = getCollaborationReleaseRecipientIds(
+                memberSnapshot.docs.map((member) => member.id),
+                releaseNotification.builderId,
+            );
+            const notification = buildCollaborationReleaseNotification({
+                collaborationId,
+                collaborationTitle:
+                    releaseNotification.collaborationTitle,
+                username: releaseNotification.username,
+            });
+            const deliveries = await Promise.allSettled(
+                recipientIds.map((recipientId) => notifyUser(
+                    recipientId,
+                    "collaborationAvailable",
+                    notification,
+                )),
+            );
+            deliveries.forEach((delivery, index) => {
+                if (delivery.status === "rejected") {
+                    console.error(
+                        `Collaboration release notification failed for ${recipientIds[index]}:`,
+                        delivery.reason,
+                    );
+                }
+            });
+        } catch (error) {
+            console.error(
+                `Collaboration release notification fan-out failed for ${collaborationId}:`,
+                error,
+            );
+        }
+    }
+    return clientResult;
 });
+
+async function pruneCollaborationVersions(
+    collaborationId,
+    versionsRef,
+    uploadedBy,
+    keep,
+    currentVersionId,
+) {
+    const mine = await versionsRef.where("uploadedBy", "==", uploadedBy).get();
+    const versions = mine.docs.map((document) => ({
+        id: document.id,
+        ref: document.ref,
+        storageKey: document.data().storageKey,
+        versionNumber: getVersionNumber(document.data()),
+    }));
+    const prunable = selectPrunableVersions(versions, keep, currentVersionId);
+    if (prunable.length === 0) return;
+
+    // Delete the exact-bound object first. If R2 has a transient failure the
+    // metadata remains eligible for the next upload's prune pass, giving us a
+    // retry path without a scheduler and without orphaning paid storage.
+    const safelyDeleted = [];
+    for (const version of prunable) {
+        if (!isCollaborationVersionStorageKey(
+            version.storageKey,
+            collaborationId,
+            version.id,
+        )) {
+            console.warn(`Skipped unsafe collaboration version key: ${version.id}`);
+            continue;
+        }
+        await getS3().send(new DeleteObjectCommand({
+            Bucket: getR2Bucket(),
+            Key: version.storageKey,
+        }));
+        safelyDeleted.push(version);
+    }
+
+    if (safelyDeleted.length === 0) return;
+    const batch = db.batch();
+    safelyDeleted.forEach((version) => batch.delete(version.ref));
+    await batch.commit();
+}
+
+async function deleteR2ObjectSafely(objectKey, label) {
+    if (!objectKey) return;
+    try {
+        await getS3().send(new DeleteObjectCommand({
+            Bucket: getR2Bucket(),
+            Key: objectKey,
+        }));
+    } catch (error) {
+        console.warn(`${label}:`, error.message);
+    }
+}
+
+// --- Neue Collaboration-Version finalisieren. Nutzt die gleiche signierte
+//     .PlanetCreations-Pipeline wie Creation-Backups (getUploadUrl + Signatur),
+//     schreibt Metadaten aber ausschließlich serverseitig. Eine Transaktion
+//     serialisiert parallele Uploads und vergibt eindeutige Versionsnummern. ---
+exports.finalizeCollaborationVersion = functions
+    .runWith({ memory: "1GB", timeoutSeconds: 300, secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey] })
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const uploadId = data && data.uploadId;
+        const collaborationId = ((data && data.collaborationId) || "").trim();
+        const changelogEntryId =
+            ((data && data.changelogEntryId) || "").trim();
+        const note = ((data && data.note) || "").trim().slice(0, 1000);
+        const imageUrls = normalizeCollaborationImageUrls(
+            data && data.imageUrls,
+        );
+        const completedTodos = normalizeCollaborationCompletedTodos(
+            data && data.completedTodos,
+        );
+        if (typeof uploadId !== "string" || !collaborationId ||
+            !changelogEntryId) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Upload, collaboration and changelog IDs are required.",
+            );
+        }
+        try {
+            requireSafeId(uploadId, "Upload ID");
+            requireSafeId(collaborationId, "Collaboration ID");
+            requireSafeId(changelogEntryId, "Changelog ID");
+        } catch (error) {
+            throw new functions.https.HttpsError("invalid-argument", error.message);
+        }
+
+        const collabRef = db.doc(`collaborations/${collaborationId}`);
+        const sessionRef = uploadSessionCollection.doc(uploadId);
+        const uploadRef = collabRef
+            .collection("uploads")
+            .doc(changelogEntryId);
+        const [sessionSnap, collabSnap, memberSnap, uploadSnap] =
+            await Promise.all([
+            sessionRef.get(),
+            collabRef.get(),
+            db.doc(`collaborations/${collaborationId}/members/${uid}`).get(),
+            uploadRef.get(),
+        ]);
+        if (!sessionSnap.exists || sessionSnap.data().uid !== uid) {
+            throw new functions.https.HttpsError("not-found", "Upload session not found.");
+        }
+        if (!collabSnap.exists) {
+            throw new functions.https.HttpsError("not-found", "Collaboration not found.");
+        }
+        if (collabSnap.data().status !== "active") {
+            throw new functions.https.HttpsError("failed-precondition", "Only active collaborations accept versions.");
+        }
+        if (!memberSnap.exists) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "You are no longer a member of this collaboration.",
+            );
+        }
+        const session = sessionSnap.data();
+        if (!session.uploadConsent || session.uploadConsent.ownershipConfirmed !== true ||
+            session.uploadConsent.hostingAccepted !== true || session.uploadConsent.confirmedBy !== uid) {
+            throw new functions.https.HttpsError("failed-precondition", "The required upload consent is missing or invalid.");
+        }
+        if (session.status === "completed" && session.collaborationId === collaborationId) {
+            return {
+                success: true,
+                alreadyFinalized: true,
+                versionId: session.versionId || null,
+                versionNumber: session.versionNumber || null,
+            };
+        }
+        if (!uploadSnap.exists ||
+            !canAttachPendingSave(uploadSnap.data(), uid)) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the author can attach a save to this pending changelog.",
+            );
+        }
+        if (session.status !== "pending" || !session.expiresAt || session.expiresAt.toMillis() < Date.now()) {
+            throw new functions.https.HttpsError("failed-precondition", "The upload session expired or was already used.");
+        }
+        if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
+            throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
+        }
+        const processingToken = crypto.randomUUID();
+        await db.runTransaction(async (transaction) => {
+            const latest = await transaction.get(sessionRef);
+            if (!latest.exists || latest.data().uid !== uid || latest.data().status !== "pending") {
+                throw new functions.https.HttpsError("aborted", "The upload session is already being processed.");
+            }
+            transaction.update(sessionRef, {
+                status: "processing",
+                collaborationId,
+                changelogEntryId,
+                processingToken,
+                processingAt: FieldValue.serverTimestamp(),
+            });
+        });
+
+        const fileId = COLLABORATION_FILE_ID;
+        const fileRef = db.doc(`collaborations/${collaborationId}/files/${fileId}`);
+        const versionsRef = fileRef.collection("versions");
+        const versionRef = versionsRef.doc();
+        const destinationKey = buildCollaborationVersionStorageKey(
+            collaborationId,
+            versionRef.id,
+        );
+        let committed = false;
+        try {
+            const bucket = getR2Bucket();
+            const head = await getS3().send(new HeadObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            if (head.ContentLength !== session.expectedSize || head.ContentLength > MAX_BACKUP_SIZE_BYTES ||
+                head.ContentType !== uploadContentType) {
+                throw new Error("The uploaded object size or content type does not match the upload session.");
+            }
+            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            const fileBuffer = await r2BodyToBuffer(object.Body);
+            const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
+            const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
+            if (!validation.valid) throw new Error(validation.error);
+            if (validation.metadata.signerUid !== uid) {
+                throw new Error("The package signer does not match the upload owner.");
+            }
+            if (validation.metadata.gameId !== collabSnap.data().game) {
+                throw new Error("The game in the package does not match the collaboration.");
+            }
+
+            await getS3().send(new CopyObjectCommand({
+                Bucket: bucket,
+                CopySource: encodeCopySource(bucket, session.objectKey),
+                Key: destinationKey,
+                ContentType: uploadContentType,
+                MetadataDirective: "REPLACE",
+            }));
+
+            const username = uploadSnap.data().username ||
+                memberSnap.data().username ||
+                "Unknown contributor";
+            const uploadedAt = Timestamp.now();
+            const commitResult = await db.runTransaction(async (transaction) => {
+                const [
+                    latestSession,
+                    latestCollab,
+                    latestMember,
+                    latestUpload,
+                    fileSnap,
+                ] = await Promise.all([
+                    transaction.get(sessionRef),
+                    transaction.get(collabRef),
+                    transaction.get(db.doc(`collaborations/${collaborationId}/members/${uid}`)),
+                    transaction.get(uploadRef),
+                    transaction.get(fileRef),
+                ]);
+                if (!latestSession.exists ||
+                    latestSession.data().status !== "processing" ||
+                    latestSession.data().processingToken !== processingToken) {
+                    throw new functions.https.HttpsError(
+                        "aborted",
+                        "The upload session is no longer owned by this request.",
+                    );
+                }
+                if (!latestCollab.exists || !latestMember.exists) {
+                    throw new functions.https.HttpsError(
+                        "permission-denied",
+                        "You are no longer a member of this collaboration.",
+                    );
+                }
+                if (latestCollab.data().status !== "active") {
+                    throw new functions.https.HttpsError(
+                        "failed-precondition",
+                        "Only active collaborations accept versions.",
+                    );
+                }
+                if (!latestUpload.exists ||
+                    !canAttachPendingSave(latestUpload.data(), uid)) {
+                    throw new functions.https.HttpsError(
+                        "permission-denied",
+                        "Only the author can attach a save to this pending changelog.",
+                    );
+                }
+
+                const pendingChangelog = latestUpload.data();
+                const fileData = fileSnap.exists ? fileSnap.data() : null;
+                const nextVersionNumber = getNextVersionNumber(fileData);
+                const previousCurrentVersion = fileData &&
+                    fileData.currentVersion;
+                const previousVersionId = previousCurrentVersion &&
+                    previousCurrentVersion.versionId;
+                const pendingBuildEndedAt =
+                    pendingChangelog.createdAt || uploadedAt;
+                const pendingBuildEndedAtMs =
+                    pendingBuildEndedAt &&
+                    typeof pendingBuildEndedAt.toMillis === "function" ?
+                        pendingBuildEndedAt.toMillis() :
+                        null;
+                const currentBuildEndedAt = previousCurrentVersion &&
+                    (previousCurrentVersion.buildEndedAt ||
+                        previousCurrentVersion.uploadedAt);
+                const currentBuildEndedAtMs =
+                    currentBuildEndedAt &&
+                    typeof currentBuildEndedAt.toMillis === "function" ?
+                        currentBuildEndedAt.toMillis() :
+                        null;
+                const promoteToCurrent = shouldPromotePendingVersion(
+                    pendingBuildEndedAtMs,
+                    currentBuildEndedAtMs,
+                );
+                const finalizedCompletedTodos = completedTodos.length > 0 ?
+                    completedTodos :
+                    (pendingChangelog.completedTodos || []);
+                const originalFileName = validation.metadata.originalFileName || "save";
+                const versionData = {
+                    versionNumber: nextVersionNumber,
+                    uploadedBy: uid,
+                    uploadedByUsername: username,
+                    uploadedAt,
+                    sizeBytes: head.ContentLength,
+                    storageKey: destinationKey,
+                    originalFileName,
+                    fileKind: validation.metadata.fileKind || null,
+                    packageId: validation.metadata.packageId || null,
+                    note,
+                    imageUrls,
+                    completedTodos: finalizedCompletedTodos,
+                    changelogEntryId: uploadRef.id,
+                    buildEndedAt: pendingBuildEndedAt,
+                    isCurrentVersion: promoteToCurrent,
+                };
+                const currentVersion = {
+                    versionId: versionRef.id,
+                    number: nextVersionNumber,
+                    uploadedBy: uid,
+                    uploadedByUsername: username,
+                    uploadedAt,
+                    sizeBytes: head.ContentLength,
+                    originalFileName,
+                    note,
+                    changelogEntryId: uploadRef.id,
+                    buildEndedAt: pendingBuildEndedAt,
+                };
+                const workDurationMinutes =
+                    pendingChangelog.workDurationMinutes || null;
+
+                transaction.set(versionRef, versionData);
+                if (promoteToCurrent && previousVersionId) {
+                    transaction.update(
+                        versionsRef.doc(previousVersionId),
+                        { isCurrentVersion: false },
+                    );
+                }
+                const fileUpdate = {
+                    name: originalFileName,
+                    type: latestCollab.data().game,
+                    updatedAt: uploadedAt,
+                    latestVersionNumber: nextVersionNumber,
+                };
+                if (promoteToCurrent) {
+                    fileUpdate.currentVersion = {
+                        ...currentVersion,
+                        storageKey: destinationKey,
+                    };
+                }
+                transaction.set(fileRef, fileUpdate, { merge: true });
+                transaction.set(uploadRef, {
+                    kind: "version",
+                    fileId,
+                    versionId: versionRef.id,
+                    fileName: originalFileName,
+                    userId: uid,
+                    username,
+                    changelog: note,
+                    imageUrls,
+                    completedTodos: finalizedCompletedTodos,
+                    versionNumber: nextVersionNumber,
+                    sizeBytes: head.ContentLength,
+                    workDurationMinutes,
+                    hasSave: true,
+                    status: "complete",
+                    updatedAt: uploadedAt,
+                }, {merge: true});
+                const collaborationUpdate = {
+                    updatedAt: uploadedAt,
+                };
+                if (promoteToCurrent) {
+                    collaborationUpdate.currentVersion = currentVersion;
+                }
+                const latestChangelog =
+                    latestCollab.data().latestChangelog;
+                if (latestChangelog &&
+                    latestChangelog.entryId === uploadRef.id) {
+                    collaborationUpdate.latestChangelog = {
+                        ...latestChangelog,
+                        hasSave: true,
+                        versionId: versionRef.id,
+                        versionNumber: nextVersionNumber,
+                    };
+                }
+                transaction.update(collabRef, collaborationUpdate);
+                transaction.update(sessionRef, {
+                    status: "completed",
+                    destinationKey,
+                    collaborationId,
+                    changelogEntryId,
+                    versionId: versionRef.id,
+                    versionNumber: nextVersionNumber,
+                    completedAt: uploadedAt,
+                });
+                return {
+                    versionNumber: nextVersionNumber,
+                    memberCount: (latestCollab.data().memberIds || []).length,
+                    currentVersionId: promoteToCurrent ?
+                        versionRef.id :
+                        previousVersionId,
+                    promotedToCurrent: promoteToCurrent,
+                };
+            });
+            committed = true;
+
+            await deleteR2ObjectSafely(
+                session.objectKey,
+                "R2 temp cleanup after finalization failed",
+            );
+
+            const keep = getCollaborationRetentionLimit(
+                commitResult.memberCount,
+            );
+            await pruneCollaborationVersions(
+                collaborationId,
+                versionsRef,
+                uid,
+                keep,
+                commitResult.currentVersionId,
+            ).catch((error) =>
+                console.warn("Collaboration version retention failed:", error.message));
+
+            return {
+                success: true,
+                versionId: versionRef.id,
+                versionNumber: commitResult.versionNumber,
+                promotedToCurrent: commitResult.promotedToCurrent,
+            };
+        } catch (error) {
+            console.error(`Collaboration version finalization failed for ${uploadId}:`, error);
+            await deleteR2ObjectSafely(
+                session.objectKey,
+                "R2 temp cleanup after failed finalization failed",
+            );
+            if (!committed) {
+                await deleteR2ObjectSafely(
+                    destinationKey,
+                    "R2 destination cleanup after failed finalization failed",
+                );
+                await db.runTransaction(async (transaction) => {
+                    const latest = await transaction.get(sessionRef);
+                    if (latest.exists &&
+                        latest.data().status === "processing" &&
+                        latest.data().processingToken === processingToken) {
+                        transaction.set(sessionRef, {
+                            status: "rejected",
+                            error: error.message,
+                            rejectedAt: FieldValue.serverTimestamp(),
+                        }, { merge: true });
+                    }
+                }).catch(() => null);
+            }
+            if (error instanceof functions.https.HttpsError) throw error;
+            throw new functions.https.HttpsError("failed-precondition", error.message);
+        }
+    });
+
+function normalizeCollaborationImageUrl(value, fieldLabel = "Image", allowEmpty = false) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (allowEmpty && !trimmed) return null;
+    if (!trimmed || trimmed.length > 2048) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            `${fieldLabel} must be a valid image URL.`,
+        );
+    }
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new Error("Unsupported protocol.");
+        }
+        return parsed.href;
+    } catch (error) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            `${fieldLabel} must be a valid http(s) URL.`,
+        );
+    }
+}
+
+function normalizeCollaborationImageUrls(
+    values,
+    collectionLabel = "A changelog entry",
+) {
+    if (!Array.isArray(values)) return [];
+    if (values.length > 10) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            `${collectionLabel} can contain up to 10 images.`,
+        );
+    }
+    return [...new Set(values.map((value) => (
+        normalizeCollaborationImageUrl(value, "Every image")
+    )))];
+}
+
+function normalizeCollaborationCompletedTodos(values) {
+    if (!Array.isArray(values)) return [];
+    if (values.length > 50) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "A changelog can contain up to 50 completed todos.",
+        );
+    }
+    const normalized = values.map((todo) => {
+        const id = typeof (todo && todo.id) === "string" ?
+            todo.id.trim() :
+            "";
+        const text = typeof (todo && todo.text) === "string" ?
+            todo.text.trim() :
+            "";
+        try {
+            requireSafeId(id, "Todo ID");
+        } catch (error) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                error.message,
+            );
+        }
+        if (!text || text.length > 300) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Completed todo text must contain 1 to 300 characters.",
+            );
+        }
+        return {id, text};
+    });
+    return normalized.filter((todo, index, todos) =>
+        todos.findIndex((item) => item.id === todo.id) === index);
+}
+
+// --- Changelog-Text/Bilder/erledigte Todos dürfen ausschließlich vom
+//     ursprünglichen Builder bearbeitet werden. Der Versions-/Save-Link bleibt
+//     serververwaltet. ---
+exports.updateCollaborationChangelogEntry = functions.https.onCall(
+    async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const collaborationId =
+            ((data && data.collaborationId) || "").trim();
+        const changelogEntryId =
+            ((data && data.changelogEntryId) || "").trim();
+        const text = typeof (data && data.text) === "string" ?
+            data.text.trim() :
+            "";
+        if (!collaborationId || !changelogEntryId ||
+            text.length > 1000) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Collaboration/changelog IDs and up to 1000 characters are required.",
+            );
+        }
+        try {
+            requireSafeId(collaborationId, "Collaboration ID");
+            requireSafeId(changelogEntryId, "Changelog ID");
+        } catch (error) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                error.message,
+            );
+        }
+        const imageUrls = normalizeCollaborationImageUrls(
+            data && data.imageUrls,
+        );
+        const completedTodos = Array.isArray(data && data.completedTodos) ?
+            normalizeCollaborationCompletedTodos(data.completedTodos) :
+            null;
+        const collabRef = db.doc(`collaborations/${collaborationId}`);
+        const memberRef = collabRef.collection("members").doc(uid);
+        const uploadRef = collabRef
+            .collection("uploads")
+            .doc(changelogEntryId);
+        const updatedAt = Timestamp.now();
+        await db.runTransaction(async (transaction) => {
+            const [collabSnap, memberSnap, uploadSnap] =
+                await Promise.all([
+                    transaction.get(collabRef),
+                    transaction.get(memberRef),
+                    transaction.get(uploadRef),
+                ]);
+            if (!collabSnap.exists || !memberSnap.exists) {
+                throw new functions.https.HttpsError(
+                    "permission-denied",
+                    "You are no longer a member of this collaboration.",
+                );
+            }
+            if (!uploadSnap.exists ||
+                !isChangelogOwner(uploadSnap.data(), uid)) {
+                throw new functions.https.HttpsError(
+                    "permission-denied",
+                    "Only the original builder can edit this changelog.",
+                );
+            }
+            const changelogUpdate = {
+                changelog: text,
+                imageUrls,
+                updatedAt,
+            };
+            if (completedTodos) {
+                changelogUpdate.completedTodos = completedTodos;
+            }
+            transaction.update(uploadRef, changelogUpdate);
+            transaction.update(collabRef, {updatedAt});
+        });
+        return {ok: true, changelogEntryId};
+    },
+);
+
+// --- Signierte Download-URL für eine Collaboration-Version (nur Mitglieder). ---
+exports.getCollaborationVersionDownloadUrl = functions
+    .runWith({ secrets: [r2AccessKeyId, r2SecretAccessKey] })
+    .https.onCall(async (data, context) => {
+        const uid = requireAuthenticated(context);
+        const collaborationId = ((data && data.collaborationId) || "").trim();
+        const versionId = ((data && data.versionId) || "").trim();
+        if (!collaborationId || !versionId) {
+            throw new functions.https.HttpsError("invalid-argument", "Collaboration and version IDs are required.");
+        }
+        try {
+            requireSafeId(collaborationId, "Collaboration ID");
+            requireSafeId(versionId, "Version ID");
+        } catch (error) {
+            throw new functions.https.HttpsError("invalid-argument", error.message);
+        }
+        const memberSnap = await db.doc(`collaborations/${collaborationId}/members/${uid}`).get();
+        if (!canDownloadCollaborationVersion({
+            memberExists: memberSnap.exists,
+        })) {
+            throw new functions.https.HttpsError("permission-denied", "You are not a member of this collaboration.");
+        }
+        const versionSnap = await db.doc(`collaborations/${collaborationId}/files/save/versions/${versionId}`).get();
+        if (!versionSnap.exists ||
+            !isCollaborationVersionStorageKey(
+                versionSnap.data().storageKey,
+                collaborationId,
+                versionId,
+            )) {
+            throw new functions.https.HttpsError("not-found", "Version not found.");
+        }
+        const url = await getSignedUrl(
+            getS3(),
+            new GetObjectCommand({ Bucket: getR2Bucket(), Key: versionSnap.data().storageKey }),
+            { expiresIn: 60 * 5 },
+        );
+        return {
+            downloadUrl: url,
+            originalFileName: versionSnap.data().originalFileName || null,
+            versionNumber: getVersionNumber(versionSnap.data()) || 1,
+        };
+    });
 
 // --- Benachrichtigung: Creation ins Showcase aufgenommen bzw. Bewerbung angenommen ---
 exports.notifyOnShowcaseStatus = functions.firestore
@@ -3285,7 +4789,7 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
             batch.set(db.doc(`searchIndex/${game}`), {
                 entries,
                 count: Object.keys(entries).length,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
             });
         }
         // Verwaiste Index-Docs entfernter Spiele abräumen
@@ -3351,7 +4855,7 @@ app.get("/rebuildUserSearchIndex", authenticate, async (req, res) => {
         await db.doc('userSearchIndex/all').set({
             entries,
             count: Object.keys(entries).length,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
         });
 
         console.log(`User search index rebuilt: ${Object.keys(entries).length} entries`);

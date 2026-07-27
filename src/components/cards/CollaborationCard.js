@@ -1,114 +1,146 @@
 import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
-import { getGameColor } from '../../utils/helpers';
+import { getGameColor, ICONS } from '../../utils/helpers';
 import { getGame } from '../../utils/gamesRegistry';
 import Icon from '../ui/Icon';
-import { ICONS } from '../../utils/helpers';
 
 const STATUS_STYLES = {
-    active: { bg: 'bg-green-100', text: 'text-green-700', label: 'Active' },
-    completed: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Completed' },
-    archived: { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Archived' }
+    active: {
+        className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+        label: 'Active',
+    },
+    completed: {
+        className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+        label: 'Completed',
+    },
+    published: {
+        className: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+        label: 'Published',
+    },
+    archived: {
+        className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+        label: 'Archived',
+    },
 };
 
 const ROLE_STYLES = {
-    owner: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Owner' },
-    editor: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Editor' },
-    viewer: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Viewer' }
+    owner: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+    editor: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+    viewer: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+    visitor: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
+};
+
+const ROLE_LABELS = {
+    owner: 'owner',
+    editor: 'editor',
+    viewer: 'viewer',
+    visitor: 'public view',
+};
+
+const hexToRgba = (hex, alpha) => {
+    const match = String(hex || '').match(/[a-f\d]{2}/gi);
+    if (!match || match.length < 3) return `rgba(107, 114, 128, ${alpha})`;
+    const [r, g, b] = match.map((part) => parseInt(part, 16));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const toMillis = (timestamp) => {
+    if (typeof timestamp?.toMillis === 'function') return timestamp.toMillis();
+    const value = timestamp ? new Date(timestamp).getTime() : 0;
+    return Number.isFinite(value) ? value : 0;
+};
+
+const formatRelativeDate = (timestamp) => {
+    const milliseconds = toMillis(timestamp);
+    if (!milliseconds) return 'No updates yet';
+    const diff = Math.max(0, Date.now() - milliseconds);
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+    return new Date(milliseconds).toLocaleDateString();
 };
 
 const CollaborationCard = memo(({ collaboration, memberCount = 0 }) => {
     const gameColor = getGameColor(collaboration.game);
-    const statusStyle = STATUS_STYLES[collaboration.status] || STATUS_STYLES.active;
-    const roleStyle = ROLE_STYLES[collaboration.userRole] || ROLE_STYLES.editor;
-
-    const storagePercent = collaboration.storage
-        ? Math.round((collaboration.storage.totalBytes / collaboration.storage.limitBytes) * 100)
-        : 0;
-
-    const formatBytes = (bytes) => {
-        if (!bytes) return '0 MB';
-        const mb = bytes / (1024 * 1024);
-        return mb < 1 ? `${(mb * 1024).toFixed(0)} KB` : `${mb.toFixed(0)} MB`;
-    };
-
-    const formatDate = (timestamp) => {
-        if (!timestamp) return '';
-        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-        const now = new Date();
-        const diff = now - date;
-
-        if (diff < 60000) return 'Just now';
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-        if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-
-        return date.toLocaleDateString();
-    };
+    const game = getGame(collaboration.game);
+    const status = STATUS_STYLES[collaboration.status] || STATUS_STYLES.active;
+    const role = collaboration.userRole || 'editor';
+    const lock = collaboration.buildLock;
+    const lockActive = Boolean(
+        lock?.activeBuilderId &&
+        toMillis(lock.expiresAt) > Date.now(),
+    );
+    const currentVersion = collaboration.currentVersion;
 
     return (
-        <Link to={`/collaboration/${collaboration.id}`}>
+        <Link
+            to={`/collaboration/${collaboration.id}`}
+            className="block h-full rounded-xl focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500"
+        >
             <article
-                style={gameColor.style}
-                className={`bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col h-full border-l-4 ${gameColor.border}`}
+                style={{
+                    ...gameColor.style,
+                    '--tw-ring-color': gameColor.hex,
+                    backgroundImage: `linear-gradient(145deg, ${hexToRgba(gameColor.hex, 0.16)}, rgba(255,255,255,0) 48%)`,
+                }}
+                className="group flex h-full min-h-[280px] cursor-pointer flex-col overflow-hidden rounded-xl bg-white shadow-lg ring-4 transition duration-300 hover:-translate-y-1 hover:shadow-xl dark:bg-gray-800"
             >
-                <div className="p-4 flex flex-col flex-grow">
-                    {/* Header */}
-                    <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1 min-w-0">
-                            <h3 className="text-lg font-bold text-gray-800 truncate" title={collaboration.title}>
+                <div className="h-1.5 w-full" style={{ backgroundColor: gameColor.hex }} />
+                <div className="flex flex-1 flex-col p-5">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <h3 className="truncate text-xl font-bold text-gray-900 dark:text-gray-100" title={collaboration.title}>
                                 {collaboration.title}
                             </h3>
-                            <p className="text-sm text-gray-500 line-clamp-2 mt-1">
-                                {collaboration.description || 'No description'}
+                            <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-gray-600 dark:text-gray-300">
+                                {collaboration.description || 'A shared creation in progress.'}
                             </p>
                         </div>
-                        <span className={`ml-2 px-2 py-1 text-xs font-bold rounded-full ${gameColor.bg} text-white flex-shrink-0`}>
-                            {getGame(collaboration.game)?.shortName || collaboration.game}
+                        <span
+                            className="flex-none rounded-full px-2.5 py-1 text-xs font-bold text-white"
+                            style={{ backgroundColor: gameColor.hex }}
+                        >
+                            {game?.shortName || collaboration.game}
                         </span>
                     </div>
 
-                    {/* Status & Role Badges */}
-                    <div className="flex items-center gap-2 mb-3">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusStyle.bg} ${statusStyle.text}`}>
-                            {statusStyle.label}
+                    <div className="mb-4 flex flex-wrap gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${status.className}`}>
+                            {status.label}
                         </span>
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${roleStyle.bg} ${roleStyle.text}`}>
-                            {roleStyle.label}
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${ROLE_STYLES[role] || ROLE_STYLES.editor}`}>
+                            {ROLE_LABELS[role] || role}
                         </span>
                     </div>
 
-                    {/* Storage Bar */}
-                    <div className="mb-3">
-                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                            <span>Storage</span>
-                            <span>{formatBytes(collaboration.storage?.totalBytes)} / {formatBytes(collaboration.storage?.limitBytes)}</span>
+                    <div className="rounded-xl border border-gray-200/80 bg-white/70 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="flex items-center gap-2">
+                            <span className={`h-2.5 w-2.5 flex-none rounded-full ${lockActive ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                            <p className="min-w-0 truncate text-sm font-semibold text-gray-800 dark:text-gray-100">
+                                {lockActive
+                                    ? `${lock.username || 'Someone'} is building`
+                                    : 'Free to build'}
+                            </p>
                         </div>
-                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all duration-300 ${
-                                    storagePercent > 90 ? 'bg-red-500' :
-                                    storagePercent > 70 ? 'bg-yellow-500' : 'bg-green-500'
-                                }`}
-                                style={{ width: `${Math.min(storagePercent, 100)}%` }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="flex items-center justify-between mt-auto pt-3 border-t border-gray-100">
-                        <div className="flex items-center gap-3 text-sm text-gray-500">
-                            <span className="flex items-center gap-1">
-                                <Icon path={ICONS.users} className="w-4 h-4" />
-                                {memberCount}
+                        <div className="mt-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span>
+                                {currentVersion?.number
+                                    ? `Current version v${currentVersion.number}`
+                                    : 'No version uploaded yet'}
                             </span>
-                            <span className="flex items-center gap-1">
-                                <Icon path={ICONS.database} className="w-4 h-4" />
-                                {collaboration.storage?.fileCount || 0}
-                            </span>
+                            <span>{formatRelativeDate(collaboration.updatedAt)}</span>
                         </div>
-                        <span className="text-xs text-gray-400">
-                            {formatDate(collaboration.updatedAt)}
+                    </div>
+
+                    <div className="mt-auto flex items-center justify-between border-t border-gray-200/80 pt-4 text-sm dark:border-gray-700">
+                        <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300">
+                            <Icon path={ICONS.users} className="h-4 w-4" />
+                            {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                        </span>
+                        <span className="flex items-center gap-1 font-semibold" style={{ color: gameColor.hex }}>
+                            {role === 'visitor' ? 'View project' : 'Open project'}
+                            <Icon path={ICONS.chevronRight} className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                         </span>
                     </div>
                 </div>

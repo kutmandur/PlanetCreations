@@ -166,7 +166,8 @@ html.game-overlay-window #root { background: transparent !important; }
   touch-action: none;
 }
 .game-overlay-chrome:active { cursor: grabbing; }
-.game-overlay-chrome button {
+.game-overlay-chrome .game-overlay-collapse,
+.game-overlay-chrome .overlay-refresh-button {
   width: 30px;
   height: 30px;
   border-radius: 9999px;
@@ -176,7 +177,22 @@ html.game-overlay-window #root { background: transparent !important; }
   color: #d1d5db;
   cursor: pointer;
 }
-.game-overlay-chrome button:hover { color: white; background: rgba(255,255,255,.12); }
+.game-overlay-chrome .game-overlay-collapse:hover,
+.game-overlay-chrome .overlay-refresh-button:hover { color: white; background: rgba(255,255,255,.12); }
+.game-overlay-chrome .overlay-action-button {
+  width: auto;
+  height: 28px;
+  flex: none;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+.game-overlay-chrome .overlay-action-button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
 /* Smooth the switch between themes for common surfaces. */
 body, body * {
   transition-property: background-color, border-color;

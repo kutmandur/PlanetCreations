@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const {FieldValue, Timestamp} = require("firebase-admin/firestore");
 
 // Shared notification fan-out: append to a user's single capped inbox doc
 // (users/{uid}/meta/inbox) and send a web-push (FCM) to their stored tokens,
@@ -54,7 +55,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
     });
     if (invalid.length) {
         await admin.firestore().doc(`users/${uid}/meta/inbox`)
-            .update({ pushTokens: admin.firestore.FieldValue.arrayRemove(...invalid) })
+            .update({ pushTokens: FieldValue.arrayRemove(...invalid) })
             .catch(() => {});
     }
 }
@@ -85,7 +86,7 @@ async function notifyUser(uid, type, { title, message, link }) {
                 title: title || "",
                 message: message || "",
                 link: link || "/",
-                timestamp: admin.firestore.Timestamp.now(),
+                timestamp: Timestamp.now(),
                 isRead: false,
             };
             // Prepend newest, drop the oldest beyond the cap (FIFO ring buffer).
