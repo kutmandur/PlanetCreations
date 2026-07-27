@@ -1,7 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
 // ✅ 1. Import the correctly named function: enableIndexedDbPersistence
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import {
+    connectFirestoreEmulator,
+    getFirestore,
+    enableIndexedDbPersistence
+} from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
 const firebaseConfig = {
@@ -14,7 +19,14 @@ const firebaseConfig = {
     measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID
 };
 
-export const isConfigured = firebaseConfig.apiKey !== "DEIN_API_KEY";
+export const isConfigured = Boolean(
+    firebaseConfig.apiKey &&
+    firebaseConfig.apiKey !== "DEIN_API_KEY"
+);
+
+const useFirebaseEmulators =
+    process.env.NODE_ENV !== 'production' &&
+    process.env.REACT_APP_USE_FIREBASE_EMULATORS === 'true';
 
 let app, auth, db;
 
@@ -22,17 +34,39 @@ if (isConfigured) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
-    
-    // ✅ 2. Call the function with its correct name
-    enableIndexedDbPersistence(db).catch((err) => {
-        if (err.code === 'failed-precondition') {
-            // Multiple tabs open, persistence can only be enabled in one.
-            console.warn("Firestore persistence failed: Multiple tabs open.");
-        } else if (err.code === 'unimplemented') {
-            // The browser does not support persistence.
-            console.error("Firestore persistence is not available in this browser.");
-        }
-    });
+
+    if (useFirebaseEmulators) {
+        const emulatorHost =
+            process.env.REACT_APP_FIREBASE_EMULATOR_HOST || '127.0.0.1';
+        connectAuthEmulator(
+            auth,
+            `http://${emulatorHost}:${
+                process.env.REACT_APP_FIREBASE_AUTH_EMULATOR_PORT || '9099'
+            }`,
+            { disableWarnings: true }
+        );
+        connectFirestoreEmulator(
+            db,
+            emulatorHost,
+            Number(process.env.REACT_APP_FIRESTORE_EMULATOR_PORT || 8080)
+        );
+        connectFunctionsEmulator(
+            getFunctions(app),
+            emulatorHost,
+            Number(process.env.REACT_APP_FUNCTIONS_EMULATOR_PORT || 5001)
+        );
+    } else {
+        // ✅ 2. Call the function with its correct name
+        enableIndexedDbPersistence(db).catch((err) => {
+            if (err.code === 'failed-precondition') {
+                // Multiple tabs open, persistence can only be enabled in one.
+                console.warn("Firestore persistence failed: Multiple tabs open.");
+            } else if (err.code === 'unimplemented') {
+                // The browser does not support persistence.
+                console.error("Firestore persistence is not available in this browser.");
+            }
+        });
+    }
 }
 
 // --- Web Push (Firebase Cloud Messaging) ---

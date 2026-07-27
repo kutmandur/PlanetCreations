@@ -3,8 +3,9 @@ import Icon from './Icon';
 import { ICONS } from '../../utils/helpers';
 import { readOverlayQr, subscribeOverlayQr } from '../../utils/overlayQr';
 import { composeSharingQrCanvas } from './SharingQrCode';
+import CollaborationOverlayControls from '../collaboration/CollaborationOverlayControls';
 
-export const GameOverlayWidget = ({ unreadCount = 0 }) => {
+export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null }) => {
     const [dragging, setDragging] = useState(false);
     const [overlayQr, setOverlayQrState] = useState(() => readOverlayQr());
     const [qrDataUrl, setQrDataUrl] = useState(null);
@@ -83,7 +84,7 @@ export const GameOverlayWidget = ({ unreadCount = 0 }) => {
                 onClick={handleClick}
                 title={qrDataUrl && overlayQr
                     ? `QR code for "${overlayQr.title || 'your creation'}" — scan to open it. Drag to move. Hold and scroll to resize (bigger scans easier). Click to open PlanetCreations.`
-                    : 'Drag to move. Hold and scroll to resize. Click to open PlanetCreations.'}
+                    : `${activeGameId ? 'Game detected. ' : ''}Drag to move. Hold and scroll to resize. Click to open PlanetCreations.`}
                 aria-label="Open PlanetCreations overlay"
             >
                 {qrDataUrl && overlayQr ? (
@@ -99,7 +100,13 @@ export const GameOverlayWidget = ({ unreadCount = 0 }) => {
     );
 };
 
-export const GameOverlayChrome = () => {
+export const GameOverlayChrome = ({
+    user,
+    activeGameId,
+    currentPath,
+    onOpenCollaboration,
+    setModalMessage,
+}) => {
     const [dragging, setDragging] = useState(false);
 
     useEffect(() => {
@@ -119,7 +126,7 @@ export const GameOverlayChrome = () => {
         <div
             className="game-overlay-chrome"
             onPointerDown={(event) => {
-                if (event.button !== 0 || event.target.closest('button')) return;
+                if (event.button !== 0 || event.target.closest('[data-overlay-interactive], button')) return;
                 setDragging(true);
                 window.electronAPI?.startOverlayDrag?.({ screenX: event.screenX, screenY: event.screenY });
             }}
@@ -135,7 +142,14 @@ export const GameOverlayChrome = () => {
                 <img src="logo.png" alt="" className="w-6 h-6 rounded-full" draggable="false" />
                 In-game Overlay
             </span>
-            <button type="button" onClick={() => window.electronAPI?.setOverlayExpanded?.(false)} title="Collapse overlay" aria-label="Collapse overlay">
+            <CollaborationOverlayControls
+                user={user}
+                activeGameId={activeGameId}
+                currentPath={currentPath}
+                onOpenCollaboration={onOpenCollaboration}
+                setModalMessage={setModalMessage}
+            />
+            <button className="game-overlay-collapse" type="button" onClick={() => window.electronAPI?.setOverlayExpanded?.(false)} title="Collapse overlay" aria-label="Collapse overlay">
                 <Icon path={ICONS.chevronDown} className="w-5 h-5" />
             </button>
         </div>

@@ -1,119 +1,129 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
-const InviteMemberModal = ({ inviteCode, onClose, setModalMessage }) => {
+const InviteMemberModal = ({
+    inviteCode,
+    accentColor = '#6B7280',
+    onClose,
+    setModalMessage,
+}) => {
+    const [copied, setCopied] = useState(null);
     const inviteLink = `planetcreations://collab/join/${inviteCode}`;
 
-    const handleCopyCode = () => {
-        navigator.clipboard.writeText(inviteCode);
-        setModalMessage('Invite code copied!');
-    };
-
-    const handleCopyLink = () => {
-        navigator.clipboard.writeText(inviteLink);
-        setModalMessage('Invite link copied!');
+    const copyValue = async (value, type) => {
+        try {
+            await navigator.clipboard.writeText(value);
+            setCopied(type);
+            setModalMessage(type === 'code' ? 'Invite code copied.' : 'Desktop invite link copied.');
+            window.setTimeout(() => setCopied(null), 1800);
+        } catch (error) {
+            setModalMessage('Could not copy automatically. Select the value and copy it manually.');
+        }
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={onClose}
+            role="presentation"
+        >
             <div
-                className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
-                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-800"
+                onClick={(event) => event.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="invite-members-title"
             >
-                {/* Header */}
-                <div className="bg-purple-500 p-6 text-white">
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-xl font-bold flex items-center gap-2">
-                            <Icon path={ICONS.share} className="w-6 h-6" />
-                            Invite Members
-                        </h2>
+                <div className="h-2" style={{ backgroundColor: accentColor }} />
+                <div className="p-6 sm:p-7">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: accentColor }}>
+                                Add contributors
+                            </p>
+                            <h2 id="invite-members-title" className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                                Share this collaboration
+                            </h2>
+                            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                                The code works in the Community Hub. The link opens the desktop client directly.
+                            </p>
+                        </div>
                         <button
+                            type="button"
                             onClick={onClose}
-                            className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                            className="rounded-xl p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-white"
+                            aria-label="Close"
                         >
-                            <Icon path={ICONS.xMark} className="w-6 h-6" />
+                            <Icon path={ICONS.xMark} className="h-5 w-5" />
                         </button>
                     </div>
-                    <p className="text-white/80 mt-2 text-sm">
-                        Share the code or link with people you want to invite
-                    </p>
-                </div>
 
-                {/* Content */}
-                <div className="p-6 space-y-6">
-                    {/* Invite Code */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Invite Code
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <code className="flex-1 bg-gray-100 px-4 py-3 rounded-lg font-mono text-xl tracking-wider text-center">
-                                {inviteCode}
-                            </code>
-                            <button
-                                onClick={handleCopyCode}
-                                className="p-3 bg-purple-100 hover:bg-purple-200 text-purple-600 rounded-lg transition-colors"
-                                title="Copy code"
-                            >
-                                <Icon path={ICONS.copy} className="w-5 h-5" />
-                            </button>
-                        </div>
-                    </div>
+                    <div className="mt-6 space-y-5">
+                        <section>
+                            <label htmlFor="collaboration-invite-code" className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-200">
+                                Invite code
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    id="collaboration-invite-code"
+                                    readOnly
+                                    value={inviteCode}
+                                    className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-center font-mono text-xl font-bold tracking-[0.18em] text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                    onFocus={(event) => event.target.select()}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => copyValue(inviteCode, 'code')}
+                                    className="flex h-12 w-12 flex-none items-center justify-center rounded-xl text-white transition hover:brightness-95"
+                                    style={{ backgroundColor: accentColor }}
+                                    aria-label="Copy invite code"
+                                >
+                                    <Icon path={copied === 'code' ? ICONS.check : ICONS.copy} className="h-5 w-5" />
+                                </button>
+                            </div>
+                        </section>
 
-                    {/* Divider */}
-                    <div className="flex items-center">
-                        <div className="flex-1 border-t border-gray-200" />
-                        <span className="px-3 text-sm text-gray-500">or</span>
-                        <div className="flex-1 border-t border-gray-200" />
-                    </div>
+                        <section>
+                            <label htmlFor="collaboration-invite-link" className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-200">
+                                Desktop invite link
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    id="collaboration-invite-link"
+                                    readOnly
+                                    value={inviteLink}
+                                    className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                                    onFocus={(event) => event.target.select()}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => copyValue(inviteLink, 'link')}
+                                    className="flex h-12 w-12 flex-none items-center justify-center rounded-xl border border-gray-200 text-gray-600 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700"
+                                    aria-label="Copy desktop invite link"
+                                >
+                                    <Icon path={copied === 'link' ? ICONS.check : ICONS.copy} className="h-5 w-5" />
+                                </button>
+                            </div>
+                        </section>
 
-                    {/* Invite Link (Desktop Client) */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Direct Link <span className="text-gray-400">(Desktop Client)</span>
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="text"
-                                value={inviteLink}
-                                readOnly
-                                className="flex-1 bg-gray-100 px-4 py-2 rounded-lg text-sm text-gray-600 truncate"
-                            />
-                            <button
-                                onClick={handleCopyLink}
-                                className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors"
-                                title="Copy link"
-                            >
-                                <Icon path={ICONS.copy} className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                            This link opens directly in the PlanetCreations client
-                        </p>
-                    </div>
-
-                    {/* Info */}
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                        <div className="flex gap-3">
-                            <Icon path={ICONS.infoCircle} className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                            <div className="text-sm text-blue-700">
-                                <p className="font-medium mb-1">How to join:</p>
-                                <ol className="list-decimal list-inside space-y-1 text-blue-600">
-                                    <li>Open the PlanetCreations client</li>
-                                    <li>Go to Community Hub → Collaborations</li>
-                                    <li>Click "Join with Code" and enter the code</li>
-                                </ol>
+                        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+                            <div className="flex gap-3">
+                                <Icon path={ICONS.infoCircle} className="mt-0.5 h-5 w-5 flex-none" />
+                                <div>
+                                    <p className="font-bold">One save, one active builder</p>
+                                    <p className="mt-1 text-blue-700 dark:text-blue-300">
+                                        Contributors join here, then use the in-game overlay to start and hand off build sessions safely.
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Footer */}
-                <div className="px-6 pb-6">
                     <button
+                        type="button"
                         onClick={onClose}
-                        className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                        className="mt-6 w-full rounded-xl bg-gray-100 px-5 py-3 font-bold text-gray-800 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
                     >
                         Done
                     </button>

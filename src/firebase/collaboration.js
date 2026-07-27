@@ -21,6 +21,12 @@ import { searchUsers } from "./userIndexService";
 
 const STORAGE_LIMIT = 500 * 1024 * 1024; // 500 MB
 const MAX_VERSIONS_PER_USER_LIMITED = 1;
+const COLLABORATION_OVERVIEW_STATUSES = new Set([
+    'active',
+    'completed',
+    'published',
+    'archived',
+]);
 
 // ============================================
 // COLLABORATION CRUD
@@ -41,10 +47,15 @@ export const createCollaboration = async (userId, data) => {
         title: data.title,
         description: data.description,
         game: data.game,
+        visibility: data.visibility,
         joinMode: data.joinMode,
         password: data.password,
+        bannerImageUrl: data.bannerImageUrl,
+        galleryImageUrls: data.galleryImageUrls,
+        initialUploadId: data.initialUploadId,
+        initialNote: data.initialNote,
     });
-    return result.data.collaborationId;
+    return result.data;
 };
 
 /**
@@ -69,7 +80,7 @@ export const fetchUserCollaborations = async (userId) => {
 
     for (const docSnap of ownerSnapshot.docs) {
         const data = docSnap.data();
-        if (data.status === 'active' || data.status === 'completed') {
+        if (COLLABORATION_OVERVIEW_STATUSES.has(data.status || 'active')) {
             collaborations.push({
                 id: docSnap.id,
                 ...data,
@@ -95,7 +106,7 @@ export const fetchUserCollaborations = async (userId) => {
             if (collaborations.some(c => c.id === docSnap.id)) continue;
 
             const data = docSnap.data();
-            if (data.status === 'active' || data.status === 'completed') {
+            if (COLLABORATION_OVERVIEW_STATUSES.has(data.status || 'active')) {
                 // Get the user's role from members subcollection
                 const memberRef = doc(db, 'collaborations', docSnap.id, 'members', userId);
                 const memberSnap = await getDoc(memberRef);
@@ -114,6 +125,37 @@ export const fetchUserCollaborations = async (userId) => {
     }
 
     return collaborations;
+};
+
+/** Safe public directory entries. Invite credentials never leave the callable. */
+export const fetchPublicCollaborations = async () => {
+    const callable = httpsCallable(getFunctions(), 'listPublicCollaborations');
+    const result = await callable();
+    return result.data.collaborations || [];
+};
+
+/** Read-only public detail projection without invite credentials or R2 keys. */
+export const fetchPublicCollaborationView = async (collaborationId) => {
+    const callable = httpsCallable(getFunctions(), 'getPublicCollaborationView');
+    const result = await callable({ collaborationId });
+    return result.data;
+};
+
+/**
+ * One on-demand overlay read for collaborations belonging to the running game.
+ * Roles and members stay server-validated when an action is attempted, avoiding
+ * a member-subcollection read per collaboration.
+ */
+export const fetchUserCollaborationsForGame = async (userId, gameId) => {
+    if (!userId || !gameId) return [];
+    const snapshot = await getDocs(query(
+        collection(db, 'collaborations'),
+        where('memberIds', 'array-contains', userId),
+        where('game', '==', gameId),
+    ));
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter((collaboration) => collaboration.status === 'active');
 };
 
 /**
@@ -160,7 +202,7 @@ export const joinCollaborationByCode = async (userId, inviteCode) => {
 
 /**
  * Read-only join info for an invite code (so the join page can render the right UI
- * per joinMode). Returns { collaborationId, title, joinMode, alreadyMember, applicationStatus }.
+ * per joinMode). Also returns safe presentation fields for the join card.
  */
 export const getCollaborationJoinInfo = async (inviteCode) => {
     const callable = httpsCallable(getFunctions(), 'getCollaborationJoinInfo');
@@ -197,23 +239,94 @@ export const fetchCollaborationApplications = async (collaborationId) => {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
-/** Owner: update collaboration settings (title/description/join mode/password). Server-side & hashed. */
+/** Owner: update collaboration settings, appearance and access. Server-side & hashed. */
 export const updateCollaborationSettings = async (collaborationId, settings) => {
     const callable = httpsCallable(getFunctions(), 'updateCollaborationSettings');
     await callable({ collaborationId, ...settings });
 };
 
 /** Start a build session (advisory turn-lock; estimateMin sizes the fallback expiry). */
-export const startBuildSession = async (collaborationId, estimateMin = 60) => {
+export const startBuildSession = async (
+    collaborationId,
+    estimateMin = 60,
+    acknowledgeMissingSave = false,
+) => {
     const callable = httpsCallable(getFunctions(), 'startBuildSession');
-    const result = await callable({ collaborationId, estimateMin });
+    const result = await callable({
+        collaborationId,
+        estimateMin,
+        acknowledgeMissingSave,
+    });
     return result.data;
 };
 
 /** End the current build session (manual log-off / auto on game close / owner force-release). */
-export const endBuildSession = async (collaborationId, force = false) => {
+export const endBuildSession = async (
+    collaborationId,
+    force = false,
+    endedAtMillis = null,
+    buildDraft = null,
+    buildSessionId = null,
+) => {
     const callable = httpsCallable(getFunctions(), 'endBuildSession');
-    await callable({ collaborationId, force });
+    const result = await callable({
+        collaborationId,
+        force,
+        endedAtMillis,
+        buildDraft,
+        buildSessionId,
+    });
+    return result.data;
+};
+
+/** Finalize an uploaded (signed) save as a new collaboration version. */
+export const finalizeCollaborationVersion = async (
+    uploadId,
+    collaborationId,
+    changelogEntryId,
+    note = '',
+    imageUrls = [],
+    completedTodos = [],
+) => {
+    const callable = httpsCallable(getFunctions(), 'finalizeCollaborationVersion');
+    const result = await callable({
+        uploadId,
+        collaborationId,
+        changelogEntryId,
+        note,
+        imageUrls,
+        completedTodos,
+    });
+    return result.data;
+};
+
+/** Edit the author's changelog content without changing its server-managed save link. */
+export const updateCollaborationChangelogEntry = async (
+    collaborationId,
+    changelogEntryId,
+    text = '',
+    imageUrls = [],
+    completedTodos = [],
+) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'updateCollaborationChangelogEntry',
+    );
+    const result = await callable({
+        collaborationId,
+        changelogEntryId,
+        text,
+        imageUrls,
+        completedTodos,
+    });
+    return result.data;
+};
+
+/** Get a short-lived signed download URL for a collaboration version (members only). */
+export const getCollaborationVersionDownloadUrl = async (collaborationId, versionId) => {
+    const callable = httpsCallable(getFunctions(), 'getCollaborationVersionDownloadUrl');
+    const result = await callable({ collaborationId, versionId });
+    return result.data;
 };
 
 /**
@@ -275,45 +388,9 @@ export const removeMember = async (collaborationId, targetUserId) => {
  * @param {string} collaborationId - The collaboration ID.
  */
 export const deleteCollaboration = async (collaborationId) => {
-    const collaborationSnap = await getDoc(doc(db, 'collaborations', collaborationId));
-    if (!collaborationSnap.exists()) {
-        throw new Error('Collaboration not found.');
-    }
-
-    // Permission check is handled by Firestore rules
-    // Rules allow: isCollaborationOwnerOrMod(collaborationId)
-
-    // Delete all subcollections first
-    const batch = writeBatch(db);
-
-    // Delete members
-    const membersSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'members'));
-    membersSnap.docs.forEach(doc => batch.delete(doc.ref));
-
-    // Delete comments
-    const commentsSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'comments'));
-    commentsSnap.docs.forEach(doc => batch.delete(doc.ref));
-
-    // Delete files and their versions
-    const filesSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'files'));
-    for (const fileDoc of filesSnap.docs) {
-        const versionsSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'files', fileDoc.id, 'versions'));
-        versionsSnap.docs.forEach(vDoc => batch.delete(vDoc.ref));
-        batch.delete(fileDoc.ref);
-    }
-
-    // Delete pending invitations
-    const invitesSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'invitations'));
-    invitesSnap.docs.forEach(doc => batch.delete(doc.ref));
-
-    // Delete applications
-    const applicationsSnap = await getDocs(collection(db, 'collaborations', collaborationId, 'applications'));
-    applicationsSnap.docs.forEach(doc => batch.delete(doc.ref));
-
-    // Delete the collaboration document
-    batch.delete(doc(db, 'collaborations', collaborationId));
-
-    await batch.commit();
+    const callable = httpsCallable(getFunctions(), 'deleteCollaboration');
+    const result = await callable({ collaborationId });
+    return result.data;
 };
 
 /**
@@ -723,7 +800,14 @@ export const fetchFileVersions = async (collaborationId, fileId) => {
         )
     );
 
-    const versions = versionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const versions = versionsSnap.docs.map((versionDoc) => {
+        const data = versionDoc.data();
+        return {
+            id: versionDoc.id,
+            ...data,
+            versionNumber: data.versionNumber || data.number || 1,
+        };
+    });
 
     // Group by user
     const byUser = {};

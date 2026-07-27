@@ -1,14 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { updateMemberRole, removeMember, fetchCollaborationPendingInvitations, cancelInvitation, fetchCollaborationApplications, respondToApplication } from '../../firebase/collaboration';
+import {
+    cancelInvitation,
+    fetchCollaborationApplications,
+    fetchCollaborationPendingInvitations,
+    removeMember,
+    respondToApplication,
+    updateMemberRole,
+} from '../../firebase/collaboration';
+import SendInviteModal from '../modals/SendInviteModal';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
-import SendInviteModal from '../modals/SendInviteModal';
 
 const ROLE_STYLES = {
-    owner: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Owner' },
-    editor: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Editor' },
-    viewer: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Viewer' }
+    owner: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+    editor: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+    viewer: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+};
+
+const ROLE_DESCRIPTIONS = {
+    owner: 'Manages access, settings and the project.',
+    editor: 'Can build, upload versions and contribute.',
+    viewer: 'Can follow the project without editing the save.',
+};
+
+const formatJoinDate = (timestamp) => {
+    if (!timestamp) return 'Join date unavailable';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return `Joined ${date.toLocaleDateString()}`;
 };
 
 const CollaborationMemberList = ({
@@ -17,252 +36,280 @@ const CollaborationMemberList = ({
     isOwner,
     collaborationId,
     setModalMessage,
-    setConfirmation
+    setConfirmation,
+    onMembersChanged,
+    accentColor = '#6B7280',
 }) => {
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [pendingInvites, setPendingInvites] = useState([]);
     const [pendingApplications, setPendingApplications] = useState([]);
+    const [processingId, setProcessingId] = useState(null);
 
-    useEffect(() => {
-        if (isOwner) {
-            fetchCollaborationPendingInvitations(collaborationId)
-                .then(setPendingInvites)
-                .catch(err => console.error('Error loading invites:', err));
-            fetchCollaborationApplications(collaborationId)
-                .then(setPendingApplications)
-                .catch(err => console.error('Error loading applications:', err));
+    const loadPending = useCallback(async () => {
+        if (!isOwner) {
+            setPendingInvites([]);
+            setPendingApplications([]);
+            return;
+        }
+        try {
+            const [invitations, applications] = await Promise.all([
+                fetchCollaborationPendingInvitations(collaborationId),
+                fetchCollaborationApplications(collaborationId),
+            ]);
+            setPendingInvites(invitations);
+            setPendingApplications(applications);
+        } catch (error) {
+            console.error('Error loading collaboration access requests:', error);
         }
     }, [collaborationId, isOwner]);
 
+    useEffect(() => {
+        loadPending();
+    }, [loadPending]);
+
+    const sortedMembers = useMemo(() => {
+        const order = { owner: 0, editor: 1, viewer: 2 };
+        return [...members].sort((a, b) => (
+            (order[a.role] ?? 3) - (order[b.role] ?? 3) ||
+            String(a.username || '').localeCompare(String(b.username || ''))
+        ));
+    }, [members]);
+
     const handleApplication = async (application, approve) => {
+        setProcessingId(`application-${application.id}`);
         try {
             await respondToApplication(collaborationId, application.id, approve);
-            setPendingApplications(prev => prev.filter(a => a.id !== application.id));
+            setPendingApplications((current) => current.filter((item) => item.id !== application.id));
+            if (approve) await onMembersChanged?.();
             setModalMessage(
                 approve
-                    ? `${application.username} has been added — they'll appear in the list on the next refresh.`
-                    : `Application from ${application.username} declined.`
+                    ? `${application.username} has joined the collaboration.`
+                    : `Application from ${application.username} declined.`,
             );
         } catch (error) {
             setModalMessage(`Error: ${error.message}`);
+        } finally {
+            setProcessingId(null);
         }
     };
 
-    const handleCancelInvite = (invite) => {
+    const handleCancelInvite = (invitation) => {
         setConfirmation({
-            message: `Cancel invitation to ${invite.targetUsername}?`,
+            message: `Cancel the invitation to ${invitation.targetUsername}?`,
             onConfirm: async () => {
                 try {
-                    await cancelInvitation(collaborationId, invite.id);
-                    setPendingInvites(prev => prev.filter(i => i.id !== invite.id));
+                    await cancelInvitation(collaborationId, invitation.id);
+                    setPendingInvites((current) => current.filter((item) => item.id !== invitation.id));
                     setModalMessage('Invitation cancelled.');
                 } catch (error) {
                     setModalMessage(`Error: ${error.message}`);
                 }
-            }
+            },
         });
     };
-    const sortedMembers = [...members].sort((a, b) => {
-        const roleOrder = { owner: 0, editor: 1, viewer: 2 };
-        return (roleOrder[a.role] || 3) - (roleOrder[b.role] || 3);
-    });
 
-    const handleRoleChange = async (memberId, newRole) => {
+    const handleRoleChange = async (memberId, role) => {
+        setProcessingId(`member-${memberId}`);
         try {
-            await updateMemberRole(collaborationId, memberId, newRole);
-            setModalMessage(`Role updated to ${newRole}.`);
+            await updateMemberRole(collaborationId, memberId, role);
+            await onMembersChanged?.();
+            setModalMessage(`Role updated to ${role}.`);
         } catch (error) {
             setModalMessage(`Error: ${error.message}`);
+        } finally {
+            setProcessingId(null);
         }
     };
 
     const handleRemoveMember = (member) => {
         setConfirmation({
-            message: `Remove ${member.username} from this collaboration?`,
+            message: `Remove ${member.username} from this collaboration? Their past contributor credit will remain.`,
             onConfirm: async () => {
                 try {
                     await removeMember(collaborationId, member.id);
+                    await onMembersChanged?.();
                     setModalMessage(`${member.username} has been removed.`);
                 } catch (error) {
                     setModalMessage(`Error: ${error.message}`);
                 }
-            }
+            },
         });
     };
 
-    const formatJoinDate = (timestamp) => {
-        if (!timestamp) return '';
-        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-        return date.toLocaleDateString();
-    };
-
-    const memberIds = members.map(m => m.id);
-
     return (
-        <div className="space-y-4">
-            {/* Invite Button */}
-            {isOwner && (
-                <div className="flex justify-end">
+        <div className="space-y-6">
+            <section className="flex flex-col items-center gap-4 rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <div className="mx-auto max-w-2xl">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contributors</h2>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Editors can take build turns and upload versions. Viewers can follow the project.
+                    </p>
+                </div>
+                {isOwner && (
                     <button
+                        type="button"
                         onClick={() => setShowInviteModal(true)}
-                        className="inline-flex items-center bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 font-bold text-white shadow-sm transition hover:brightness-110"
+                        style={{ backgroundColor: accentColor }}
                     >
-                        <Icon path={ICONS.userPlus} className="w-5 h-5 mr-2" />
-                        Invite User
+                        <Icon path={ICONS.userPlus} className="h-5 w-5" />
+                        Invite contributor
                     </button>
-                </div>
-            )}
+                )}
+            </section>
 
-            {/* Pending Invitations */}
-            {isOwner && pendingInvites.length > 0 && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <h3 className="font-medium text-yellow-800 mb-3 flex items-center gap-2">
-                        <Icon path={ICONS.clock} className="w-5 h-5" />
-                        Pending Invitations ({pendingInvites.length})
-                    </h3>
-                    <div className="space-y-2">
-                        {pendingInvites.map(invite => (
-                            <div
-                                key={invite.id}
-                                className="bg-white rounded-lg p-3 flex items-center justify-between"
-                            >
-                                <div>
-                                    <span className="font-medium text-gray-800">{invite.targetUsername}</span>
-                                    <span className="text-sm text-gray-500 ml-2">
-                                        as {invite.role}
-                                    </span>
-                                </div>
-                                <button
-                                    onClick={() => handleCancelInvite(invite)}
-                                    className="text-red-500 hover:text-red-700 text-sm font-medium"
-                                >
-                                    Cancel
-                                </button>
+            {isOwner && (pendingApplications.length > 0 || pendingInvites.length > 0) && (
+                <div className="grid gap-6 lg:grid-cols-2">
+                    {pendingApplications.length > 0 && (
+                        <section className="overflow-hidden rounded-2xl border border-blue-200 bg-blue-50 shadow-sm dark:border-blue-900 dark:bg-blue-950/30">
+                            <div className="border-b border-blue-200 px-5 py-4 dark:border-blue-900">
+                                <h3 className="flex items-center justify-center gap-2 text-center font-bold text-blue-950 dark:text-blue-100">
+                                    <Icon path={ICONS.userPlus} className="h-5 w-5" />
+                                    Join requests
+                                    <span className="rounded-full bg-blue-200 px-2 py-0.5 text-xs dark:bg-blue-900">{pendingApplications.length}</span>
+                                </h3>
                             </div>
-                        ))}
-                    </div>
+                            <div className="divide-y divide-blue-200 dark:divide-blue-900">
+                                {pendingApplications.map((application) => {
+                                    const processing = processingId === `application-${application.id}`;
+                                    return (
+                                        <article key={application.id} className="bg-white/70 p-5 dark:bg-gray-900/20">
+                                            <Link to={`/profile/${application.id}`} className="font-bold text-gray-900 hover:underline dark:text-gray-100">
+                                                {application.username}
+                                            </Link>
+                                            <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-300">
+                                                {application.message || 'No message included.'}
+                                            </p>
+                                            <div className="mt-4 flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleApplication(application, true)}
+                                                    disabled={processing}
+                                                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                                >
+                                                    Approve
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleApplication(application, false)}
+                                                    disabled={processing}
+                                                    className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                                                >
+                                                    Decline
+                                                </button>
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    )}
+
+                    {pendingInvites.length > 0 && (
+                        <section className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 shadow-sm dark:border-amber-900 dark:bg-amber-950/30">
+                            <div className="border-b border-amber-200 px-5 py-4 dark:border-amber-900">
+                                <h3 className="flex items-center justify-center gap-2 text-center font-bold text-amber-950 dark:text-amber-100">
+                                    <Icon path={ICONS.envelope} className="h-5 w-5" />
+                                    Pending invitations
+                                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{pendingInvites.length}</span>
+                                </h3>
+                            </div>
+                            <div className="divide-y divide-amber-200 dark:divide-amber-900">
+                                {pendingInvites.map((invitation) => (
+                                    <article key={invitation.id} className="flex items-center justify-between gap-3 bg-white/70 p-5 dark:bg-gray-900/20">
+                                        <div className="min-w-0">
+                                            <p className="truncate font-bold text-gray-900 dark:text-gray-100">{invitation.targetUsername}</p>
+                                            <p className="text-sm capitalize text-gray-500 dark:text-gray-400">{invitation.role}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleCancelInvite(invitation)}
+                                            className="rounded-lg px-3 py-2 text-sm font-bold text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </article>
+                                ))}
+                            </div>
+                        </section>
+                    )}
                 </div>
             )}
 
-            {/* Pending Applications (application join mode) */}
-            {isOwner && pendingApplications.length > 0 && (
-                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                    <h3 className="font-medium text-indigo-800 mb-3 flex items-center gap-2">
-                        <Icon path={ICONS.userPlus} className="w-5 h-5" />
-                        Join Requests ({pendingApplications.length})
-                    </h3>
-                    <div className="space-y-2">
-                        {pendingApplications.map(application => (
-                            <div key={application.id} className="bg-white rounded-lg p-3">
-                                <div className="flex items-center justify-between gap-3">
+            <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                    {sortedMembers.map((member) => {
+                        const isCurrentUser = member.id === currentUserId;
+                        const canManage = isOwner && !isCurrentUser && member.role !== 'owner';
+                        const saving = processingId === `member-${member.id}`;
+                        const initials = String(member.username || '?').slice(0, 2).toUpperCase();
+
+                        return (
+                            <article key={member.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex min-w-0 items-center gap-3">
+                                    <span
+                                        className="flex h-11 w-11 flex-none items-center justify-center rounded-xl font-bold text-white"
+                                        style={{ backgroundColor: accentColor }}
+                                    >
+                                        {initials}
+                                    </span>
                                     <div className="min-w-0">
-                                        <Link to={`/profile/${application.id}`} className="font-medium text-gray-800 hover:text-purple-600">
-                                            {application.username}
+                                        <Link to={`/profile/${member.id}`} className="truncate font-bold text-gray-900 hover:underline dark:text-gray-100">
+                                            {member.username || 'Unknown member'}
+                                            {isCurrentUser && <span className="ml-1 font-normal text-gray-400">(you)</span>}
                                         </Link>
-                                        {application.message && (
-                                            <p className="text-sm text-gray-500 truncate" title={application.message}>{application.message}</p>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                        <button
-                                            onClick={() => handleApplication(application, true)}
-                                            className="bg-green-500 hover:bg-green-600 text-white text-sm font-bold py-1.5 px-3 rounded-lg transition-colors"
-                                        >
-                                            Approve
-                                        </button>
-                                        <button
-                                            onClick={() => handleApplication(application, false)}
-                                            className="bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-bold py-1.5 px-3 rounded-lg transition-colors"
-                                        >
-                                            Decline
-                                        </button>
+                                        <p className="truncate text-sm text-gray-500 dark:text-gray-400">
+                                            {ROLE_DESCRIPTIONS[member.role] || ROLE_DESCRIPTIONS.viewer}
+                                        </p>
+                                        <p className="text-xs text-gray-400">{formatJoinDate(member.joinedAt)}</p>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {/* Member List */}
-            <div className="space-y-3">
-            {sortedMembers.map(member => {
-                const roleStyle = ROLE_STYLES[member.role] || ROLE_STYLES.viewer;
-                const isCurrentUser = member.id === currentUserId;
-                const canManage = isOwner && !isCurrentUser && member.role !== 'owner';
-
-                return (
-                    <div
-                        key={member.id}
-                        className="bg-white rounded-lg shadow-sm border border-gray-200 p-4"
-                    >
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                                    <Icon path={ICONS.user} className="w-5 h-5 text-gray-500" />
+                                <div className="flex items-center justify-between gap-2 sm:justify-end">
+                                    {canManage ? (
+                                        <select
+                                            value={member.role}
+                                            onChange={(event) => handleRoleChange(member.id, event.target.value)}
+                                            disabled={saving}
+                                            aria-label={`Role for ${member.username}`}
+                                            className={`rounded-full border-0 px-3 py-1.5 text-sm font-bold capitalize focus:outline-none focus:ring-2 ${ROLE_STYLES[member.role] || ROLE_STYLES.viewer}`}
+                                            style={{ '--tw-ring-color': accentColor }}
+                                        >
+                                            <option value="editor">Editor</option>
+                                            <option value="viewer">Viewer</option>
+                                        </select>
+                                    ) : (
+                                        <span className={`rounded-full px-3 py-1.5 text-sm font-bold capitalize ${ROLE_STYLES[member.role] || ROLE_STYLES.viewer}`}>
+                                            {member.role || 'viewer'}
+                                        </span>
+                                    )}
+                                    {canManage && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveMember(member)}
+                                            className="rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                                            title="Remove member"
+                                            aria-label={`Remove ${member.username}`}
+                                        >
+                                            <Icon path={ICONS.xMark} className="h-5 w-5" />
+                                        </button>
+                                    )}
                                 </div>
-                                <div>
-                                    <Link
-                                        to={`/profile/${member.id}`}
-                                        className="font-medium text-gray-800 hover:text-purple-600 transition-colors"
-                                    >
-                                        {member.username}
-                                        {isCurrentUser && (
-                                            <span className="text-gray-500 text-sm ml-1">(you)</span>
-                                        )}
-                                    </Link>
-                                    <p className="text-xs text-gray-500">
-                                        Joined {formatJoinDate(member.joinedAt)}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                {/* Role Badge or Dropdown */}
-                                {canManage ? (
-                                    <select
-                                        value={member.role}
-                                        onChange={(e) => handleRoleChange(member.id, e.target.value)}
-                                        className={`px-3 py-1 text-sm font-medium rounded-full border-0 cursor-pointer ${roleStyle.bg} ${roleStyle.text}`}
-                                    >
-                                        <option value="editor">Editor</option>
-                                        <option value="viewer">Viewer</option>
-                                    </select>
-                                ) : (
-                                    <span className={`px-3 py-1 text-sm font-medium rounded-full ${roleStyle.bg} ${roleStyle.text}`}>
-                                        {roleStyle.label}
-                                    </span>
-                                )}
-
-                                {/* Remove Button */}
-                                {canManage && (
-                                    <button
-                                        onClick={() => handleRemoveMember(member)}
-                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                        title="Remove member"
-                                    >
-                                        <Icon path={ICONS.xMark} className="w-5 h-5" />
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                );
-            })}
-
-            {members.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                    No members found.
+                            </article>
+                        );
+                    })}
                 </div>
-            )}
-            </div>
+                {members.length === 0 && (
+                    <p className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">No members found.</p>
+                )}
+            </section>
 
-            {/* Send Invite Modal */}
             {showInviteModal && (
                 <SendInviteModal
                     collaborationId={collaborationId}
                     currentUserId={currentUserId}
-                    existingMemberIds={memberIds}
+                    existingMemberIds={members.map((member) => member.id)}
+                    accentColor={accentColor}
                     onClose={() => setShowInviteModal(false)}
                     setModalMessage={setModalMessage}
                 />

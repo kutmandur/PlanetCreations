@@ -545,10 +545,18 @@ service cloud.firestore {
       // Collaborations abfragbar (ownerId==uid bzw. memberIds array-contains uid) —
       // kein Blanket-list mehr, das inviteCodes aller Collaborations preisgibt.
       // Der Beitritt per Code läuft über die Cloud Function joinCollaborationByInviteCode.
-      allow read: if isLoggedIn() && (
+      allow get: if isLoggedIn() && (
         isCollaborationMember(collaborationId) ||
-        resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.memberIds ||
+        resource.data.get('ownerId', '') == request.auth.uid ||
+        request.auth.uid in resource.data.get('memberIds', []) ||
+        isModerator()
+      );
+      // Collection queries cannot prove access through a per-document member
+      // subcollection lookup. The client queries by ownerId/memberIds, so keep
+      // list authorization on those denormalized fields only.
+      allow list: if isLoggedIn() && (
+        resource.data.get('ownerId', '') == request.auth.uid ||
+        request.auth.uid in resource.data.get('memberIds', []) ||
         isModerator()
       );
       // Nur über die createCollaboration Cloud Function (Admin-SDK umgeht Rules):
@@ -566,8 +574,8 @@ service cloud.firestore {
             request.auth.uid in resource.data.memberIds &&
             request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1)
          ));
-      // Allow mods to delete collaborations even if orphaned (no owner member exists)
-      allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+      // Deletion is server-only so R2 objects are removed before metadata.
+      allow delete: if false;
 
       match /members/{userId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
@@ -594,19 +602,15 @@ service cloud.firestore {
 
       match /files/{fileId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationEditorOrMod(collaborationId);
-        allow update: if isCollaborationEditorOrMod(collaborationId);
-        // Allow mods to delete files even for orphaned collaborations
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        // File/version metadata contains private R2 object keys and is written only
+        // by finalizeCollaborationVersion after validating the signed package.
+        allow create, update: if false;
+        allow delete: if false;
 
         match /versions/{versionId} {
           allow read: if isCollaborationMember(collaborationId) || isModerator();
-          allow create: if isCollaborationEditorOrMod(collaborationId);
-          allow update: if isCollaborationEditorOrMod(collaborationId);
-          // Allow mods to delete versions even for orphaned collaborations
-          allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
-            (isCollaborationEditor(collaborationId) && resource.data.uploadedBy == request.auth.uid) ||
-            isModerator();
+          allow create, update: if false;
+          allow delete: if false;
         }
       }
 
@@ -651,7 +655,7 @@ service cloud.firestore {
       // Upload entries (changelog history)
       match /uploads/{uploadId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationEditorOrMod(collaborationId);
+        allow create: if false;
         allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
       }
     }
