@@ -348,7 +348,7 @@ const MemberManager = ({
                                     type="button"
                                     onClick={() => handleInvite(result)}
                                     disabled={invitingId === result.id}
-                                    className="px-4 py-2 rounded-lg bg-[--theme-color] text-white font-semibold disabled:opacity-50"
+                                    className="px-4 py-2 rounded-lg community-bg text-white font-semibold disabled:opacity-50"
                                 >
                                     {invitingId === result.id ? 'Sending...' : 'Invite'}
                                 </button>

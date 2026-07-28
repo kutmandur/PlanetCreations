@@ -41,7 +41,7 @@ export const SaveBar = ({ dirty, saving, onSave, label = 'Save' }) => (
       type="button"
       onClick={onSave}
       disabled={!dirty || saving}
-      className="bg-[--theme-color] hover:brightness-95 text-white font-bold py-2.5 px-6 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-2 min-w-[130px]"
+      className="community-bg hover:brightness-95 text-white font-bold py-2.5 px-6 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-2 min-w-[130px]"
     >
       {saving ? <Spinner size="small" /> : label}
     </button>

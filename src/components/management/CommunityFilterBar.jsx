@@ -55,14 +55,14 @@ const CommunityFilterBar = ({
                         className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50 transition-colors"
                         aria-label="Clear search"
                     >
-                        <span className="text-2xl font-bold text-[--theme-color] pb-1">×</span>
+                        <span className="text-2xl font-bold community-text pb-1">×</span>
                     </button>
                 )}
             </div>
             <div className="relative" ref={filterMenuRef}>
                 <button
                     onClick={() => setIsFilterVisible(!isFilterVisible)}
-                    className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? 'bg-[--theme-color] text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
+                    className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? 'community-bg text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
                 >
                     <Icon path={ICONS.filter} className="w-6 h-6" />
                 </button>

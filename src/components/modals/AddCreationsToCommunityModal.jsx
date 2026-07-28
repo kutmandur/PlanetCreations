@@ -254,7 +254,7 @@ const AddCreationsToCommunityModal = ({ user, community, canApplyShowcase = true
                                                         <button
                                                             onClick={() => handleApply(creation)}
                                                             disabled={isBusy}
-                                                            className="flex-1 text-sm font-semibold py-1.5 px-3 rounded-lg text-white bg-[--theme-color] hover:brightness-90 disabled:opacity-50"
+                                                            className="flex-1 text-sm font-semibold py-1.5 px-3 rounded-lg text-white community-bg hover:brightness-90 disabled:opacity-50"
                                                         >
                                                             Apply for Showcase
                                                         </button>

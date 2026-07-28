@@ -133,7 +133,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                         <button
                             key={tab}
                             onClick={() => setActiveSubTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${activeSubTab === tab ? 'bg-[--theme-color] text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}
+                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${activeSubTab === tab ? 'community-bg text-white' : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'}`}
                         >
                             {tab}
                         </button>
@@ -153,7 +153,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                         {channelFeed.channelTitle && (
                             <p className="text-center text-gray-500 dark:text-gray-400 mb-4">
                                 Latest videos from{' '}
-                                <a href={youtubeChannelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-[--theme-color] hover:underline">
+                                <a href={youtubeChannelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold community-text hover:underline">
                                     {channelFeed.channelTitle}
                                 </a>
                             </p>
@@ -240,7 +240,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                                 />
                                 {searchTerm && (
                                     <button onClick={() => setSearchTerm('')} className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50" aria-label="Clear search">
-                                        <span className="text-2xl font-bold text-[--theme-color] pb-1">×</span>
+                                        <span className="text-2xl font-bold community-text pb-1">×</span>
                                     </button>
                                 )}
                             </div>

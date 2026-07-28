@@ -332,6 +332,18 @@ html.game-overlay-window #root { background: transparent !important; }
 .game-border { border-color: var(--game-color, #6B7280); }
 .game-ring:focus { --tw-ring-color: var(--game-color, #6B7280); }
 
+/* Community-Farb-Utilities: Wie die Spiel-Farben bleiben diese Klassen außerhalb
+   der Tailwind-Layer, damit dynamische Community-Farben zuverlässig erhalten bleiben. */
+.community-bg { background-color: var(--theme-color, #6B7280); }
+.community-bg-hover:hover { background-color: var(--theme-color, #6B7280); }
+.community-text { color: var(--theme-color, #6B7280); }
+.community-border { border-color: var(--theme-color, #6B7280); }
+.community-ring:focus { --tw-ring-color: var(--theme-color, #6B7280); }
+
+@media (min-width: 64rem) {
+  .community-bg-lg { background-color: var(--theme-color, #6B7280); }
+}
+
 /* About the Client: motion is deliberately scoped to this page. */
 .client-hero-grid {
   opacity: .22;

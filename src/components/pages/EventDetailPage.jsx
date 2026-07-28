@@ -384,7 +384,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
             <img src={event.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Event'} alt={`${event.title} Banner`} className="w-full h-64 object-cover rounded-lg mb-4"/>
             <div className="flex justify-between items-center mb-6">
-                <button onClick={() => navigate(`/community/${community?.slug || event.communityId}`)} className="bg-[--theme-color] text-white font-bold py-2 px-4 rounded-lg flex items-center hover:brightness-90 transition-all">
+                <button onClick={() => navigate(`/community/${community?.slug || event.communityId}`)} className="community-bg text-white font-bold py-2 px-4 rounded-lg flex items-center hover:brightness-90 transition-all">
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
                     Back to Community
                 </button>
@@ -520,7 +520,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                             {isVotingOver && <option value="votes">By Votes</option>}
                         </select>
                         {isSubmissionActive && user && canParticipateEvents && (
-                            <button onClick={() => setIsSubmissionModalOpen(true)} className="bg-[--theme-color] text-white font-bold py-2 px-4 rounded-lg hover:brightness-90 transition-all">Submit</button>
+                            <button onClick={() => setIsSubmissionModalOpen(true)} className="community-bg text-white font-bold py-2 px-4 rounded-lg hover:brightness-90 transition-all">Submit</button>
                         )}
                     </div>
                 </div>

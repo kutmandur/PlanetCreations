@@ -287,7 +287,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                 <div className="flex flex-wrap justify-between items-start gap-2 mb-4 lg:mb-0 lg:absolute lg:inset-x-0 lg:top-0 lg:pointer-events-none">
                     <button
                         onClick={() => navigate(`/community/${community.slug}`)}
-                        className="flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all lg:pointer-events-auto"
+                        className="flex items-center justify-center community-bg hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all lg:pointer-events-auto"
                     >
                         <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
                         Back to Community
@@ -301,7 +301,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
 
             <div className="relative flex justify-center my-6">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                    <div className={`absolute h-full bg-[--theme-color] rounded-full transition-all duration-500 ease-in-out`} style={gliderStyle} />
+                    <div className="absolute h-full community-bg rounded-full transition-all duration-500 ease-in-out" style={gliderStyle} />
                     {tabs.map((tab, index) => (
                         <button
                             key={tab}

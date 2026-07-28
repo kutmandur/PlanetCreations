@@ -84,7 +84,7 @@ const ShowcasePage = () => {
                             <div className="absolute bottom-3 right-3 flex gap-2">
                                 {SOCIAL_PLATFORMS.filter(p => community.socialLinks?.[p.id]).map(platform => (
                                     <a key={platform.id} href={community.socialLinks[platform.id]} target="_blank" rel="noopener noreferrer" title={platform.label}
-                                        className="w-9 h-9 rounded-full bg-black/60 hover:bg-[--theme-color] text-white flex items-center justify-center transition-colors shadow">
+                                        className="w-9 h-9 rounded-full bg-black/60 community-bg-hover text-white flex items-center justify-center transition-colors shadow">
                                         <Icon path={platform.icon} solid={platform.solid} className="w-5 h-5" />
                                     </a>
                                 ))}
@@ -96,7 +96,7 @@ const ShowcasePage = () => {
                 <div className="flex flex-col md:flex-row justify-center items-center md:items-start gap-y-4 px-2">
                     {/* Home button (top-left) */}
                     <div className="order-2 md:order-1 w-48 flex-shrink-0 flex md:block justify-center">
-                        <button onClick={() => navigate('/')} className="flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold">
+                        <button onClick={() => navigate('/')} className="flex items-center justify-center community-bg hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold">
                             <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" /> Homepage
                         </button>
                     </div>
@@ -136,7 +136,7 @@ const ShowcasePage = () => {
                 </div>
             ) : showcase.videoUrl ? (
                 <div className="text-center mb-10">
-                    <a href={showcase.videoUrl} target="_blank" rel="noopener noreferrer" className="text-[--theme-color] font-semibold hover:underline">Watch the showcase video ↗</a>
+                    <a href={showcase.videoUrl} target="_blank" rel="noopener noreferrer" className="community-text font-semibold hover:underline">Watch the showcase video ↗</a>
                 </div>
             ) : (
                 <p className="text-center text-gray-400 mb-10">The showcase video will appear here once it's published.</p>

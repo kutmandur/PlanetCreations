@@ -121,7 +121,7 @@ const ApplicationsManager = ({ creations, setCreations, community, setModalMessa
                             <div className="flex gap-2 mt-3 pt-3 border-t">
                                 <button
                                     onClick={() => setShowcaseModal({ creationId: creation.id })}
-                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white bg-[--theme-color] hover:brightness-90"
+                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white community-bg hover:brightness-90"
                                     title="Accept and add to the showcase waitlist"
                                 >
                                     Mark for Showcase
