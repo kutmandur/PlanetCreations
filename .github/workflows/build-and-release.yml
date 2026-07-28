@@ -16,6 +16,7 @@ jobs:
       - name: Create shared draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
@@ -111,3 +112,24 @@ jobs:
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
           VITE_FIREBASE_VAPID_KEY: ${{ secrets.VITE_FIREBASE_VAPID_KEY }}
           VITE_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ secrets.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+
+  finalize-release:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Remove differential-update blockmaps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release view "$GITHUB_REF_NAME" \
+            --json assets \
+            --jq '.assets[].name | select(endswith(".blockmap"))' |
+          while IFS= read -r asset; do
+            gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+          done
