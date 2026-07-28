@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth } from '../../firebase/config';
+import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import {
     finalizeCollaborationVersion,
     updateCollaborationChangelogEntry,
@@ -152,8 +153,15 @@ const CollaborationChangelogModal = ({
         let uploadId = null;
         let finalizationStarted = false;
         try {
-            const idToken = await auth.currentUser.getIdToken(true);
-            const prepared = await window.electronAPI.prepareBackupForUpload(selected.filePath, idToken);
+            const [idToken, appCheckToken] = await Promise.all([
+                auth.currentUser.getIdToken(true),
+                getAppCheckTokenIfAvailable(),
+            ]);
+            const prepared = await window.electronAPI.prepareBackupForUpload(
+                selected.filePath,
+                idToken,
+                appCheckToken,
+            );
             if (!prepared?.success) {
                 throw new Error(prepared?.message || 'Could not prepare the newest save.');
             }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';
 import { ICONS } from '../../utils/helpers';

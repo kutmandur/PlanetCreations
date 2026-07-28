@@ -4,6 +4,7 @@ import {
     addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId, Timestamp
 } from 'firebase/firestore';
 import { db, auth } from '../../firebase/config';
+import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
@@ -12,7 +13,7 @@ import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import HighlightableTextarea from '../ui/HighlightableTextarea';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import InfoBox from '../ui/InfoBox';
 import SelectBackupModal from '../modals/SelectBackupModal';
 
@@ -500,8 +501,15 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 await abortPreviousUpload({ uploadId: backupUploadId }).catch(() => null);
                 setBackupUploadId(null);
             }
-            const idToken = await auth.currentUser.getIdToken(true);
-            const result = await window.electronAPI.prepareBackupForUpload(file.path, idToken);
+            const [idToken, appCheckToken] = await Promise.all([
+                auth.currentUser.getIdToken(true),
+                getAppCheckTokenIfAvailable(),
+            ]);
+            const result = await window.electronAPI.prepareBackupForUpload(
+                file.path,
+                idToken,
+                appCheckToken,
+            );
     
             if (!result.success) {
                 setModalMessage(result.message || "Could not prepare backup file.");

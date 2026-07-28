@@ -1,10 +1,10 @@
-jest.mock('firebase/firestore', () => ({
-    doc: jest.fn((...args) => ({ __path: args.slice(1).join('/') })),
-    getDoc: jest.fn(),
-    setDoc: jest.fn(() => Promise.resolve()),
-    serverTimestamp: jest.fn(() => 'SERVER_TS'),
+vi.mock('firebase/firestore', () => ({
+    doc: vi.fn((...args) => ({ __path: args.slice(1).join('/') })),
+    getDoc: vi.fn(),
+    setDoc: vi.fn(() => Promise.resolve()),
+    serverTimestamp: vi.fn(() => 'SERVER_TS'),
 }));
-jest.mock('../firebase/config', () => ({ db: {} }));
+vi.mock('../firebase/config', () => ({ db: {} }));
 
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import {
@@ -29,13 +29,13 @@ const optIn = () => setPersonalizationEnabled(null, true); // lokal only
 
 beforeEach(() => {
     window.localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     // CRA-Jest nutzt resetMocks:true — Implementierungen pro Test neu setzen
     doc.mockImplementation((...args) => ({ __path: args.slice(1).join('/') }));
     setDoc.mockImplementation(() => Promise.resolve());
     serverTimestamp.mockImplementation(() => 'SERVER_TS');
     nowMs = new Date('2026-07-17T12:00:00Z').getTime();
-    jest.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
 });
 
 afterEach(() => {

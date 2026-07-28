@@ -21,7 +21,7 @@ test('accepts only collaboration availability notifications with a safe link', (
 });
 
 test('refresh subscribers receive only their collaboration release', () => {
-    const listener = jest.fn();
+    const listener = vi.fn();
     const unsubscribe = subscribeCollaborationAvailable(
         'collab-1',
         listener,
@@ -44,7 +44,7 @@ test('refresh subscribers receive only their collaboration release', () => {
 });
 
 test('dispatches a local release refresh by collaboration id', () => {
-    const listener = jest.fn();
+    const listener = vi.fn();
     const unsubscribe = subscribeCollaborationAvailable(
         'collab-local',
         listener,

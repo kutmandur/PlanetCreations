@@ -4,6 +4,7 @@ import { db, auth } from '../../firebase/config';
 import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import { getGameColor } from '../../utils/helpers';
 import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
@@ -440,12 +441,21 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         try {
             const user = auth.currentUser;
             if (!user) throw new Error("Not logged in.");
-            const idToken = await user.getIdToken(true);
-            const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
+            const [idToken, appCheckToken] = await Promise.all([
+                user.getIdToken(true),
+                getAppCheckTokenIfAvailable(),
+            ]);
+            const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ||
+                'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
             const params = new URLSearchParams({ scope });
             if (communityId) params.set('communityId', communityId);
             const response = await fetch(`${apiBaseUrl}/rebuildSearchIndex?${params}`, {
-                headers: { 'Authorization': `Bearer ${idToken}` }
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    ...(appCheckToken ? {
+                        'X-Firebase-AppCheck': appCheckToken,
+                    } : {}),
+                }
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);

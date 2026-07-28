@@ -3,6 +3,7 @@ import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import useGames from '../../hooks/useGames';
+import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 
 // Import der ausgelagerten Komponenten
 import GlobalLoader from '../ui/GlobalLoader';
@@ -211,6 +212,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
         setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] });
 
         let idToken = null;
+        let appCheckToken = null;
         if (isSigned) {
             if (!user) {
                 alert("You must be in online mode and logged in to sign a backup.");
@@ -218,7 +220,10 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
             }
             try {
                 setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
-                idToken = await user.getIdToken(true);
+                [idToken, appCheckToken] = await Promise.all([
+                    user.getIdToken(true),
+                    getAppCheckTokenIfAvailable(),
+                ]);
             } catch (error) {
                 alert("Could not get authentication token. Please try again.");
                 setGlobalLoader({ isLoading: false, message: '' });
@@ -231,7 +236,13 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
             if (filesToBackup.length === 0) return;
             setGlobalLoader({ isLoading: true, message: `Backing up ${filesToBackup.length} creation(s)...` });
             try {
-                const result = await window.electronAPI.backupAllCreations(filesToBackup, note, isSigned, idToken);
+                const result = await window.electronAPI.backupAllCreations(
+                    filesToBackup,
+                    note,
+                    isSigned,
+                    idToken,
+                    appCheckToken,
+                );
                 alert(result.message);
                 if (result.success) {
                     onBackupCreated();
@@ -246,7 +257,13 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
             if (!file) return;
             setGlobalLoader({ isLoading: true, message: `Backing up ${file.name}...` });
             try {
-                await window.electronAPI.createBackup(file.path, note, isSigned, idToken);
+                await window.electronAPI.createBackup(
+                    file.path,
+                    note,
+                    isSigned,
+                    idToken,
+                    appCheckToken,
+                );
                 alert(`Backup for "${file.name}" created successfully!`);
                 if(onBackupCreated) onBackupCreated();
             } catch (error) { 
@@ -617,6 +634,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         setMediaBackupModalState({ isOpen: false, file: null });
 
         let idToken = null;
+        let appCheckToken = null;
         if (isSigned) {
             if (!user) {
                 alert("You must be in online mode and logged in to sign a media backup.");
@@ -624,7 +642,10 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
             }
             try {
                 setGlobalLoader({ isLoading: true, message: 'Requesting signature...' });
-                idToken = await user.getIdToken(true);
+                [idToken, appCheckToken] = await Promise.all([
+                    user.getIdToken(true),
+                    getAppCheckTokenIfAvailable(),
+                ]);
             } catch (error) {
                 alert("Could not get authentication token. Please try again.");
                 setGlobalLoader({ isLoading: false, message: '' });
@@ -635,7 +656,13 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         setBackingUpMediaFile(file.path);
         setGlobalLoader({ isLoading: true, message: `Backing up media for ${file.name}...` });
         try {
-            const result = await window.electronAPI.backupCreationMedia(file.path, note, isSigned, idToken);
+            const result = await window.electronAPI.backupCreationMedia(
+                file.path,
+                note,
+                isSigned,
+                idToken,
+                appCheckToken,
+            );
             alert(result.message);
         } catch (error) {
             alert(`An error occurred: ${error.message}`);

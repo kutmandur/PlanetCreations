@@ -1,10 +1,10 @@
-jest.mock('firebase/firestore', () => ({
-    doc: jest.fn((...args) => ({ __path: args.slice(1).join('/') })),
-    getDoc: jest.fn(),
-    setDoc: jest.fn(() => Promise.resolve()),
-    serverTimestamp: jest.fn(() => 'SERVER_TS'),
+vi.mock('firebase/firestore', () => ({
+    doc: vi.fn((...args) => ({ __path: args.slice(1).join('/') })),
+    getDoc: vi.fn(),
+    setDoc: vi.fn(() => Promise.resolve()),
+    serverTimestamp: vi.fn(() => 'SERVER_TS'),
 }));
-jest.mock('../firebase/config', () => ({ db: {} }));
+vi.mock('../firebase/config', () => ({ db: {} }));
 
 import { getDoc, setDoc } from 'firebase/firestore';
 import {
@@ -32,7 +32,7 @@ const REMOTE = {
 
 beforeEach(() => {
     window.localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     // CRA-Jest nutzt resetMocks:true — Implementierungen pro Test neu setzen
     setDoc.mockImplementation(() => Promise.resolve());
     __testing.reset();
@@ -69,7 +69,7 @@ describe('remote load', () => {
     });
 
     it('replaces the snapshot, mirrors to localStorage and notifies subscribers', async () => {
-        const listener = jest.fn();
+        const listener = vi.fn();
         subscribeGames(listener);
         await loadGamesRegistry();
         expect(getGames().map((g) => g.id)).toEqual(['planet-zoo-2']); // disabled PC1 gefiltert
@@ -120,7 +120,7 @@ describe('accessors', () => {
 
 describe('saveGamesRegistry', () => {
     it('writes games + enabled-only gameIds and updates the local snapshot', async () => {
-        const listener = jest.fn();
+        const listener = vi.fn();
         subscribeGames(listener);
         await saveGamesRegistry({ games: REMOTE.games, defaultGameId: 'planet-zoo-2' });
         expect(setDoc).toHaveBeenCalledTimes(1);

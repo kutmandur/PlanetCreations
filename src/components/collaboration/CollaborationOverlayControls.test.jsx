@@ -10,11 +10,11 @@ import {
 } from '../../utils/collaborationVersionUpdates';
 import CollaborationOverlayControls from './CollaborationOverlayControls';
 
-jest.mock('../../firebase/collaboration', () => ({
-    endBuildSession: jest.fn(),
-    fetchUserCollaborationsForGame: jest.fn(),
-    getCollaborationVersionDownloadUrl: jest.fn(),
-    startBuildSession: jest.fn(),
+vi.mock('../../firebase/collaboration', () => ({
+    endBuildSession: vi.fn(),
+    fetchUserCollaborationsForGame: vi.fn(),
+    getCollaborationVersionDownloadUrl: vi.fn(),
+    startBuildSession: vi.fn(),
 }));
 
 const collaboration = {
@@ -32,13 +32,13 @@ const collaboration = {
 describe('CollaborationOverlayControls version updates', () => {
     beforeEach(() => {
         localStorage.clear();
-        jest.clearAllMocks();
+        vi.clearAllMocks();
         fetchUserCollaborationsForGame.mockResolvedValue([collaboration]);
         getCollaborationVersionDownloadUrl.mockResolvedValue({
             downloadUrl: 'https://account.r2.cloudflarestorage.com/signed',
         });
         window.electronAPI = {
-            saveCollaborationVersion: jest.fn().mockResolvedValue({
+            saveCollaborationVersion: vi.fn().mockResolvedValue({
                 success: true,
                 targetPath: 'C:\\Saves\\Shared Park.park2',
             }),
@@ -58,14 +58,14 @@ describe('CollaborationOverlayControls version updates', () => {
             versionNumber: 2,
             targetPath: 'C:\\Saves\\Shared Park.park2',
         });
-        const setModalMessage = jest.fn();
+        const setModalMessage = vi.fn();
 
         render(
             <CollaborationOverlayControls
                 user={{uid: 'user-1', displayName: 'Builder'}}
                 activeGameId="planet-coaster-2"
                 currentPath="/"
-                onOpenCollaboration={jest.fn()}
+                onOpenCollaboration={vi.fn()}
                 setModalMessage={setModalMessage}
             />,
         );

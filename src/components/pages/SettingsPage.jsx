@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/config';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteField, query, where, onSnapshot } from 'firebase/firestore';
-import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, getIdToken, sendEmailVerification } from 'firebase/auth';
+import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from 'firebase/firestore';
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendEmailVerification } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getGameColor, ICONS, SOCIAL_PLATFORMS } from '../../utils/helpers';
 import { joinCommunity } from '../../firebase/community';
+import {
+    openDiscordLink,
+    unlinkDiscordAccount,
+} from '../../firebase/discord';
 import PasswordInput from '../ui/PasswordInput';
 import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
 import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
@@ -26,7 +30,6 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [cooldown, setCooldown] = useState(false);
     const [showApplicationModal, setShowApplicationModal] = useState(false);
     
-    const [isSyncing, setIsSyncing] = useState(false);
     const [linkedDiscordInfo, setLinkedDiscordInfo] = useState(null);
     const [isJoining, setIsJoining] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -119,15 +122,21 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         if (urlParams.get('discord-linked') === 'success') {
             setModalMessage("Discord account linked successfully!");
             window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (urlParams.get('discord-linked') === 'error') {
+            setModalMessage("Discord account linking failed or expired. Please try again.");
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
 
 
         return () => unsubscribe();
     }, [user, setModalMessage]);
 
-    const handleLinkDiscord = () => {
-        const functionUrl = `https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/discordAuthRedirect?appUserId=${user.uid}`;
-        window.open(functionUrl, '_blank', 'noopener,noreferrer');
+    const handleLinkDiscord = async () => {
+        try {
+            await openDiscordLink();
+        } catch (error) {
+            setModalMessage(`Could not start Discord linking: ${error.message}`);
+        }
     };
 
     const handleUnlinkDiscord = async () => {
@@ -135,13 +144,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
             message: "Are you sure you want to unlink your Discord account? Your ranks will no longer be synced, and you won't get community suggestions.",
             onConfirm: async () => {
                 try {
-                    const userRef = doc(db, 'users', user.uid);
-                    await updateDoc(userRef, {
-                        discordId: deleteField(),
-                        discordUsername: deleteField(),
-                        discordGuilds: deleteField(),
-                        discordRefreshToken: deleteField()
-                    });
+                    await unlinkDiscordAccount();
                     setModalMessage("Discord account has been unlinked.");
                 } catch (error) {
                     setModalMessage(`Error unlinking account: ${error.message}`);
@@ -150,40 +153,6 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         });
     };
 
-    const handleSyncRoles = async () => {
-        if (!user) {
-            setModalMessage("You must be logged in to sync your roles.");
-            return;
-        }
-
-        setIsSyncing(true);
-        setModalMessage("Syncing your community ranks...");
-
-        try {
-            const token = await getIdToken(user);
-            const response = await fetch('https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/syncUserDiscordRoles', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.error || "Failed to sync roles.");
-            }
-
-            setModalMessage(result.message);
-
-        } catch (error) {
-            setModalMessage(`Error: ${error.message}`);
-        } finally {
-            setIsSyncing(false);
-        }
-    };
-    
     const handleJoinAllSuggested = async () => {
         setIsJoining(true);
         try {
@@ -479,14 +448,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                         Link with Discord
                     </button>
                 )}
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                    <button 
-                        onClick={handleSyncRoles}
-                        disabled={isSyncing || !linkedDiscordInfo}
-                        className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                        {isSyncing ? 'Syncing...' : 'Sync Ranks Now'}
-                    </button>
+                <div className="mt-4">
                      <button 
                         onClick={handleJoinAllSuggested}
                         disabled={isJoining || !linkedDiscordInfo}

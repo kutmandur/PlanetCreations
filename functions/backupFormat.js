@@ -183,7 +183,7 @@ function parseSmallJsonEntry(entry, label, maximumSize) {
     if (entry.header.size > maximumSize) throw new Error(`${label} is too large.`);
     try {
         return { value: JSON.parse(entry.getData().toString("utf8")), buffer: entry.getData() };
-    } catch (error) {
+    } catch {
         throw new Error(`${label} is not valid JSON.`);
     }
 }
@@ -221,7 +221,7 @@ function validateCreationArchive(fileBuffer, publicKey, allowedExtensions) {
     let zip;
     try {
         zip = new AdmZip(fileBuffer);
-    } catch (error) {
+    } catch {
         throw new Error("The backup is not a valid ZIP archive.");
     }
 

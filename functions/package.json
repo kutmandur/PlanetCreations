@@ -3,7 +3,7 @@
   "description": "Cloud Functions for Firebase",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test backupFormat.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationVersioning.test.js communityMembership.test.js",
+    "test": "node --test backupFormat.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationVersioning.test.js communityMembership.test.js runtime.test.js security.test.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
@@ -11,22 +11,22 @@
     "logs": "firebase functions:log"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "index.js",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1090.0",
-    "@aws-sdk/s3-request-presigner": "^3.1090.0",
-    "adm-zip": "^0.5.16",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "firebase-admin": "^12.1.1",
-    "firebase-functions": "^5.0.1",
-    "node-fetch": "^2.7.0"
+    "@aws-sdk/client-s3": "^3.1096.0",
+    "@aws-sdk/s3-request-presigner": "^3.1096.0",
+    "adm-zip": "^0.6.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.3.0"
   },
   "devDependencies": {
-    "eslint": "^8.9.0",
-    "eslint-config-google": "^0.14.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0"
   },
   "private": true
 }

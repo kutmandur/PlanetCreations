@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="%BASE_URL%favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Restore the user's chosen view mode before React loads.
+      (function () {
+        try {
+          if (localStorage.getItem('pcViewMode') === 'desktop') {
+            var viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport) viewport.setAttribute('content', 'width=1280');
+          }
+        } catch (error) {}
+      })();
+      // Apply the selected or system theme before React mounts.
+      (function () {
+        try {
+          var theme = localStorage.getItem('pcTheme');
+          var dark = theme === 'dark' ||
+            (!theme && window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (error) {}
+      })();
+    </script>
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="A hub for your park- and zoo-builder creations."
+    />
+    <link
+      rel="apple-touch-icon"
+      href="%BASE_URL%apple-touch-icon-V2?v=3.png"
+    />
+    <link rel="manifest" href="%BASE_URL%manifest.json" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="PlanetCreations" />
+    <meta
+      property="og:description"
+      content="A hub for your park- and zoo-builder creations."
+    />
+    <meta property="og:image" content="%BASE_URL%logo.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PlanetCreations" />
+    <meta
+      name="twitter:description"
+      content="A hub for your park- and zoo-builder creations."
+    />
+    <meta name="twitter:image" content="%BASE_URL%logo.png" />
+
+    <title>PlanetCreations</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/index.jsx"></script>
+  </body>
+</html>

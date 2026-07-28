@@ -9,7 +9,6 @@ const mime = require('mime-types');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
-const fetch = require('node-fetch');
 
 const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
@@ -1288,7 +1287,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     return gameFiles;
 });
 
-ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => {
+ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken, appCheckToken) => {
     requireTrustedIpcSender(event, true);
     if (!filePath) {
         return { success: false, message: 'No file path provided.' };
@@ -1337,7 +1336,15 @@ ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken) => 
             // Die finale Backup-Größe wird nach dem Erstellen und serverseitig geprüft
 
             const tempDir = app.getPath('temp');
-            const newBackupPath = await createBackup(app, filePath, "Uploaded with creation", true, idToken, tempDir);
+            const newBackupPath = await createBackup(
+                app,
+                filePath,
+                "Uploaded with creation",
+                true,
+                idToken,
+                tempDir,
+                appCheckToken,
+            );
 
             if (!newBackupPath) {
                 throw new Error("Backup creation function did not return a valid path.");
@@ -1408,10 +1415,12 @@ ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentT
 // --- Andere Kern-Funktionen ---
 ipcMain.handle('import-media-backup', () => importMediaBackup(app, dialog));
 ipcMain.handle('has-media-snapshot', (event, filePath) => hasMediaSnapshot(filePath));
-ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken) => backupCreationMedia(app, filePath, note, isSigned, idToken));
+ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken) =>
+    backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken));
 ipcMain.handle('delete-creation-media', (event, filePath, mode) => deleteCreationMedia(filePath, mode));
 ipcMain.handle('scan-games', (event, basePath) => scanGamesFromPath(basePath));
-ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken) => createBackup(app, filePath, note, isSigned, idToken));
+ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken) =>
+    createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken));
 ipcMain.handle('list-all-backups', () => listAllBackups(app));
 ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath) => {
     let targetPath = originalFilePath;
@@ -1434,7 +1443,8 @@ ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath)
     return restoreBackup(app, backupFilePath, targetPath);
 });
 ipcMain.handle('delete-backup', (event, filePath) => deleteBackup(app, filePath));
-ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken) => backupAllCreations(app, files, note, isSigned, idToken));
+ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken, appCheckToken) =>
+    backupAllCreations(app, files, note, isSigned, idToken, appCheckToken));
 ipcMain.handle('scan-all-media-files', () => scanAllMediaFiles(app));
 ipcMain.handle('create-media-snapshot', (event, savePath, mediaPaths) => createOrUpdateSnapshot(savePath, mediaPaths));
 ipcMain.handle('get-media-snapshot', (event, savePath) => getSnapshot(savePath));

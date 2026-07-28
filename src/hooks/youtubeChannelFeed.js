@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
+    'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 
 // Geteilte React-Query-Optionen für den YouTube-Kanal-Feed, damit die Community-Seite
 // (Prefetch) und der Videos-Tab (Anzeige) denselben Cache-Key + Fetch nutzen.

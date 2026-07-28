@@ -41,7 +41,7 @@ test('remembers and clears an active collaboration build', () => {
 
 test('ends only the build matching the stopped game', async () => {
     const storage = createStorage();
-    const endSession = jest.fn().mockResolvedValue({
+    const endSession = vi.fn().mockResolvedValue({
         changelogEntryId: 'entry-1',
         username: 'Builder',
     });
@@ -86,7 +86,7 @@ test('keeps a pending marker after a retryable network failure', async () => {
     await expect(endRememberedCollaborationBuild({
         userId: 'user-1',
         gameId: 'planet-coaster-2',
-        endSession: jest.fn().mockRejectedValue(new Error('offline')),
+        endSession: vi.fn().mockRejectedValue(new Error('offline')),
         storage,
     })).rejects.toThrow('offline');
 
@@ -99,7 +99,7 @@ test('keeps a pending marker after a retryable network failure', async () => {
 
 test('retries only sessions previously marked for ending', async () => {
     const storage = createStorage();
-    const endSession = jest.fn().mockResolvedValue(undefined);
+    const endSession = vi.fn().mockResolvedValue(undefined);
     rememberActiveCollaborationBuild(session, storage);
 
     await expect(endRememberedCollaborationBuild({
@@ -113,19 +113,19 @@ test('retries only sessions previously marked for ending', async () => {
 
 test('keeps the original automatic-end timestamp across an offline retry', async () => {
     const storage = createStorage();
-    const now = jest.spyOn(Date, 'now');
+    const now = vi.spyOn(Date, 'now');
     rememberActiveCollaborationBuild(session, storage);
     now.mockReturnValueOnce(1000);
 
     await expect(endRememberedCollaborationBuild({
         userId: 'user-1',
         gameId: 'planet-coaster-2',
-        endSession: jest.fn().mockRejectedValue(new Error('offline')),
+        endSession: vi.fn().mockRejectedValue(new Error('offline')),
         storage,
     })).rejects.toThrow('offline');
 
     now.mockReturnValue(5000);
-    const endSession = jest.fn().mockResolvedValue({});
+    const endSession = vi.fn().mockResolvedValue({});
     await endRememberedCollaborationBuild({
         userId: 'user-1',
         endSession,
@@ -160,7 +160,7 @@ test('hands the recovered local draft to the end callable before clearing it', a
         true,
         storage,
     );
-    const endSession = jest.fn().mockResolvedValue({
+    const endSession = vi.fn().mockResolvedValue({
         changelogEntryId: 'entry-1',
     });
 

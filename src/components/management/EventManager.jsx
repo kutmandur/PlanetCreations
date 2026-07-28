@@ -3,7 +3,6 @@ import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot, getDoc, collection, query, where, getDocs, updateDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
@@ -191,33 +190,35 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
     const syncReactionCounts = async () => {
         if (submissions.length === 0) return;
         setIsSyncingReactions(true);
-        const functions = getFunctions();
-        const getDiscordReactionCount = httpsCallable(functions, 'getDiscordReactionCount');
         const newReactionCounts = {};
 
-        for (const sub of submissions) {
-            const linkRef = doc(db, 'communitys', eventData.communityId, 'creations', sub.id);
-            const linkSnap = await getDoc(linkRef);
-
-            if (linkSnap.exists()) {
-                const linkData = linkSnap.data();
-                if (linkData.discordChannelId && linkData.discordMessageId) {
-                    try {
-                        const result = await getDiscordReactionCount({ channelId: linkData.discordChannelId, messageId: linkData.discordMessageId });
-                        newReactionCounts[sub.id] = result.data.count;
-                    } catch (error) {
-                        console.error("Error fetching reaction count:", error);
-                        newReactionCounts[sub.id] = 0;
-                    }
-                } else {
-                    newReactionCounts[sub.id] = 0;
-                }
+        try {
+            for (const sub of submissions) {
+                const linkRef = doc(
+                    db,
+                    'communitys',
+                    eventData.communityId,
+                    'creations',
+                    sub.id,
+                );
+                const linkSnap = await getDoc(linkRef);
+                const storedCount = linkSnap.exists()
+                    ? Number(linkSnap.data().reactionCount)
+                    : 0;
+                newReactionCounts[sub.id] = Number.isFinite(storedCount)
+                    ? Math.max(0, storedCount)
+                    : 0;
             }
+            setReactionCounts(newReactionCounts);
+            // The bot maintains reactionCount on each community link. Persist
+            // one snapshot for the public event results page.
+            await persistManager({ reactionCounts: newReactionCounts });
+        } catch (error) {
+            console.error('Error syncing stored reaction counts:', error);
+            setModalMessage(`Error syncing reactions: ${error.message}`);
+        } finally {
+            setIsSyncingReactions(false);
         }
-        setReactionCounts(newReactionCounts);
-        // Persistieren: öffentliche Ergebnisseite und Bot brauchen die Zahlen auch.
-        persistManager({ reactionCounts: newReactionCounts });
-        setIsSyncingReactions(false);
     };
 
     useEffect(() => {

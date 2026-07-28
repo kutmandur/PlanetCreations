@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
 const crypto = require('crypto');
-const fetch = require('node-fetch');
 const {
     createPortableManifest,
     savePortableManifestForCreation,
@@ -255,12 +254,15 @@ async function fetchPublicKey() {
     return cachedPublicKey;
 }
 
-async function signMetadata(metadata, idToken) {
+async function signMetadata(metadata, idToken, appCheckToken = null) {
     const response = await fetch(`${API_BASE_URL}/signBackup`, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${idToken}`,
             'Content-Type': 'application/json',
+            ...(appCheckToken ? {
+                'X-Firebase-AppCheck': appCheckToken,
+            } : {}),
         },
         body: JSON.stringify({ metadata }),
     });
@@ -328,10 +330,18 @@ async function validateBackupForUpload(backupFilePath) {
     }
 }
 
-async function backupAllCreations(app, files, note, isSigned, idToken) {
+async function backupAllCreations(app, files, note, isSigned, idToken, appCheckToken = null) {
     let successCount = 0;
     for (const file of files) {
-        if (await createBackup(app, file.path, note, isSigned, idToken)) successCount++;
+        if (await createBackup(
+            app,
+            file.path,
+            note,
+            isSigned,
+            idToken,
+            null,
+            appCheckToken,
+        )) successCount++;
     }
     return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.` };
 }
@@ -358,7 +368,15 @@ function deleteBackup(app, backupFilePath) {
     }
 }
 
-async function createBackup(app, sourceFilePath, note, isSigned = false, idToken = null, targetDir = null) {
+async function createBackup(
+    app,
+    sourceFilePath,
+    note,
+    isSigned = false,
+    idToken = null,
+    targetDir = null,
+    appCheckToken = null,
+) {
     if (!fs.existsSync(sourceFilePath) || !isValidGameFile(sourceFilePath)) {
         throw new Error(`Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be backed up.`);
     }
@@ -390,7 +408,7 @@ async function createBackup(app, sourceFilePath, note, isSigned = false, idToken
     };
     if (isSigned) {
         if (!idToken) throw new Error('Login is required for signed packages.');
-        metadata = await signMetadata(metadata, idToken);
+        metadata = await signMetadata(metadata, idToken, appCheckToken);
     }
 
     const category = backupCategoryMap[extension] || 'Misc';
@@ -454,7 +472,14 @@ function listAllBackups(app) {
     return allBackups;
 }
 
-async function backupCreationMedia(app, sourceFilePath, note, isSigned = false, idToken = null) {
+async function backupCreationMedia(
+    app,
+    sourceFilePath,
+    note,
+    isSigned = false,
+    idToken = null,
+    appCheckToken = null,
+) {
     try {
         const snapshot = getSnapshot(sourceFilePath);
         if (!snapshot?.assets?.length) return { success: false, message: 'No media is associated with this creation.' };
@@ -478,7 +503,7 @@ async function backupCreationMedia(app, sourceFilePath, note, isSigned = false, 
         };
         if (isSigned) {
             if (!idToken) throw new Error('Login is required for signed media packages.');
-            metadata = await signMetadata(metadata, idToken);
+            metadata = await signMetadata(metadata, idToken, appCheckToken);
         }
         const destinationDirectory = path.join(getBackupBaseDir(app), 'Custom Media');
         fs.mkdirSync(destinationDirectory, { recursive: true });

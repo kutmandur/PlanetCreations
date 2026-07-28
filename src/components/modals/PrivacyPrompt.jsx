@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 
-const CookieConsent = () => {
+const PrivacyPrompt = () => {
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
@@ -54,4 +54,4 @@ const CookieConsent = () => {
     );
 };
 
-export default CookieConsent;
+export default PrivacyPrompt;

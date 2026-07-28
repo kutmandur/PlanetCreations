@@ -1,66 +1,52 @@
 {
   "name": "planet-creation-net",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "PlanetCreations Desktop Client",
   "author": "PlanetCreations",
   "private": true,
   "main": "electron/main.js",
-  "homepage": "./",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
   "dependencies": {
-    "@tanstack/react-query": "^5.89.0",
-    "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^13.4.0",
-    "@testing-library/user-event": "^13.5.0",
-    "adm-zip": "^0.5.16",
-    "electron-log": "^5.4.3",
-    "electron-updater": "^6.1.1",
-    "firebase": "^10.12.2",
-    "fuse.js": "^7.4.2",
-    "node-fetch": "^2.7.0",
+    "@hello-pangea/dnd": "^18.0.1",
+    "@tanstack/react-query": "^5.101.4",
+    "adm-zip": "^0.6.0",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
+    "firebase": "^12.16.0",
+    "fuse.js": "^7.5.0",
+    "mime-types": "^3.0.2",
     "obs-websocket-js": "^5.0.6",
     "qrcode": "^1.5.4",
-    "react": "^18.3.1",
-    "react-beautiful-dnd": "^13.1.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.23.1",
-    "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4",
-    "ws": "^8.18.0"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.1",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
-    "cross-env": "^7.0.3",
-    "electron": "^31.0.1",
-    "electron-builder": "^24.13.3",
-    "electron-is-dev": "^3.0.1",
-    "electron-packager": "^17.1.2",
-    "wait-on": "^7.2.0"
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^9.2.4",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^30.0.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.1.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "electron-dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && electron .\"",
+    "start": "vite",
+    "build": "vite build",
+    "test": "npm run test:frontend && npm run test:electron",
+    "test:frontend": "vitest run",
+    "test:electron": "node --test \"electron/modules/*.test.js\"",
+    "test:watch": "vitest",
+    "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",
     "package": "npm run build && electron-builder"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
   },
   "build": {
     "extends": null,
@@ -84,9 +70,26 @@
       "icon": "assets/icon.ico"
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "assets/icon.icns",
-      "identity": null
+      "category": "public.app-category.utilities",
+      "darkModeSupport": true,
+      "hardenedRuntime": true
     },
     "linux": {
       "target": "AppImage",

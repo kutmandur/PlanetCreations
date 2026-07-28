@@ -437,10 +437,30 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && request.resource.data.role == 'user';
+      // Discord identity and OAuth fields are server-authoritative. Clients must
+      // never be able to forge a Discord id/guild list or write provider tokens.
+      allow create: if isOwner(userId) &&
+          request.resource.data.role == 'user' &&
+          !request.resource.data.keys().hasAny([
+            'discordId',
+            'discordUsername',
+            'discordGuilds',
+            'discordLinkedAt',
+            'discordRefreshToken'
+          ]);
       // reportCount wird serverseitig vom onReportCreated-Trigger gepflegt, nicht
       // mehr vom Client (verhindert Zähler-Manipulation/Harassment).
-      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+      allow update: if (
+          isOwner(userId) &&
+          request.resource.data.role == resource.data.role &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'discordId',
+            'discordUsername',
+            'discordGuilds',
+            'discordLinkedAt',
+            'discordRefreshToken'
+          ])
+        ) || isAdmin();
       allow delete: if isOwner(userId) || isAdmin();
 
       // Notification hub: single capped inbox doc (users/{uid}/meta/inbox) with
@@ -456,6 +476,21 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
         allow delete: if isModerator();
       }
+    }
+
+    // OAuth state, refresh tokens, provider-to-user mappings and distributed
+    // rate-limit counters are exclusively managed through Cloud Functions.
+    match /oauthStates/{stateHash} {
+      allow read, write: if false;
+    }
+    match /privateOAuthCredentials/{userId} {
+      allow read, write: if false;
+    }
+    match /discordAccountLinks/{discordId} {
+      allow read, write: if false;
+    }
+    match /securityRateLimits/{limitId} {
+      allow read, write: if false;
     }
 
     // Device-specific direct-install queues are written only by callable Cloud
@@ -531,15 +566,6 @@ service cloud.firestore {
     function isCollaborationOwnerOrMod(collaborationId) {
       return isCollaborationOwner(collaborationId) || isModerator();
     }
-    function isCollaborationEditor(collaborationId) {
-      let memberPath = /databases/$(database)/documents/collaborations/$(collaborationId)/members/$(request.auth.uid);
-      return isLoggedIn() && exists(memberPath) && get(memberPath).data.role in ['owner', 'editor'];
-    }
-    // Collaboration editor OR site moderator/admin
-    function isCollaborationEditorOrMod(collaborationId) {
-      return isCollaborationEditor(collaborationId) || isModerator();
-    }
-
     match /collaborations/{collaborationId} {
       // Lesen/Listen nur, wenn Mitglied/Owner/Mod. Dadurch sind nur die eigenen
       // Collaborations abfragbar (ownerId==uid bzw. memberIds array-contains uid) —

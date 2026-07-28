@@ -30,7 +30,7 @@ import RickRollModal from './components/modals/RickRollModal';
 import { GameOverlayWidget, GameOverlayChrome } from './components/ui/GameOverlay';
 
 import ErrorBoundary from './components/ErrorBoundary';
-import CookieConsent from './components/modals/CookieConsent';
+import PrivacyPrompt from './components/modals/PrivacyPrompt';
 import BugReportModal from './components/modals/BugReportModal';
 import GoLiveModal from './components/modals/GoLiveModal';
 import { readLiveSession, setLiveSession } from './utils/liveStream';
@@ -831,7 +831,7 @@ const AppContent = () => {
                     blacklist={blacklist}
                 />
             )}
-            <CookieConsent />
+            <PrivacyPrompt />
         </div>
         </>
     );

@@ -9,8 +9,8 @@ const noopSubscription = () => () => {};
  */
 export const installDesktopE2EShim = () => {
     if (
-        process.env.NODE_ENV === 'production' ||
-        process.env.REACT_APP_USE_FIREBASE_EMULATORS !== 'true' ||
+        import.meta.env.PROD ||
+        import.meta.env.VITE_USE_FIREBASE_EMULATORS !== 'true' ||
         typeof window === 'undefined' ||
         window.electronAPI
     ) {

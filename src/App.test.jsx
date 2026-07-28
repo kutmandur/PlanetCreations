@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-jest.mock('./firebase/config', () => ({
+vi.mock('./firebase/config', () => ({
   auth: null,
   db: null,
   isConfigured: false,

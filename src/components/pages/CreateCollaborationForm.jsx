@@ -3,8 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { createCollaboration, fetchCollaborationById, updateCollaborationSettings } from '../../firebase/collaboration';
 import { auth } from '../../firebase/config';
+import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import { getGameColor, ICONS, isSafeHttpUrl } from '../../utils/helpers';
 import { recordInstalledCollaborationVersion } from '../../utils/collaborationVersionUpdates';
+import SelectBackupModal from '../modals/SelectBackupModal';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 
@@ -54,6 +56,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
     const [mobileOpen, setMobileOpen] = useState(true);
     const [completedSteps, setCompletedSteps] = useState([]);
     const [initialSave, setInitialSave] = useState(null);
+    const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
     const [initialNote, setInitialNote] = useState('Initial save');
     const [galleryImageInput, setGalleryImageInput] = useState('');
     const [submissionStage, setSubmissionStage] = useState('');
@@ -154,23 +157,23 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
         return null;
     };
 
-    const handleChooseInitialSave = async () => {
-        if (!isRunningInElectron || !window.electronAPI?.selectCollaborationFile) {
+    const handleChooseInitialSave = () => {
+        if (!isRunningInElectron || !window.electronAPI?.listAllLocalCreationsAndBackups) {
             setModalMessage('Please use an up-to-date PlanetCreations desktop client to choose the initial save.');
             return;
         }
-        try {
-            const selected = await window.electronAPI.selectCollaborationFile(form.game);
-            if (!selected?.success) {
-                if (selected?.status !== 'canceled') {
-                    setModalMessage(selected?.message || 'Could not select the save file.');
-                }
-                return;
-            }
-            setInitialSave(selected);
-        } catch (error) {
-            setModalMessage(`Could not select the save file: ${error.message}`);
-        }
+        setIsBackupModalOpen(true);
+    };
+
+    const handleInitialSaveSelected = (file) => {
+        setIsBackupModalOpen(false);
+        if (!file?.path) return;
+        setInitialSave({
+            filePath: file.path,
+            fileName: file.name,
+            fileSize: file.size,
+            modifiedAt: file.modifiedAt,
+        });
     };
 
     const addGalleryImageUrls = (rawValue) => {
@@ -234,10 +237,14 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                 navigate(`/collaboration/${collaborationId}`);
             } else {
                 setSubmissionStage('Preparing initial save…');
-                const idToken = await auth.currentUser.getIdToken(true);
+                const [idToken, appCheckToken] = await Promise.all([
+                    auth.currentUser.getIdToken(true),
+                    getAppCheckTokenIfAvailable(),
+                ]);
                 const prepared = await window.electronAPI.prepareBackupForUpload(
                     initialSave.filePath,
                     idToken,
+                    appCheckToken,
                 );
                 if (!prepared?.success) {
                     throw new Error(prepared?.message || 'Could not prepare the initial save.');
@@ -728,6 +735,12 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
 
     return (
         <div className="mx-auto mt-10 max-w-5xl px-4" style={color.style}>
+            <SelectBackupModal
+                isOpen={isBackupModalOpen}
+                onClose={() => setIsBackupModalOpen(false)}
+                onFileSelect={handleInitialSaveSelected}
+                game={form.game}
+            />
             <h1 className="mb-6 text-center text-3xl font-bold text-gray-800 dark:text-gray-100">
                 {isEdit ? 'Edit Collaboration' : 'New Collaboration'}
             </h1>

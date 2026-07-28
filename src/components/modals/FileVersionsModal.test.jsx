@@ -7,11 +7,11 @@ import {
 } from '../../firebase/collaboration';
 import { readInstalledCollaborationVersions } from '../../utils/collaborationVersionUpdates';
 
-jest.mock('../../firebase/collaboration', () => ({
-    fetchFileVersions: jest.fn(),
-    getCollaborationVersionDownloadUrl: jest.fn(),
+vi.mock('../../firebase/collaboration', () => ({
+    fetchFileVersions: vi.fn(),
+    getCollaborationVersionDownloadUrl: vi.fn(),
 }));
-jest.mock('../../utils/helpers', () => ({
+vi.mock('../../utils/helpers', () => ({
     ICONS: {
         download: '',
         refresh: '',
@@ -45,7 +45,7 @@ describe('FileVersionsModal', () => {
             downloadUrl: 'https://example.r2.cloudflarestorage.com/signed',
         });
         window.electronAPI = {
-            saveCollaborationVersion: jest.fn().mockResolvedValue({
+            saveCollaborationVersion: vi.fn().mockResolvedValue({
                 success: true,
                 targetPath: 'C:\\Saves\\park.park2',
             }),
@@ -54,11 +54,11 @@ describe('FileVersionsModal', () => {
 
     afterEach(() => {
         delete window.electronAPI;
-        jest.clearAllMocks();
+        vi.clearAllMocks();
     });
 
     test('loads retained versions and hands a signed download to Electron', async () => {
-        const setModalMessage = jest.fn();
+        const setModalMessage = vi.fn();
         render(
             <FileVersionsModal
                 collaborationId="collab-1"
@@ -68,7 +68,7 @@ describe('FileVersionsModal', () => {
                 currentUserId="user-1"
                 retentionLimit={3}
                 isElectron
-                onClose={jest.fn()}
+                onClose={vi.fn()}
                 setModalMessage={setModalMessage}
             />,
         );

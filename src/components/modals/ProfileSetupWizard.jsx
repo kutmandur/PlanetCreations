@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { doc, setDoc, onSnapshot, updateDoc, deleteField } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import {
     containsBlacklistedWord,
@@ -12,6 +12,10 @@ import {
 import { getDefaultGameId, getGame } from '../../utils/gamesRegistry';
 import { getProfileAppearance, isValidProfileColor } from '../../utils/profileAppearance';
 import { getPersonalizationConsent } from '../../utils/interestTracker';
+import {
+    openDiscordLink,
+    unlinkDiscordAccount,
+} from '../../firebase/discord';
 import useGames from '../../hooks/useGames';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
@@ -37,8 +41,6 @@ const STEPS = [
 ];
 
 const DISCORD_ICON = SOCIAL_PLATFORMS.find((p) => p.id === 'discord');
-const DISCORD_AUTH_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/discordAuthRedirect';
-
 const Field = ({ label, hint, htmlFor, children }) => (
     <div>
         <label className="mb-1.5 block text-center font-semibold text-gray-700 dark:text-gray-200" htmlFor={htmlFor}>
@@ -328,8 +330,12 @@ const ProfileSetupWizard = ({
         }
     };
 
-    const handleLinkDiscord = () => {
-        window.open(`${DISCORD_AUTH_URL}?appUserId=${user.uid}`, '_blank', 'noopener,noreferrer');
+    const handleLinkDiscord = async () => {
+        try {
+            await openDiscordLink();
+        } catch (error) {
+            setModalMessage(`Could not start Discord linking: ${error.message}`);
+        }
     };
 
     const handleUnlinkDiscord = () => {
@@ -337,12 +343,7 @@ const ProfileSetupWizard = ({
             message: 'Unlink your Discord account? Your ranks will no longer be synced.',
             onConfirm: async () => {
                 try {
-                    await updateDoc(doc(db, 'users', user.uid), {
-                        discordId: deleteField(),
-                        discordUsername: deleteField(),
-                        discordGuilds: deleteField(),
-                        discordRefreshToken: deleteField(),
-                    });
+                    await unlinkDiscordAccount();
                     setModalMessage('Discord account has been unlinked.');
                 } catch (error) {
                     setModalMessage(`Error unlinking account: ${error.message}`);

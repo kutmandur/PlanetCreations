@@ -3,29 +3,29 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { updateCollaborationChangelogEntry } from '../../firebase/collaboration';
 import CollaborationChangelogModal from './CollaborationChangelogModal';
 
-jest.mock('firebase/functions', () => ({
-    getFunctions: jest.fn(),
-    httpsCallable: jest.fn(),
+vi.mock('firebase/functions', () => ({
+    getFunctions: vi.fn(),
+    httpsCallable: vi.fn(),
 }));
 
-jest.mock('../../firebase/config', () => ({
+vi.mock('../../firebase/config', () => ({
     auth: {
         currentUser: {
-            getIdToken: jest.fn(),
+            getIdToken: vi.fn(),
         },
     },
 }));
 
-jest.mock('../../firebase/collaboration', () => ({
-    finalizeCollaborationVersion: jest.fn(),
-    updateCollaborationChangelogEntry: jest.fn(),
+vi.mock('../../firebase/collaboration', () => ({
+    finalizeCollaborationVersion: vi.fn(),
+    updateCollaborationChangelogEntry: vi.fn(),
 }));
 
 describe('CollaborationChangelogModal', () => {
     beforeEach(() => {
-        jest.clearAllMocks();
+        vi.clearAllMocks();
         window.electronAPI = {
-            getLatestCollaborationFile: jest.fn().mockResolvedValue({
+            getLatestCollaborationFile: vi.fn().mockResolvedValue({
                 success: true,
                 filePath: 'C:\\Saves\\My Park.park2',
                 fileName: 'My Park.park2',
@@ -58,9 +58,9 @@ describe('CollaborationChangelogModal', () => {
                 game={{ shortName: 'PC2' }}
                 retentionLimit={3}
                 accentColor="#2563EB"
-                onClose={jest.fn()}
-                onUploaded={jest.fn()}
-                setModalMessage={jest.fn()}
+                onClose={vi.fn()}
+                onUploaded={vi.fn()}
+                setModalMessage={vi.fn()}
             />,
         );
 
@@ -77,8 +77,8 @@ describe('CollaborationChangelogModal', () => {
     });
 
     test('lets only the entry editor update an existing changelog without another save upload', async () => {
-        const onClose = jest.fn();
-        const onUploaded = jest.fn();
+        const onClose = vi.fn();
+        const onUploaded = vi.fn();
         render(
             <CollaborationChangelogModal
                 collaborationId="collab-1"
@@ -101,7 +101,7 @@ describe('CollaborationChangelogModal', () => {
                 accentColor="#2563EB"
                 onClose={onClose}
                 onUploaded={onUploaded}
-                setModalMessage={jest.fn()}
+                setModalMessage={vi.fn()}
             />,
         );
 

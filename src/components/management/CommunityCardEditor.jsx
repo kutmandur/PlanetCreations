@@ -5,7 +5,7 @@ import { db } from '../../firebase/config';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 import Spinner from '../ui/Spinner';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 const getTextColorForBackground = (hexColor) => {
     if (!hexColor) return '#000000';
