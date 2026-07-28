@@ -48,6 +48,7 @@ import { dispatchCollaborationAvailable } from './utils/collaborationAvailabilit
 import { registerQueryClient } from './utils/appRefresh';
 import ProfileSetupWizard from './components/modals/ProfileSetupWizard';
 import useInterestSync from './hooks/useInterestSync';
+import useMicroInteractionFeedback from './hooks/useMicroInteractionFeedback';
 import { loadGamesRegistry, getDefaultGameId, getGame } from './utils/gamesRegistry';
 import ClientDashboard from './components/pages/ClientDashboard';
 
@@ -121,6 +122,7 @@ const AppContent = () => {
     // While the user follows the OS setting (no explicit theme choice), apply live
     // dark/light changes from the system.
     useEffect(() => watchSystemTheme(), []);
+    useMicroInteractionFeedback();
     
     const [homeState, setHomeState] = useState({
         searchTerm: '', filterTag: '', sortBy: 'recommended', activeCategory: 'All',
