@@ -18,6 +18,10 @@ function toModifiedMillis(value) {
     return Number.isFinite(milliseconds) ? milliseconds : 0;
 }
 
+function portableBasename(value) {
+    return path.posix.basename(String(value || '').replaceAll('\\', '/'));
+}
+
 function findLatestCollaborationSave(scanResult, gameId, expectedFileName = '', now = Date.now()) {
     const gameName = GAME_NAMES[gameId];
     const supportedExtensions = EXTENSIONS_BY_GAME[gameId];
@@ -25,7 +29,7 @@ function findLatestCollaborationSave(scanResult, gameId, expectedFileName = '', 
         return { success: false, message: 'The collaboration game is not supported.' };
     }
 
-    const expectedName = path.basename(String(expectedFileName || '')).toLowerCase();
+    const expectedName = portableBasename(expectedFileName).toLowerCase();
     const expectedExtension = path.extname(expectedName);
     if (expectedExtension && !supportedExtensions.has(expectedExtension)) {
         return { success: false, message: 'The current collaboration save type does not match its game.' };
@@ -58,7 +62,7 @@ function findLatestCollaborationSave(scanResult, gameId, expectedFileName = '', 
     }
 
     const exactMatches = expectedName
-        ? candidates.filter((file) => path.basename(file.path).toLowerCase() === expectedName)
+        ? candidates.filter((file) => portableBasename(file.path).toLowerCase() === expectedName)
         : [];
     const pool = exactMatches.length > 0 ? exactMatches : candidates;
     pool.sort((a, b) => b.modifiedAtMs - a.modifiedAtMs || a.path.localeCompare(b.path));
@@ -68,7 +72,7 @@ function findLatestCollaborationSave(scanResult, gameId, expectedFileName = '', 
     return {
         success: true,
         filePath: latest.path,
-        fileName: latest.name || path.basename(latest.path),
+        fileName: latest.name || portableBasename(latest.path),
         fileSize: Number(latest.size) || 0,
         modifiedAt: new Date(latest.modifiedAtMs).toISOString(),
         modifiedAtMs: latest.modifiedAtMs,
