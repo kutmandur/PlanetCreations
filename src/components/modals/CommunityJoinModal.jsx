@@ -81,7 +81,7 @@ const CommunityJoinModal = ({
           <button
             type="submit"
             disabled={submitting || (isPassword && !value)}
-            className="min-w-[120px] px-5 py-2.5 rounded-xl bg-[--theme-color] text-white font-bold disabled:opacity-50"
+            className="min-w-[120px] px-5 py-2.5 rounded-xl community-bg text-white font-bold disabled:opacity-50"
           >
             {submitting ? <Spinner size="small" /> : (isPassword ? 'Join' : 'Send request')}
           </button>

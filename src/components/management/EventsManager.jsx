@@ -44,7 +44,7 @@ const EventsManager = ({ community, userProfile, setModalMessage, canCreateEvent
         <div>
             {canCreateEvents && <div className="text-center mb-8">
                 <Link to={`/community/${community.id}/create-event`} state={{ communityName: community.name }}>
-                    <button className="bg-[--theme-color] hover:brightness-90 text-white font-bold py-2 px-6 rounded-lg">
+                    <button className="community-bg hover:brightness-90 text-white font-bold py-2 px-6 rounded-lg">
                         Create New Event
                     </button>
                 </Link>

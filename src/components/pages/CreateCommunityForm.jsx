@@ -63,7 +63,7 @@ const VALIDATED_STEP_IDS = WIZARD_STEPS
   .filter(stepId => stepId !== 'review');
 
 const inputClass =
-  'w-full p-3 border rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[--theme-color]';
+  'w-full p-3 border rounded-xl bg-white focus:outline-none focus:ring-2 community-ring';
 
 const StepIntro = ({ title, description, optional = false }) => (
   <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -88,7 +88,7 @@ const ReviewRow = ({ label, value, onEdit }) => (
     <button
       type="button"
       onClick={onEdit}
-      className="flex-shrink-0 text-sm font-semibold text-[--theme-color] hover:underline"
+      className="flex-shrink-0 text-sm font-semibold community-text hover:underline"
     >
       Edit
     </button>
@@ -128,7 +128,7 @@ const CommunityPagePreview = ({
           <button
             type="button"
             tabIndex={-1}
-            className="rounded-lg bg-[--theme-color] px-3 py-2 text-sm font-bold text-white"
+            className="rounded-lg community-bg px-3 py-2 text-sm font-bold text-white"
           >
             Back to Hub
           </button>
@@ -145,7 +145,7 @@ const CommunityPagePreview = ({
 
         <div className="flex justify-center">
           <div className="relative flex items-center rounded-full bg-gray-200 p-1 shadow-inner dark:bg-gray-700">
-            <span className="rounded-full bg-[--theme-color] px-5 py-2 text-xs font-bold text-white">
+            <span className="rounded-full community-bg px-5 py-2 text-xs font-bold text-white">
               Creations
             </span>
             <span className="px-5 py-2 text-xs font-semibold text-gray-500 dark:text-gray-300">
@@ -710,7 +710,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
               onClick={() => handleGameToggle(game.id)}
               className={`rounded-xl border-2 p-4 text-left transition ${
                 selected
-                  ? 'border-[--theme-color] bg-gray-50'
+                  ? 'community-border bg-gray-50'
                   : 'border-gray-200 hover:border-gray-300'
               }`}
             >
@@ -718,7 +718,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
                 <span className="font-bold text-gray-800">{game.name}</span>
                 <span
                   className={`h-5 w-5 rounded-full border-2 ${
-                    selected ? 'border-[--theme-color] bg-[--theme-color]' : 'border-gray-300'
+                    selected ? 'community-border community-bg' : 'border-gray-300'
                   }`}
                 />
               </span>
@@ -776,7 +776,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
             onClick={() => setJoinMode(mode.id)}
             className={`rounded-xl border-2 p-4 text-left transition ${
               joinMode === mode.id
-                ? 'border-[--theme-color] bg-gray-50'
+                ? 'community-border bg-gray-50'
                 : 'border-gray-200 hover:border-gray-300'
             }`}
           >
@@ -1190,7 +1190,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         <button
           type="button"
           onClick={() => addRank()}
-          className="text-sm font-semibold text-[--theme-color] hover:underline"
+          className="text-sm font-semibold community-text hover:underline"
         >
           + Add custom rank
         </button>
@@ -1387,7 +1387,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="mb-3 flex items-center gap-1 font-semibold text-[--theme-color] lg:hidden"
+              className="mb-3 flex items-center gap-1 font-semibold community-text lg:hidden"
             >
               <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
               All sections

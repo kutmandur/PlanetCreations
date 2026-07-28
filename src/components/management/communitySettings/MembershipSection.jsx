@@ -102,7 +102,7 @@ const MembershipSection = ({ community, setModalMessage }) => {
             }}
             className={`p-4 rounded-xl border-2 text-left transition ${
               joinMode === mode.id
-                ? 'border-[--theme-color] bg-gray-50 dark:bg-gray-700'
+                ? 'community-border bg-gray-50 dark:bg-gray-700'
                 : 'border-gray-200 hover:border-gray-300 dark:border-gray-600'
             }`}
           >

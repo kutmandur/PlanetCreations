@@ -486,7 +486,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             >
                 <div className="w-full max-w-xl rounded-2xl bg-white dark:bg-gray-800 shadow-xl p-8 text-center">
                     <div className="mx-auto mb-5 w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
-                        <Icon path={ICONS.shieldCheck} className="w-9 h-9 text-[--theme-color]" />
+                        <Icon path={ICONS.shieldCheck} className="w-9 h-9 community-text" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">
                         {community.name}
@@ -515,7 +515,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                     isProcessingJoin ||
                                     (community.joinMode === 'invite' && !hasInvite)
                                 }
-                                className="px-5 py-2.5 rounded-lg bg-[--theme-color] hover:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all"
+                                className="px-5 py-2.5 rounded-lg community-bg hover:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all"
                             >
                                 {joinActionLabel}
                             </button>
@@ -527,7 +527,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                 onClick={() => navigate(
                                     `/login?redirect=${encodeURIComponent(`/community/${community.slug}`)}`
                                 )}
-                                className="px-5 py-2.5 rounded-lg bg-[--theme-color] hover:brightness-90 text-white font-bold transition-all"
+                                className="px-5 py-2.5 rounded-lg community-bg hover:brightness-90 text-white font-bold transition-all"
                             >
                                 Sign In
                             </button>
@@ -584,7 +584,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     title={platform.label}
-                                    className="w-9 h-9 rounded-full bg-black/60 hover:bg-[--theme-color] text-white flex items-center justify-center transition-colors shadow"
+                                    className="w-9 h-9 rounded-full bg-black/60 community-bg-hover text-white flex items-center justify-center transition-colors shadow"
                                 >
                                     <Icon path={platform.icon} solid={platform.solid} className="w-5 h-5" />
                                 </a>
@@ -597,7 +597,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     <div className="flex flex-col sm:flex-row gap-2 order-2 md:order-1 w-48 flex-shrink-0">
                         <button 
                             onClick={() => navigate('/communitys')} 
-                            className={`flex items-center justify-center bg-[--theme-color] hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold`}
+                            className="flex items-center justify-center community-bg hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold"
                         >
                             <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back to Hub
                         </button>
@@ -696,7 +696,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div
                             ref={gliderRef}
-                            className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out"
+                            className="absolute h-full community-bg rounded-full transition-all duration-300 ease-in-out"
                         />
                         {visibleTabs.map((tab, index) => (
                             <button
@@ -713,7 +713,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                     {user && isMember && canAddCreations && (
                         <button
                             onClick={() => setIsAddModalOpen(true)}
-                            className="hidden sm:flex ml-3 w-11 h-11 items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all flex-shrink-0"
+                            className="hidden sm:flex ml-3 w-11 h-11 items-center justify-center rounded-full community-bg text-white shadow hover:brightness-90 transition-all flex-shrink-0"
                             title="Add or remove your creations in this community"
                             aria-label="Manage your creations in this community"
                         >
@@ -736,7 +736,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             {canAddCreations && (
                                 <button
                                     onClick={() => setIsAddModalOpen(true)}
-                                    className="w-11 h-11 flex items-center justify-center rounded-full bg-[--theme-color] text-white shadow hover:brightness-90 transition-all"
+                                    className="w-11 h-11 flex items-center justify-center rounded-full community-bg text-white shadow hover:brightness-90 transition-all"
                                     title="Add or remove your creations in this community"
                                     aria-label="Manage your creations in this community"
                                 >

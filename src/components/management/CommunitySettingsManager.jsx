@@ -105,7 +105,7 @@ const CommunitySettingsManager = ({
                 type="button"
                 onClick={() => openCategory(cat.id)}
                 className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-colors mb-1 last:mb-0
-                  ${isActive ? 'lg:bg-[--theme-color] lg:text-white' : 'hover:bg-gray-100 text-gray-800'}`}
+                  ${isActive ? 'community-bg-lg lg:text-white' : 'hover:bg-gray-100 text-gray-800'}`}
               >
                 <span className={`w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center text-white ${cat.tint}`}>
                   <Icon path={cat.icon} className="w-5 h-5" />
@@ -128,7 +128,7 @@ const CommunitySettingsManager = ({
         <button
           type="button"
           onClick={() => setMobileOpen(false)}
-          className="lg:hidden flex items-center gap-1 text-[--theme-color] font-semibold mb-3"
+          className="lg:hidden flex items-center gap-1 community-text font-semibold mb-3"
         >
           <Icon path={ICONS.chevronLeft} className="w-5 h-5" />
           Settings

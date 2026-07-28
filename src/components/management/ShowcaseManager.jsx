@@ -52,7 +52,7 @@ const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, 
                     <button
                         onClick={() => onSave(name.trim(), url.trim())}
                         disabled={isSaving || !url.trim()}
-                        className="py-2 px-6 rounded-lg bg-[--theme-color] hover:brightness-90 text-white font-semibold disabled:opacity-50"
+                        className="py-2 px-6 rounded-lg community-bg hover:brightness-90 text-white font-semibold disabled:opacity-50"
                     >
                         {isSaving ? <Spinner size="small" /> : 'Save'}
                     </button>
@@ -479,7 +479,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                             <div className="p-3 border-t mt-auto flex gap-2">
                                 <button
                                     onClick={(e) => setGroupMenu({ creationId: creation.id, x: e.clientX, y: e.clientY })}
-                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white bg-[--theme-color] hover:brightness-90"
+                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white community-bg hover:brightness-90"
                                     title="Assign to Group"
                                 >
                                     Add to Group
@@ -685,7 +685,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
             <div className="flex justify-center mb-8">
                 <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                    <div ref={subGliderRef} className="absolute h-full bg-[--theme-color] rounded-full transition-all duration-300 ease-in-out" />
+                    <div ref={subGliderRef} className="absolute h-full community-bg rounded-full transition-all duration-300 ease-in-out" />
                     {SUB_TABS.map((tab, index) => (
                         <button
                             key={tab}
@@ -695,7 +695,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                         >
                             {tab}
                             {tab === 'Applications' && openApplicationsCount > 0 && (
-                                <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${activeSubTab === tab ? 'bg-white text-gray-800' : 'bg-[--theme-color] text-white'}`}>
+                                <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${activeSubTab === tab ? 'bg-white text-gray-800' : 'community-bg text-white'}`}>
                                     {openApplicationsCount}
                                 </span>
                             )}
@@ -868,7 +868,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
                         {/* Home + View Community buttons directly under the banner (preview only) */}
                         <div className="flex justify-between items-center gap-2 mb-5">
-                            <span className="flex items-center bg-[--theme-color] text-white px-3 py-2 rounded-md font-semibold text-sm">
+                            <span className="flex items-center community-bg text-white px-3 py-2 rounded-md font-semibold text-sm">
                                 <Icon path={ICONS.arrowLeft} className="w-4 h-4 mr-1" /> Homepage
                             </span>
                             <div className="text-center flex-grow min-w-0">
