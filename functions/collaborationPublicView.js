@@ -12,7 +12,7 @@ function isSafeHttpUrl(value) {
     try {
         const parsed = new URL(value.trim());
         return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch (error) {
+    } catch {
         return false;
     }
 }

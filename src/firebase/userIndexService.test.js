@@ -1,8 +1,8 @@
-jest.mock('firebase/firestore', () => ({
-    doc: jest.fn(),
-    getDoc: jest.fn(),
+vi.mock('firebase/firestore', () => ({
+    doc: vi.fn(),
+    getDoc: vi.fn(),
 }));
-jest.mock('./config', () => ({ db: {} }));
+vi.mock('./config', () => ({ db: {} }));
 
 import { entryToUser, searchUserIndex } from './userIndexService';
 

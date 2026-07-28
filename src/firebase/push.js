@@ -5,16 +5,16 @@ import { db, getMessagingIfSupported } from './config';
 // Web Push (FCM) client helpers. All guarded so the app runs fine where push is
 // unavailable (Electron, iOS Safari before add-to-home-screen, private windows).
 
-const VAPID_KEY = process.env.REACT_APP_FIREBASE_VAPID_KEY;
+const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY;
 
 // The messaging service worker is env-driven: we pass the (non-secret) web config
 // to it as query params so it doesn't need to be hard-coded in public/.
 const swConfigQuery = new URLSearchParams({
-    apiKey: process.env.REACT_APP_FIREBASE_API_KEY || '',
-    authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || '',
-    projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || '',
-    messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || '',
-    appId: process.env.REACT_APP_FIREBASE_APP_ID || '',
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
 }).toString();
 
 let swRegistration = null;
@@ -45,7 +45,7 @@ export const enablePush = async (uid) => {
     const messaging = await getMessagingIfSupported();
     if (!messaging) return { ok: false, reason: 'unsupported' };
     if (!VAPID_KEY) {
-        console.warn('Push disabled: REACT_APP_FIREBASE_VAPID_KEY is not set.');
+        console.warn('Push disabled: VITE_FIREBASE_VAPID_KEY is not set.');
         return { ok: false, reason: 'no-vapid-key' };
     }
     try {

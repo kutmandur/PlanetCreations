@@ -23,7 +23,7 @@ function isCollaborationVersionStorageKey(storageKey, collaborationId, versionId
     if (typeof storageKey !== "string") return false;
     try {
         return storageKey === buildCollaborationVersionStorageKey(collaborationId, versionId);
-    } catch (error) {
+    } catch {
         return false;
     }
 }
@@ -45,7 +45,7 @@ function isCollaborationStorageObjectKey(storageKey, collaborationId) {
             collaborationId,
             versionId,
         );
-    } catch (error) {
+    } catch {
         return false;
     }
 }

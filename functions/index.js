@@ -1,4 +1,15 @@
-const functions = require("firebase-functions");
+const {
+    callable: onCall,
+    callableWith: onCallWith,
+    documentCreated,
+    documentDeleted,
+    documentUpdated,
+    documentWritten,
+    enforceAppCheck: ENFORCE_APP_CHECK,
+    functions,
+    httpWith,
+    scheduled,
+} = require("./runtime");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {
@@ -8,7 +19,6 @@ const {
 } = require("firebase-admin/firestore");
 const express = require("express");
 const cors = require("cors");
-const fetch = require("node-fetch");
 const path = require("path");
 const crypto = require("crypto");
 const {
@@ -33,6 +43,15 @@ const {
     hashCommunityPassword,
     verifyCommunityPassword,
 } = require("./communityMembership");
+const {
+    DISCORD_OAUTH_PROVIDER,
+    OAUTH_STATE_TTL_MS,
+    buildDiscordAuthorizeUrl,
+    getRateLimitDecision,
+    hashOAuthState,
+    isAllowedCorsOrigin,
+    isValidOAuthStateRecord,
+} = require("./security");
 const {
     COLLABORATION_FILE_ID,
     buildCollaborationStoragePrefix,
@@ -106,8 +125,8 @@ async function r2BodyToBuffer(body) {
 
 // Secrets & Config
 // Secrets liegen im Secret Manager (firebase functions:secrets:set <NAME>) und
-// werden per runWith({ secrets: [...] }) an die jeweiligen Functions gebunden.
-// .value() darf erst innerhalb eines Handlers aufgerufen werden.
+// werden an die jeweiligen v2-Functions gebunden. .value() darf erst innerhalb
+// eines Handlers aufgerufen werden.
 const discordClientSecret = defineSecret("DISCORD_CLIENT_SECRET");
 const backupSigningKey = defineSecret("BACKUP_SIGNING_KEY");
 const r2AccessKeyId = defineSecret("R2_ACCESS_KEY_ID");
@@ -115,9 +134,112 @@ const r2SecretAccessKey = defineSecret("R2_SECRET_ACCESS_KEY");
 // Nicht-geheime Werte kommen aus functions/.env
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI;
-
 const app = express();
-app.use(cors({ origin: true }));
+app.use(cors({
+    origin(origin, callback) {
+        if (isAllowedCorsOrigin(origin)) {
+            return callback(null, true);
+        }
+        return callback(new Error("Origin is not allowed."));
+    },
+}));
+
+class RateLimitExceededError extends Error {
+    constructor(retryAfterMs) {
+        super("Rate limit exceeded.");
+        this.name = "RateLimitExceededError";
+        this.retryAfterMs = retryAfterMs;
+    }
+}
+
+async function enforceRateLimit({
+    action,
+    subject,
+    limit,
+    windowMs,
+}) {
+    const nowMs = Date.now();
+    const key = crypto.createHash("sha256")
+        .update(`${action}:${subject}`, "utf8")
+        .digest("hex");
+    const ref = db.doc(`securityRateLimits/${key}`);
+    await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(ref);
+        const current = snap.exists ? snap.data() : {};
+        const decision = getRateLimitDecision({
+            currentCount: Number(current.count) || 0,
+            currentWindowStartedAtMs:
+                current.windowStartedAt?.toMillis?.() || 0,
+            limit,
+            nowMs,
+            windowMs,
+        });
+        if (!decision.allowed) {
+            throw new RateLimitExceededError(decision.retryAfterMs);
+        }
+        transaction.set(ref, {
+            action,
+            count: decision.count,
+            expiresAt: Timestamp.fromMillis(
+                decision.windowStartedAtMs + (windowMs * 2),
+            ),
+            updatedAt: Timestamp.fromMillis(nowMs),
+            windowStartedAt: Timestamp.fromMillis(
+                decision.windowStartedAtMs,
+            ),
+        });
+    });
+}
+
+async function enforceCallableRateLimit(options) {
+    try {
+        await enforceRateLimit(options);
+    } catch (error) {
+        if (error instanceof RateLimitExceededError) {
+            const retryAfterSeconds = Math.ceil(error.retryAfterMs / 1000);
+            throw new functions.https.HttpsError(
+                "resource-exhausted",
+                `Too many requests. Try again in ${retryAfterSeconds} seconds.`,
+                {retryAfterSeconds},
+            );
+        }
+        throw error;
+    }
+}
+
+const expressRateLimit = (options) => async (req, res, next) => {
+    try {
+        await enforceRateLimit({
+            ...options,
+            subject: req.user.uid,
+        });
+        return next();
+    } catch (error) {
+        if (error instanceof RateLimitExceededError) {
+            const retryAfterSeconds = Math.ceil(error.retryAfterMs / 1000);
+            res.set("Retry-After", String(retryAfterSeconds));
+            return res.status(429).json({
+                error: "Too many requests.",
+                retryAfterSeconds,
+            });
+        }
+        return next(error);
+    }
+};
+
+const verifyAppCheckWhenEnabled = async (req, res, next) => {
+    if (!ENFORCE_APP_CHECK) return next();
+    const token = req.header("X-Firebase-AppCheck");
+    if (!token) {
+        return res.status(401).json({error: "Missing App Check token."});
+    }
+    try {
+        req.appCheck = await admin.appCheck().verifyToken(token);
+        return next();
+    } catch {
+        return res.status(401).json({error: "Invalid App Check token."});
+    }
+};
 
 // Middleware to authenticate requests
 const authenticate = async (req, res, next) => {
@@ -129,13 +251,22 @@ const authenticate = async (req, res, next) => {
         const decodedIdToken = await admin.auth().verifyIdToken(idToken);
         req.user = decodedIdToken;
         next();
-    } catch (e) {
+    } catch {
         res.status(403).send('Unauthorized');
     }
 };
 
 // --- API Endpoint for signing backups ---
-app.post("/signBackup", authenticate, async (req, res) => {
+app.post(
+    "/signBackup",
+    authenticate,
+    verifyAppCheckWhenEnabled,
+    expressRateLimit({
+        action: "sign-backup",
+        limit: 60,
+        windowMs: 15 * 60 * 1000,
+    }),
+    async (req, res) => {
     const unsignedMetadata = req.body.metadata;
     const userId = req.user.uid;
     
@@ -171,7 +302,8 @@ app.post("/signBackup", authenticate, async (req, res) => {
         console.error("Error creating signature:", error);
         return res.status(400).json({ error: error.message || "Could not sign this package." });
     }
-});
+    },
+);
 
 app.get("/getPublicKey", (req, res) => {
     const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
@@ -180,35 +312,127 @@ app.get("/getPublicKey", (req, res) => {
     return res.type("text/plain").send(publicKey);
 });
 
-// --- HTTP Endpoint to handle the initial Discord auth redirect ---
-app.get("/discordAuthRedirect", (req, res) => {
-    const { appUserId } = req.query;
-    if (!appUserId) {
-        return res.status(400).send("Missing appUserId query parameter.");
-    }
+// The old endpoint accepted a caller-controlled uid and must never be used again.
+app.get("/discordAuthRedirect", (req, res) => res.status(410).send(
+    "This Discord linking flow is no longer available. Please start it from PlanetCreations.",
+));
 
+exports.startDiscordLink = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    await enforceCallableRateLimit({
+        action: "start-discord-link",
+        subject: uid,
+        limit: 10,
+        windowMs: 60 * 60 * 1000,
+    });
     if (!DISCORD_CLIENT_ID || !DISCORD_REDIRECT_URI) {
-        console.error("Discord environment variables not set in Firebase config.");
-        return res.status(500).send("Server configuration error.");
+        console.error("Discord OAuth configuration is incomplete.");
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            "Discord linking is temporarily unavailable.",
+        );
+    }
+    const state = crypto.randomBytes(32).toString("base64url");
+    const nowMs = Date.now();
+    await db.doc(`oauthStates/${hashOAuthState(state)}`).create({
+        createdAt: Timestamp.fromMillis(nowMs),
+        expiresAt: Timestamp.fromMillis(nowMs + OAUTH_STATE_TTL_MS),
+        provider: DISCORD_OAUTH_PROVIDER,
+        uid,
+    });
+    return {
+        authUrl: buildDiscordAuthorizeUrl({
+            clientId: DISCORD_CLIENT_ID,
+            redirectUri: DISCORD_REDIRECT_URI,
+            state,
+        }),
+        expiresInSeconds: Math.floor(OAUTH_STATE_TTL_MS / 1000),
+    };
+});
+
+async function consumeDiscordOAuthState(state) {
+    const stateRef = db.doc(`oauthStates/${hashOAuthState(state)}`);
+    return db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(stateRef);
+        const record = snap.exists ? snap.data() : null;
+        if (!isValidOAuthStateRecord(record)) {
+            throw new Error("Invalid or expired OAuth state.");
+        }
+        transaction.delete(stateRef);
+        return record.uid;
+    });
+}
+
+async function storeDiscordConnection({
+    uid,
+    discordUser,
+    guildIds,
+    refreshToken,
+}) {
+    const duplicateUsers = await db.collection("users")
+        .where("discordId", "==", discordUser.id)
+        .limit(2)
+        .get();
+    if (duplicateUsers.docs.some((doc) => doc.id !== uid)) {
+        throw new Error("This Discord account is already linked.");
     }
 
-    const state = appUserId;
-    const scope = "identify guilds";
+    const userRef = db.doc(`users/${uid}`);
+    const credentialRef = db.doc(`privateOAuthCredentials/${uid}`);
+    const accountLinkRef = db.doc(`discordAccountLinks/${discordUser.id}`);
+    await db.runTransaction(async (transaction) => {
+        const userSnap = await transaction.get(userRef);
+        if (!userSnap.exists) throw new Error("PlanetCreations user not found.");
+        const accountLinkSnap = await transaction.get(accountLinkRef);
+        if (accountLinkSnap.exists &&
+            accountLinkSnap.data().uid !== uid) {
+            throw new Error("This Discord account is already linked.");
+        }
 
-    const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=code&scope=${scope}&state=${state}`;
-    
-    res.redirect(authUrl);
-});
+        const previousDiscordId = userSnap.data().discordId;
+        let previousLinkRef = null;
+        let previousLinkSnap = null;
+        if (previousDiscordId && previousDiscordId !== discordUser.id) {
+            previousLinkRef = db.doc(
+                `discordAccountLinks/${previousDiscordId}`,
+            );
+            previousLinkSnap = await transaction.get(previousLinkRef);
+        }
+
+        if (previousLinkRef && previousLinkSnap.exists &&
+            previousLinkSnap.data().uid === uid) {
+            transaction.delete(previousLinkRef);
+        }
+        transaction.set(accountLinkRef, {
+            linkedAt: Timestamp.now(),
+            uid,
+        });
+        transaction.set(credentialRef, {
+            provider: DISCORD_OAUTH_PROVIDER,
+            refreshToken,
+            updatedAt: Timestamp.now(),
+        });
+        transaction.update(userRef, {
+            discordGuilds: guildIds,
+            discordId: discordUser.id,
+            discordLinkedAt: Timestamp.now(),
+            discordRefreshToken: FieldValue.delete(),
+            discordUsername: discordUser.username,
+        });
+    });
+}
 
 // --- HTTP Endpoint to handle the callback from Discord ---
 app.get("/discordCallback", async (req, res) => {
-    const { code, state: appUserId } = req.query;
+    const {code, state} = req.query;
 
-    if (!code || !appUserId) {
+    if (typeof code !== "string" || code.length > 2048 ||
+        typeof state !== "string" || state.length > 256) {
         return res.status(400).send("Missing code or state from Discord.");
     }
 
     try {
+        const uid = await consumeDiscordOAuthState(state);
         const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -222,7 +446,8 @@ app.get("/discordCallback", async (req, res) => {
         });
 
         const tokenData = await tokenResponse.json();
-        if (!tokenData.access_token) {
+        if (!tokenResponse.ok || !tokenData.access_token ||
+            !tokenData.refresh_token) {
             throw new Error("Failed to get access token from Discord.");
         }
         
@@ -232,7 +457,7 @@ app.get("/discordCallback", async (req, res) => {
             headers: { Authorization: `Bearer ${access_token}` },
         });
         const discordUser = await userResponse.json();
-        if (!discordUser.id || !discordUser.username) {
+        if (!userResponse.ok || !discordUser.id || !discordUser.username) {
             throw new Error("Failed to fetch user info from Discord.");
         }
         
@@ -240,21 +465,23 @@ app.get("/discordCallback", async (req, res) => {
             headers: { Authorization: `Bearer ${access_token}` },
         });
         const guildsData = await guildsResponse.json();
+        if (!guildsResponse.ok) {
+            throw new Error("Failed to fetch Discord servers.");
+        }
         const guildIds = Array.isArray(guildsData) ? guildsData.map(g => g.id) : [];
 
-        const userRef = db.collection("users").doc(appUserId);
-        await userRef.update({
-            discordId: discordUser.id,
-            discordUsername: discordUser.username,
-            discordGuilds: guildIds,
-            discordRefreshToken: refresh_token,
+        await storeDiscordConnection({
+            uid,
+            discordUser,
+            guildIds,
+            refreshToken: refresh_token,
         });
         
-        res.redirect("https://planetcreations.net/settings?discord-linked=success");
+        res.redirect("https://www.planetcreations.net/settings?discord-linked=success");
 
     } catch (error) {
         console.error("Error in Discord callback:", error);
-        res.status(500).send("An error occurred while linking your Discord account.");
+        res.redirect("https://www.planetcreations.net/settings?discord-linked=error");
     }
 });
 
@@ -262,9 +489,10 @@ app.get("/discordCallback", async (req, res) => {
 
 // Export the single Express app as a Cloud Function
 // (enthält /signBackup und /discordCallback → braucht beide Secrets)
-exports.api = functions
-    .runWith({ secrets: [discordClientSecret, backupSigningKey] })
-    .https.onRequest(app);
+exports.api = httpWith(
+    {secrets: [discordClientSecret, backupSigningKey]},
+    app,
+);
 
 
 // --- Konstanten für Backup-Validierung ---
@@ -371,7 +599,7 @@ function getClientQueueRef(uid, clientId) {
     return db.doc(`clientInstallQueues/${uid}/clients/${clientId}`);
 }
 
-exports.registerDesktopClient = functions.https.onCall(async (data, context) => {
+exports.registerDesktopClient = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const clientId = requireClientId(data && data.clientId);
     const displayName = typeof data?.displayName === "string" ?
@@ -419,7 +647,7 @@ exports.registerDesktopClient = functions.https.onCall(async (data, context) => 
     return {success: true, clientId};
 });
 
-exports.enqueueClientInstall = functions.https.onCall(async (data, context) => {
+exports.enqueueClientInstall = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const clientId = requireClientId(data && data.clientId);
     const creationId = requireCreationId(data && data.creationId);
@@ -478,7 +706,7 @@ exports.enqueueClientInstall = functions.https.onCall(async (data, context) => {
     });
 });
 
-exports.claimClientInstall = functions.https.onCall(async (data, context) => {
+exports.claimClientInstall = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const clientId = requireClientId(data && data.clientId);
     const userRef = db.doc(`users/${uid}`);
@@ -537,7 +765,7 @@ exports.claimClientInstall = functions.https.onCall(async (data, context) => {
     });
 });
 
-exports.completeClientInstall = functions.https.onCall(async (data, context) => {
+exports.completeClientInstall = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const clientId = requireClientId(data && data.clientId);
     const commandId = typeof data?.commandId === "string" ? data.commandId : "";
@@ -600,10 +828,16 @@ function encodeCopySource(bucket, objectKey) {
     return `/${encodeURIComponent(bucket)}/${encodedKey}`;
 }
 
-exports.getUploadUrl = functions
-    .runWith(uploadFunctionOptions)
-    .https.onCall(async (data, context) => {
+exports.getUploadUrl = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
         const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "create-upload-url",
+            subject: uid,
+            limit: 60,
+            windowMs: 15 * 60 * 1000,
+        });
         const fileName = sanitizeBackupFileName(data && data.fileName);
         const fileSize = data && data.fileSize;
         const ownershipConfirmed = data && data.ownershipConfirmed === true;
@@ -666,9 +900,9 @@ exports.getUploadUrl = functions
         }
     });
 
-exports.abortBackupUpload = functions
-    .runWith(uploadFunctionOptions)
-    .https.onCall(async (data, context) => {
+exports.abortBackupUpload = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
         const uid = requireAuthenticated(context);
         const uploadId = data && data.uploadId;
         if (typeof uploadId !== "string") {
@@ -689,12 +923,22 @@ exports.abortBackupUpload = functions
         return { success: true };
     });
 
-exports.finalizeBackupUpload = functions
-    .runWith({ memory: "1GB", timeoutSeconds: 300, secrets: [
-        backupSigningKey, r2AccessKeyId, r2SecretAccessKey,
-    ] })
-    .https.onCall(async (data, context) => {
+exports.finalizeBackupUpload = onCallWith(
+    {
+        concurrency: 2,
+        maxInstances: 5,
+        memory: "1GiB",
+        timeoutSeconds: 300,
+        secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
+    },
+    async (data, context) => {
         const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "finalize-backup-upload",
+            subject: uid,
+            limit: 60,
+            windowMs: 15 * 60 * 1000,
+        });
         const uploadId = data && data.uploadId;
         const creationId = data && data.creationId;
         if (typeof uploadId !== "string" || typeof creationId !== "string") {
@@ -813,9 +1057,9 @@ exports.finalizeBackupUpload = functions
         }
     });
 
-exports.getBackupDownloadUrl = functions
-    .runWith(uploadFunctionOptions)
-    .https.onCall(async (data) => {
+exports.getBackupDownloadUrl = onCallWith(
+    uploadFunctionOptions,
+    async (data) => {
         const creationId = data && data.creationId;
         if (typeof creationId !== "string") {
             throw new functions.https.HttpsError("invalid-argument", "A creation ID is required.");
@@ -836,9 +1080,9 @@ exports.getBackupDownloadUrl = functions
         return { downloadUrl, expiresInSeconds: 600 };
     });
 
-exports.removeCreationBackup = functions
-    .runWith(uploadFunctionOptions)
-    .https.onCall(async (data, context) => {
+exports.removeCreationBackup = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
         const uid = requireAuthenticated(context);
         const creationId = data && data.creationId;
         const creationRef = db.doc(`creations/${creationId}`);
@@ -868,7 +1112,7 @@ exports.removeCreationBackup = functions
     });
 
 
- exports.voteOnCreation = functions.https.onCall(async (data, context) => {
+ exports.voteOnCreation = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to vote.');
     }
@@ -927,23 +1171,33 @@ exports.removeCreationBackup = functions
     }
 });
 
-exports.refreshDiscordGuilds = functions
-    .runWith({ secrets: [discordClientSecret] })
-    .https.onCall(async (data, context) => {
+exports.refreshDiscordGuilds = onCallWith(
+    {secrets: [discordClientSecret]},
+    async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to perform this action.');
     }
     const userId = context.auth.uid;
+    await enforceCallableRateLimit({
+        action: "refresh-discord-guilds",
+        subject: userId,
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+    });
 
     try {
         const userRef = db.collection('users').doc(userId);
-        const userDoc = await userRef.get();
+        const credentialRef = db.doc(`privateOAuthCredentials/${userId}`);
+        const [userDoc, credentialDoc] = await Promise.all([
+            userRef.get(),
+            credentialRef.get(),
+        ]);
+        const refreshToken = credentialDoc.data()?.refreshToken ||
+            userDoc.data()?.discordRefreshToken;
 
-        if (!userDoc.exists || !userDoc.data().discordRefreshToken) {
+        if (!userDoc.exists || !refreshToken) {
             throw new functions.https.HttpsError('not-found', 'No Discord refresh token found for this user. Please re-link your account.');
         }
-
-        const refreshToken = userDoc.data().discordRefreshToken;
 
         const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
@@ -957,9 +1211,15 @@ exports.refreshDiscordGuilds = functions
         });
 
         const tokenData = await tokenResponse.json();
-        if (!tokenData.access_token) {
+        if (!tokenResponse.ok || !tokenData.access_token) {
             console.error("Failed to refresh token from Discord for user:", userId, tokenData);
-            await userRef.update({ discordRefreshToken: null, discordGuilds: [] });
+            await Promise.all([
+                credentialRef.delete(),
+                userRef.update({
+                    discordGuilds: [],
+                    discordRefreshToken: FieldValue.delete(),
+                }),
+            ]);
             throw new functions.https.HttpsError('permission-denied', 'Could not refresh Discord token. Please re-link your account in the settings.');
         }
 
@@ -976,10 +1236,17 @@ exports.refreshDiscordGuilds = functions
         const guildsData = await guildsResponse.json();
         const guildIds = Array.isArray(guildsData) ? guildsData.map(g => g.id) : [];
 
-        await userRef.update({
-            discordGuilds: guildIds,
-            discordRefreshToken: new_refresh_token,
-        });
+        await Promise.all([
+            credentialRef.set({
+                provider: DISCORD_OAUTH_PROVIDER,
+                refreshToken: new_refresh_token || refreshToken,
+                updatedAt: Timestamp.now(),
+            }),
+            userRef.update({
+                discordGuilds: guildIds,
+                discordRefreshToken: FieldValue.delete(),
+            }),
+        ]);
 
         return { success: true, message: `Successfully refreshed and updated ${guildIds.length} guilds.` };
 
@@ -988,9 +1255,93 @@ exports.refreshDiscordGuilds = functions
         if (error.code) throw error;
         throw new functions.https.HttpsError('internal', 'An unexpected error occurred while refreshing your Discord servers.');
     }
-});
+    },
+);
 
-exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
+exports.unlinkDiscordAccount = onCallWith(
+    {secrets: [discordClientSecret]},
+    async (data, context) => {
+        const userId = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "unlink-discord-account",
+            subject: userId,
+            limit: 10,
+            windowMs: 60 * 60 * 1000,
+        });
+
+        const userRef = db.doc(`users/${userId}`);
+        const credentialRef = db.doc(`privateOAuthCredentials/${userId}`);
+        const [userSnap, credentialSnap] = await Promise.all([
+            userRef.get(),
+            credentialRef.get(),
+        ]);
+        const refreshToken = credentialSnap.data()?.refreshToken ||
+            userSnap.data()?.discordRefreshToken;
+
+        if (refreshToken) {
+            try {
+                const revokeResponse = await fetch(
+                    "https://discord.com/api/oauth2/token/revoke",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded",
+                        },
+                        body: new URLSearchParams({
+                            client_id: DISCORD_CLIENT_ID,
+                            client_secret: discordClientSecret.value(),
+                            token: refreshToken,
+                            token_type_hint: "refresh_token",
+                        }),
+                    },
+                );
+                if (!revokeResponse.ok) {
+                    console.warn(
+                        "Discord token revocation returned",
+                        revokeResponse.status,
+                        "for user",
+                        userId,
+                    );
+                }
+            } catch (error) {
+                console.warn(
+                    "Discord token revocation failed for user",
+                    userId,
+                    error.message,
+                );
+            }
+        }
+
+        await db.runTransaction(async (transaction) => {
+            const currentUserSnap = await transaction.get(userRef);
+            const discordId = currentUserSnap.data()?.discordId;
+            let accountLinkRef = null;
+            let accountLinkSnap = null;
+            if (discordId) {
+                accountLinkRef = db.doc(`discordAccountLinks/${discordId}`);
+                accountLinkSnap = await transaction.get(accountLinkRef);
+            }
+            transaction.delete(credentialRef);
+            if (currentUserSnap.exists) {
+                transaction.update(userRef, {
+                    discordGuilds: FieldValue.delete(),
+                    discordId: FieldValue.delete(),
+                    discordLinkedAt: FieldValue.delete(),
+                    discordRefreshToken: FieldValue.delete(),
+                    discordUsername: FieldValue.delete(),
+                });
+            }
+            if (accountLinkRef && accountLinkSnap.exists &&
+                accountLinkSnap.data().uid === userId) {
+                transaction.delete(accountLinkRef);
+            }
+        });
+        return {success: true};
+    },
+);
+
+exports.deleteOwnAccount = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to perform this action.');
     }
@@ -1000,8 +1351,19 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
     try {
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userId}`);
-        const profileSnap = await profileRef.get();
+        const userRef = db.doc(`users/${userId}`);
+        const [profileSnap, userSnap] = await Promise.all([
+            profileRef.get(),
+            userRef.get(),
+        ]);
         const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
+        const discordId = userSnap.data()?.discordId;
+        const accountLinkRef = discordId ?
+            db.doc(`discordAccountLinks/${discordId}`) :
+            null;
+        const accountLinkSnap = accountLinkRef ?
+            await accountLinkRef.get() :
+            null;
         
         const membershipsRef = db.collection(`profiles/${userId}/communityMemberships`);
         const membershipsSnap = await membershipsRef.get();
@@ -1019,7 +1381,12 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
         });
 
         batch.delete(profileRef);
-        batch.delete(db.doc(`users/${userId}`));
+        batch.delete(userRef);
+        batch.delete(db.doc(`privateOAuthCredentials/${userId}`));
+        if (accountLinkRef && accountLinkSnap.exists &&
+            accountLinkSnap.data().uid === userId) {
+            batch.delete(accountLinkRef);
+        }
         // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
         // (Personalisierung) und Inbox explizit mitlöschen.
         batch.delete(db.doc(`users/${userId}/meta/interests`));
@@ -1038,7 +1405,7 @@ exports.deleteOwnAccount = functions.https.onCall(async (data, context) => {
     }
 });
 
-exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
+exports.deleteUserAndContent = onCall(async (data, context) => {
     if (!context.auth || context.auth.token.role !== 'admin') {
         throw new functions.https.HttpsError('permission-denied', 'Only admins can perform this action.');
     }
@@ -1055,8 +1422,19 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
     try {
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userIdToDelete}`);
-        const profileSnap = await profileRef.get();
+        const userRef = db.doc(`users/${userIdToDelete}`);
+        const [profileSnap, userSnap] = await Promise.all([
+            profileRef.get(),
+            userRef.get(),
+        ]);
         const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
+        const discordId = userSnap.data()?.discordId;
+        const accountLinkRef = discordId ?
+            db.doc(`discordAccountLinks/${discordId}`) :
+            null;
+        const accountLinkSnap = accountLinkRef ?
+            await accountLinkRef.get() :
+            null;
         
         const membershipsRef = db.collection(`profiles/${userIdToDelete}/communityMemberships`);
         const membershipsSnap = await membershipsRef.get();
@@ -1076,7 +1454,12 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
         console.log(`Deleting from ${communityIds.length} community member lists...`);
 
         batch.delete(profileRef);
-        batch.delete(db.doc(`users/${userIdToDelete}`));
+        batch.delete(userRef);
+        batch.delete(db.doc(`privateOAuthCredentials/${userIdToDelete}`));
+        if (accountLinkRef && accountLinkSnap.exists &&
+            accountLinkSnap.data().uid === userIdToDelete) {
+            batch.delete(accountLinkRef);
+        }
         // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
         // (Personalisierung) und Inbox explizit mitlöschen.
         batch.delete(db.doc(`users/${userIdToDelete}/meta/interests`));
@@ -1099,7 +1482,7 @@ exports.deleteUserAndContent = functions.https.onCall(async (data, context) => {
     }
 });
 
-exports.getAllUserEmails = functions.https.onCall(async (data, context) => {
+exports.getAllUserEmails = onCall(async (data, context) => {
   if (!context.auth || context.auth.token.role !== 'admin') {
     throw new functions.https.HttpsError(
       'permission-denied',
@@ -1121,7 +1504,7 @@ exports.getAllUserEmails = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
+exports.deleteEventAsStaff = onCall(async (data, context) => {
     if (!context.auth) { throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.'); }
     const { eventId } = data;
     if (!eventId) { throw new functions.https.HttpsError('invalid-argument', 'An eventId must be provided.'); }
@@ -1180,14 +1563,12 @@ exports.deleteEventAsStaff = functions.https.onCall(async (data, context) => {
 
 
 
-// --- Trigger Functions (Alles Gen 1) ---
+// --- Firestore trigger functions ---
 
 
-exports.onCreationDelete = functions
-    .runWith(uploadFunctionOptions)
-    .firestore
-    .document('creations/{creationId}')
-    .onDelete(async (snap, context) => {
+exports.onCreationDelete = documentDeleted(
+    'creations/{creationId}',
+    async (snap, context) => {
         const creationId = context.params.creationId;
         const deletedData = snap.data();
 
@@ -1228,19 +1609,21 @@ exports.onCreationDelete = functions
                 .catch((error) => console.error(`Failed to delete R2 object ${objectKey}:`, error));
         }
         return null;
-    });
+    },
+    uploadFunctionOptions,
+);
 
-exports.onMemberJoin = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onCreate(async (snap, context) => {
+exports.onMemberJoin = documentCreated(
+    'communitys/{communityId}/members/{userId}',
+    async (snap, context) => {
         const communityId = context.params.communityId;
         const communityRef = db.doc(`communitys/${communityId}`);
         return communityRef.update({ memberCount: FieldValue.increment(1) });
     });
 
-exports.onMemberLeave = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onDelete(async (snap, context) => {
+exports.onMemberLeave = documentDeleted(
+    'communitys/{communityId}/members/{userId}',
+    async (snap, context) => {
         const communityId = context.params.communityId;
         const communityRef = db.doc(`communitys/${communityId}`);
         return communityRef.update({ memberCount: FieldValue.increment(-1) });
@@ -1303,7 +1686,7 @@ const canManageCommunityMembership = async (
     ).includes(permission);
 };
 
-exports.removeCommunityCreation = functions.https.onCall(async (data, context) => {
+exports.removeCommunityCreation = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError(
             'unauthenticated',
@@ -1374,9 +1757,9 @@ exports.removeCommunityCreation = functions.https.onCall(async (data, context) =
 // Keep the denormalized profile membership in sync with the authoritative member
 // document. This lets read-heavy UI paths load ranks together with memberships
 // without one additional member-document read per community.
-exports.syncCommunityMembershipRoles = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onWrite(async (change, context) => {
+exports.syncCommunityMembershipRoles = documentWritten(
+    'communitys/{communityId}/members/{userId}',
+    async (change, context) => {
         const { communityId, userId } = context.params;
         const membershipRef = db.doc(`profiles/${userId}/communityMemberships/${communityId}`);
 
@@ -1410,9 +1793,9 @@ exports.syncCommunityMembershipRoles = functions.firestore
 // denormalisierte username_lowercase-Feld (noch) fehlt.
 // Recompute every member when rank definitions or permission toggles change.
 // Writes are chunked below Firestore's 500-operation batch limit.
-exports.syncCommunityRankPermissions = functions.firestore
-    .document('communitys/{communityId}')
-    .onUpdate(async (change, context) => {
+exports.syncCommunityRankPermissions = documentUpdated(
+    'communitys/{communityId}',
+    async (change, context) => {
         const beforeRanks = change.before.data().ranks || [];
         const afterData = change.after.data();
         const afterRanks = afterData.ranks || [];
@@ -1438,7 +1821,7 @@ exports.syncCommunityRankPermissions = functions.firestore
         return null;
     });
 
-exports.decideJoinRequest = functions.https.onCall(async (data, context) => {
+exports.decideJoinRequest = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
     }
@@ -1505,9 +1888,9 @@ exports.decideJoinRequest = functions.https.onCall(async (data, context) => {
     return { ok: true };
 });
 
-exports.onCommunityJoinRequestCreated = functions.firestore
-    .document('communitys/{communityId}/joinRequests/{userId}')
-    .onCreate(async (snap, context) => {
+exports.onCommunityJoinRequestCreated = documentCreated(
+    'communitys/{communityId}/joinRequests/{userId}',
+    async (snap, context) => {
         const { communityId, userId } = context.params;
         const communitySnap = await db.doc(`communitys/${communityId}`).get();
         if (!communitySnap.exists) return null;
@@ -1540,7 +1923,7 @@ exports.onCommunityJoinRequestCreated = functions.firestore
         return null;
     });
 
-exports.setCommunityJoinPassword = functions.https.onCall(async (data, context) => {
+exports.setCommunityJoinPassword = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
     }
@@ -1591,7 +1974,7 @@ exports.setCommunityJoinPassword = functions.https.onCall(async (data, context) 
     return { ok: true };
 });
 
-exports.joinCommunityWithPassword = functions.https.onCall(async (data, context) => {
+exports.joinCommunityWithPassword = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be signed in.');
     }
@@ -1602,6 +1985,12 @@ exports.joinCommunityWithPassword = functions.https.onCall(async (data, context)
     }
 
     const uid = context.auth.uid;
+    await enforceCallableRateLimit({
+        action: "join-community-with-password",
+        subject: uid,
+        limit: 15,
+        windowMs: 15 * 60 * 1000,
+    });
     const [communitySnap, privateSnap, profileSnap, memberSnap] = await Promise.all([
         db.doc(`communitys/${communityId}`).get(),
         db.doc(`communitys/${communityId}/private/joinConfig`).get(),
@@ -1624,9 +2013,9 @@ exports.joinCommunityWithPassword = functions.https.onCall(async (data, context)
     return { ok: true };
 });
 
-exports.onCommunityInviteCreated = functions.firestore
-    .document('communitys/{communityId}/invites/{userId}')
-    .onCreate(async (snap, context) => {
+exports.onCommunityInviteCreated = documentCreated(
+    'communitys/{communityId}/invites/{userId}',
+    async (snap, context) => {
         const { communityId, userId } = context.params;
         const communitySnap = await db.doc(`communitys/${communityId}`).get();
         if (!communitySnap.exists) return null;
@@ -1651,7 +2040,7 @@ const buildUserIndexEntry = (data) => ({
 const isUserIndexable = (data) =>
     Boolean(data && typeof data.username === 'string' && data.username.trim());
 
-exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWrite(async (change, context) => {
+exports.onProfileWrite = documentWritten("profiles/{userId}", async (change, context) => {
     const userId = context.params.userId;
     const afterData = change.after.exists ? change.after.data() : null;
     const beforeData = change.before.exists ? change.before.data() : null;
@@ -1699,7 +2088,7 @@ exports.onProfileWrite = functions.firestore.document("profiles/{userId}").onWri
     }, { merge: true });
 });
 
-exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite(async (change, context) => {
+exports.setCustomClaims = documentWritten("users/{userId}", async (change, context) => {
     const userId = context.params.userId;
     const userData = change.after.data();
     if (!userData || !userData.role) { return null; }
@@ -1718,7 +2107,7 @@ exports.setCustomClaims = functions.firestore.document("users/{userId}").onWrite
     }
 });
 
-exports.onProfileUpdate = functions.firestore.document('profiles/{userId}').onUpdate(async (change, context) => {
+exports.onProfileUpdate = documentUpdated('profiles/{userId}', async (change, context) => {
     const userId = context.params.userId;
     const beforeData = change.before.data();
     const afterData = change.after.data();
@@ -1806,7 +2195,7 @@ function parseStreamUrl(platform, rawUrl) {
     let url;
     try {
         url = new URL(rawUrl);
-    } catch (error) {
+    } catch {
         return null;
     }
     const hosts = LIVE_PLATFORM_HOSTS[platform];
@@ -1874,7 +2263,7 @@ async function verifyStreamIsLive(platform, parsed) {
     return false;
 }
 
-exports.goLive = functions.runWith(LIVE_SECRETS).https.onCall(async (data, context) => {
+exports.goLive = onCallWith(LIVE_SECRETS, async (data, context) => {
     const uid = requireAuthenticated(context);
     const creationId = requireCreationId(data && data.creationId);
     const platform = data?.platform;
@@ -1940,7 +2329,7 @@ exports.goLive = functions.runWith(LIVE_SECRETS).https.onCall(async (data, conte
 // Beendet die Live-Session des Aufrufers (idempotent). Räumt sowohl das
 // Pointer-Ziel als auch eine optional explizit genannte eigene Creation ab —
 // so lassen sich auch abgelaufene Altlasten ohne gültigen Pointer entfernen.
-exports.endLive = functions.https.onCall(async (data, context) => {
+exports.endLive = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const requestedId = data?.creationId ? requireCreationId(data.creationId) : null;
     const userRef = db.doc(`users/${uid}`);
@@ -1985,7 +2374,7 @@ exports.endLive = functions.https.onCall(async (data, context) => {
 // Setzt/löscht den Overlay-QR eines registrierten Desktop-Clients remote.
 // Zustellung über das clientInstallQueues-Doc, auf dem der Client sowieso einen
 // Listener hat — 0 zusätzliche Reads auf Empfängerseite.
-exports.setClientOverlayQr = functions.https.onCall(async (data, context) => {
+exports.setClientOverlayQr = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
     const clientId = requireClientId(data && data.clientId);
     const entry = data?.entry || null;
@@ -2023,9 +2412,12 @@ exports.setClientOverlayQr = functions.https.onCall(async (data, context) => {
 // unterschlagene OBS-Enden (modifizierter Client) auf max. ~15 Minuten.
 // Räumt zusätzlich abgelaufene liveStream-Felder ab, damit keine Altlasten
 // in den Dokumenten (und im Suchindex) liegen bleiben.
-exports.sweepLiveStreams = functions.runWith(LIVE_SECRETS).pubsub
-    .schedule("every 15 minutes")
-    .onRun(async () => {
+exports.sweepLiveStreams = scheduled(
+    {
+        ...LIVE_SECRETS,
+        schedule: "every 15 minutes",
+    },
+    async () => {
         const now = Timestamp.now();
 
         const clearLive = async (docSnap) => {
@@ -2054,7 +2446,7 @@ exports.sweepLiveStreams = functions.runWith(LIVE_SECRETS).pubsub
         for (const docSnap of active.docs) {
             const liveStream = docSnap.data().liveStream || {};
             const parsed = parseStreamUrl(liveStream.platform, liveStream.url);
-            let stillLive = false;
+            let stillLive;
             try {
                 stillLive = parsed ? await verifyStreamIsLive(liveStream.platform, parsed) : false;
             } catch (error) {
@@ -2118,9 +2510,9 @@ const buildIndexEntry = (data) => ({
  * Bewusst eigener Trigger: leichtgewichtig und ohne R2-Kopplung oder das
  * 1GB/300s-Profil der expliziten ZIP-Finalisierung.
  */
-exports.syncCreationToSearchIndex = functions.firestore
-    .document('creations/{creationId}')
-    .onWrite(async (change, context) => {
+exports.syncCreationToSearchIndex = documentWritten(
+    'creations/{creationId}',
+    async (change, context) => {
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
@@ -2283,9 +2675,9 @@ const rebuildCommunityShowcaseIndexes = async (communityId) => {
  * communitys/{communityId}/creations/{creationId} (Quelle für Zuordnung,
  * pinned/showcase/application-Status).
  */
-exports.syncCommunityLinkToIndex = functions.firestore
-    .document('communitys/{communityId}/creations/{creationId}')
-    .onWrite(async (change, context) => {
+exports.syncCommunityLinkToIndex = documentWritten(
+    'communitys/{communityId}/creations/{creationId}',
+    async (change, context) => {
         const { communityId, creationId } = context.params;
         const indexRef = db.doc(`communitySearchIndex/${communityId}`);
         const entryField = new FieldPath('entries', creationId);
@@ -2321,9 +2713,9 @@ exports.syncCommunityLinkToIndex = functions.firestore
  * Link-Docs ändert (assign/finalize/edit/remove). Läuft parallel zu
  * syncCommunityLinkToIndex auf demselben Pfad.
  */
-exports.syncShowcaseIndex = functions.firestore
-    .document('communitys/{communityId}/creations/{creationId}')
-    .onWrite(async (change, context) => {
+exports.syncShowcaseIndex = documentWritten(
+    'communitys/{communityId}/creations/{creationId}',
+    async (change, context) => {
         const { communityId } = context.params;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
@@ -2341,9 +2733,9 @@ exports.syncShowcaseIndex = functions.firestore
  * räumen die Einträge ebenfalls ab (Link-Docs können verwaisen, z.B. bei
  * Account-Löschung).
  */
-exports.syncCreationToCommunityIndexes = functions.firestore
-    .document('creations/{creationId}')
-    .onWrite(async (change, context) => {
+exports.syncCreationToCommunityIndexes = documentWritten(
+    'creations/{creationId}',
+    async (change, context) => {
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
@@ -2395,9 +2787,9 @@ exports.syncCreationToCommunityIndexes = functions.firestore
  * Rang-Änderungen eines Mitglieds in die Index-Einträge seiner Creations
  * dieser Community nachziehen.
  */
-exports.syncMemberRolesToCommunityIndex = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onUpdate(async (change, context) => {
+exports.syncMemberRolesToCommunityIndex = documentUpdated(
+    'communitys/{communityId}/members/{userId}',
+    async (change, context) => {
         const { communityId, userId } = context.params;
         const rolesBefore = change.before.data().roles || [];
         const rolesAfter = change.after.data().roles || [];
@@ -2422,9 +2814,9 @@ exports.syncMemberRolesToCommunityIndex = functions.firestore
  * Benachrichtigt alle Admins im In-App-Benachrichtigungssystem,
  * wenn ein neuer Bug-Report eingeht.
  */
-exports.onBugReportCreated = functions.firestore
-    .document('bugReports/{reportId}')
-    .onCreate(async (snap, context) => {
+exports.onBugReportCreated = documentCreated(
+    'bugReports/{reportId}',
+    async (snap, context) => {
         const report = snap.data();
         const adminsSnap = await db.collection('users').where('role', '==', 'admin').get();
         if (adminsSnap.empty) return null;
@@ -2441,9 +2833,9 @@ exports.onBugReportCreated = functions.firestore
 // --- Follow / event notifications (inbox doc + web push) ---
 
 // A followed creator posted a new creation → notify their followers.
-exports.notifyFollowersOnNewCreation = functions.firestore
-    .document('creations/{creationId}')
-    .onCreate(async (snap, context) => {
+exports.notifyFollowersOnNewCreation = documentCreated(
+    'creations/{creationId}',
+    async (snap, context) => {
         const creation = snap.data();
         const authorId = creation.userId;
         if (!authorId) return null;
@@ -2473,9 +2865,9 @@ const decayActivityScore = (score, activityAtMs, nowMs) => {
     return score * Math.pow(0.7, months) * Math.pow(0.2, years);
 };
 
-exports.onCreationActivityScore = functions.firestore
-    .document('creations/{creationId}')
-    .onUpdate(async (change) => {
+exports.onCreationActivityScore = documentUpdated(
+    'creations/{creationId}',
+    async (change) => {
         const before = change.before.data();
         const after = change.after.data();
         // Nur echte Updates zählen (neuer Changelog-Eintrag)
@@ -2494,9 +2886,9 @@ exports.onCreationActivityScore = functions.firestore
 // Eine Creation wurde bei einem Event eingereicht (eventIds gewachsen) →
 // Bestätigung an den Einreicher (Inbox + Push). Läuft serverseitig, damit
 // jede Submission-Route (Modal, künftige Flows) abgedeckt ist.
-exports.notifyOnEventSubmission = functions.firestore
-    .document('creations/{creationId}')
-    .onUpdate(async (change, context) => {
+exports.notifyOnEventSubmission = documentUpdated(
+    'creations/{creationId}',
+    async (change) => {
         const before = change.before.data();
         const after = change.after.data();
         const beforeIds = before.eventIds || [];
@@ -2517,9 +2909,9 @@ exports.notifyOnEventSubmission = functions.firestore
 
 // A followed creation gained a new changelog entry → notify its followers
 // (creationFollowers/{creationId}/followers/{uid}).
-exports.notifyOnCreationUpdate = functions.firestore
-    .document('creations/{creationId}')
-    .onUpdate(async (change, context) => {
+exports.notifyOnCreationUpdate = documentUpdated(
+    'creations/{creationId}',
+    async (change, context) => {
         const before = change.before.data();
         const after = change.after.data();
         const beforeLen = (before.changelog || []).length;
@@ -2540,9 +2932,9 @@ exports.notifyOnCreationUpdate = functions.firestore
     });
 
 // Someone new followed a user → notify the followed user.
-exports.notifyOnNewFollower = functions.firestore
-    .document('profiles/{userId}')
-    .onUpdate(async (change, context) => {
+exports.notifyOnNewFollower = documentUpdated(
+    'profiles/{userId}',
+    async (change, context) => {
         const beforeFollowers = change.before.data().followers || [];
         const afterFollowers = change.after.data().followers || [];
         if (afterFollowers.length <= beforeFollowers.length) return null;
@@ -2563,9 +2955,9 @@ exports.notifyOnNewFollower = functions.firestore
 
 // --- Report-Zähler serverseitig pflegen (Client darf reportCount nicht mehr
 //     direkt erhöhen → verhindert Manipulation/Harassment) ---
-exports.onReportCreated = functions.firestore
-    .document('reports/{reportId}')
-    .onCreate(async (snap) => {
+exports.onReportCreated = documentCreated(
+    'reports/{reportId}',
+    async (snap) => {
         const r = snap.data();
         if (!r || !r.targetId || !r.targetType) return null;
         const col = r.targetType === 'creation' ? 'creations'
@@ -2579,7 +2971,7 @@ exports.onReportCreated = functions.firestore
 
 // --- Collaboration-Beitritt per Invite-Code (serverseitig, damit Clients nicht
 //     mehr alle Collaborations inkl. Invite-Codes auflisten dürfen) ---
-exports.joinCollaborationByInviteCode = functions.https.onCall(async (data, context) => {
+exports.joinCollaborationByInviteCode = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -2654,14 +3046,20 @@ function buildCollaborationMemberDoc(role, username) {
 
 // --- Collaboration serverseitig anlegen: verhindert, dass Clients ownerId/memberIds
 //     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
-exports.createCollaboration = functions
-    .runWith({
-        memory: "1GB",
+exports.createCollaboration = onCallWith({
+        concurrency: 2,
+        maxInstances: 5,
+        memory: "1GiB",
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
-    })
-    .https.onCall(async (data, context) => {
+    }, async (data, context) => {
         const userId = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "create-collaboration",
+            subject: userId,
+            limit: 10,
+            windowMs: 60 * 60 * 1000,
+        });
         const title = ((data && data.title) || "").trim();
         const description = ((data && data.description) || "").trim();
         const game = (data && data.game) || "";
@@ -3057,13 +3455,13 @@ async function deleteDocumentRefs(documentRefs) {
 
 // R2 is cleared and verified before Firestore metadata disappears, so a retry
 // can never lose the exact object keys required for storage cleanup.
-exports.deleteCollaboration = functions
-    .runWith({
-        memory: "1GB",
+exports.deleteCollaboration = onCallWith({
+        concurrency: 2,
+        maxInstances: 5,
+        memory: "1GiB",
         timeoutSeconds: 300,
         secrets: [r2AccessKeyId, r2SecretAccessKey],
-    })
-    .https.onCall(async (data, context) => {
+    }, async (data, context) => {
         const userId = requireAuthenticated(context);
         const collaborationId =
             ((data && data.collaborationId) || "").trim();
@@ -3141,7 +3539,7 @@ exports.deleteCollaboration = functions
 
 // --- Einladung annehmen (serverseitig, damit Member-Docs nicht clientseitig mit
 //     beliebiger Rolle geschrieben werden können). ---
-exports.acceptCollaborationInvitation = functions.https.onCall(async (data, context) => {
+exports.acceptCollaborationInvitation = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3211,7 +3609,7 @@ async function findCollaborationByCode(code) {
 
 // --- Join-Infos zum Code (read-only): damit die Join-Seite die richtige UI je
 //     nach joinMode zeigen kann, ohne dass Clients per Code listen dürfen. ---
-exports.getCollaborationJoinInfo = functions.https.onCall(async (data, context) => {
+exports.getCollaborationJoinInfo = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3242,7 +3640,7 @@ exports.getCollaborationJoinInfo = functions.https.onCall(async (data, context) 
 // Public discovery is served through allowlisted callable responses. The private
 // collaboration document remains member-only because it contains the invite code,
 // password hash and internal build/version pointers.
-exports.listPublicCollaborations = functions.https.onCall(async (data, context) => {
+exports.listPublicCollaborations = onCall(async (data, context) => {
     requireAuthenticated(context);
     const snapshot = await db.collection('collaborations')
         .where('visibility', '==', PUBLIC_COLLABORATION_VISIBILITY)
@@ -3257,7 +3655,7 @@ exports.listPublicCollaborations = functions.https.onCall(async (data, context) 
     return {collaborations};
 });
 
-exports.getPublicCollaborationView = functions.https.onCall(async (data, context) => {
+exports.getPublicCollaborationView = onCall(async (data, context) => {
     requireAuthenticated(context);
     const collaborationId = ((data && data.collaborationId) || '').trim();
     if (!collaborationId) {
@@ -3318,11 +3716,17 @@ exports.getPublicCollaborationView = functions.https.onCall(async (data, context
 });
 
 // --- Beitritt per Passwort (nur joinMode === 'password'). ---
-exports.joinCollaborationByPassword = functions.https.onCall(async (data, context) => {
+exports.joinCollaborationByPassword = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
     const userId = context.auth.uid;
+    await enforceCallableRateLimit({
+        action: "join-collaboration-with-password",
+        subject: userId,
+        limit: 15,
+        windowMs: 15 * 60 * 1000,
+    });
     const code = ((data && data.inviteCode) || '').trim();
     const password = ((data && data.password) || '').trim();
     if (!code || !password) {
@@ -3351,7 +3755,7 @@ exports.joinCollaborationByPassword = functions.https.onCall(async (data, contex
 });
 
 // --- Beitrittsantrag stellen (nur joinMode === 'application'). ---
-exports.applyToCollaboration = functions.https.onCall(async (data, context) => {
+exports.applyToCollaboration = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3387,7 +3791,7 @@ exports.applyToCollaboration = functions.https.onCall(async (data, context) => {
 });
 
 // --- Owner: Bewerbung annehmen (fügt Member hinzu) bzw. ablehnen. ---
-exports.respondToCollaborationApplication = functions.https.onCall(async (data, context) => {
+exports.respondToCollaborationApplication = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3430,7 +3834,7 @@ exports.respondToCollaborationApplication = functions.https.onCall(async (data, 
 
 // --- Owner: Collaboration-Einstellungen bearbeiten (Titel/Beschreibung/Join-Modus/
 //     Passwort). Passwort-Hashing läuft serverseitig; game ist nicht änderbar. ---
-exports.updateCollaborationSettings = functions.https.onCall(async (data, context) => {
+exports.updateCollaborationSettings = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3516,7 +3920,7 @@ exports.updateCollaborationSettings = functions.https.onCall(async (data, contex
 // --- Build-Session starten (advisory Turn-Lock: nur einer baut gleichzeitig). ---
 //     Ende primär per Log-off/Spiel-Schließen (endBuildSession); Fallback ist der
 //     estimate-basierte expiresAt, ab dem jeder lazy übernehmen darf.
-exports.startBuildSession = functions.https.onCall(async (data, context) => {
+exports.startBuildSession = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3677,7 +4081,7 @@ exports.startBuildSession = functions.https.onCall(async (data, context) => {
 
 // --- Build-Session beenden (Log-off / Spiel-Schließen / manueller Button).
 //     `force` erlaubt dem Owner, einen fremden hängenden Lock zu lösen. ---
-exports.endBuildSession = functions.https.onCall(async (data, context) => {
+exports.endBuildSession = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -3967,10 +4371,22 @@ async function deleteR2ObjectSafely(objectKey, label) {
 //     .PlanetCreations-Pipeline wie Creation-Backups (getUploadUrl + Signatur),
 //     schreibt Metadaten aber ausschließlich serverseitig. Eine Transaktion
 //     serialisiert parallele Uploads und vergibt eindeutige Versionsnummern. ---
-exports.finalizeCollaborationVersion = functions
-    .runWith({ memory: "1GB", timeoutSeconds: 300, secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey] })
-    .https.onCall(async (data, context) => {
+exports.finalizeCollaborationVersion = onCallWith(
+    {
+        concurrency: 2,
+        maxInstances: 5,
+        memory: "1GiB",
+        timeoutSeconds: 300,
+        secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
+    },
+    async (data, context) => {
         const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "finalize-collaboration-version",
+            subject: uid,
+            limit: 60,
+            windowMs: 15 * 60 * 1000,
+        });
         const uploadId = data && data.uploadId;
         const collaborationId = ((data && data.collaborationId) || "").trim();
         const changelogEntryId =
@@ -4351,7 +4767,7 @@ function normalizeCollaborationImageUrl(value, fieldLabel = "Image", allowEmpty 
             throw new Error("Unsupported protocol.");
         }
         return parsed.href;
-    } catch (error) {
+    } catch {
         throw new functions.https.HttpsError(
             "invalid-argument",
             `${fieldLabel} must be a valid http(s) URL.`,
@@ -4413,7 +4829,7 @@ function normalizeCollaborationCompletedTodos(values) {
 // --- Changelog-Text/Bilder/erledigte Todos dürfen ausschließlich vom
 //     ursprünglichen Builder bearbeitet werden. Der Versions-/Save-Link bleibt
 //     serververwaltet. ---
-exports.updateCollaborationChangelogEntry = functions.https.onCall(
+exports.updateCollaborationChangelogEntry = onCall(
     async (data, context) => {
         const uid = requireAuthenticated(context);
         const collaborationId =
@@ -4487,9 +4903,9 @@ exports.updateCollaborationChangelogEntry = functions.https.onCall(
 );
 
 // --- Signierte Download-URL für eine Collaboration-Version (nur Mitglieder). ---
-exports.getCollaborationVersionDownloadUrl = functions
-    .runWith({ secrets: [r2AccessKeyId, r2SecretAccessKey] })
-    .https.onCall(async (data, context) => {
+exports.getCollaborationVersionDownloadUrl = onCallWith(
+    { secrets: [r2AccessKeyId, r2SecretAccessKey] },
+    async (data, context) => {
         const uid = requireAuthenticated(context);
         const collaborationId = ((data && data.collaborationId) || "").trim();
         const versionId = ((data && data.versionId) || "").trim();
@@ -4530,9 +4946,9 @@ exports.getCollaborationVersionDownloadUrl = functions
     });
 
 // --- Benachrichtigung: Creation ins Showcase aufgenommen bzw. Bewerbung angenommen ---
-exports.notifyOnShowcaseStatus = functions.firestore
-    .document('communitys/{communityId}/creations/{creationId}')
-    .onWrite(async (change, context) => {
+exports.notifyOnShowcaseStatus = documentWritten(
+    'communitys/{communityId}/creations/{creationId}',
+    async (change, context) => {
         const before = change.before.exists ? change.before.data() : {};
         const after = change.after.exists ? change.after.data() : {};
         const ownerId = after.userId;
@@ -4578,9 +4994,9 @@ exports.notifyOnShowcaseStatus = functions.firestore
     });
 
 // --- Benachrichtigung: Community-Rolle geändert ---
-exports.notifyOnCommunityRoleChange = functions.firestore
-    .document('communitys/{communityId}/members/{userId}')
-    .onUpdate(async (change, context) => {
+exports.notifyOnCommunityRoleChange = documentUpdated(
+    'communitys/{communityId}/members/{userId}',
+    async (change, context) => {
         const beforeRoles = change.before.data().roles || [];
         const afterRoles = change.after.data().roles || [];
         const same = beforeRoles.length === afterRoles.length &&
@@ -4603,9 +5019,9 @@ exports.notifyOnCommunityRoleChange = functions.firestore
 
 // --- Cascade-Cleanup beim Löschen einer Community (serverseitig, da Clients die
 //     Index-Docs nicht schreiben/löschen dürfen). Alles best-effort (.catch). ---
-exports.onCommunityDelete = functions.firestore
-    .document('communitys/{communityId}')
-    .onDelete(async (snap, context) => {
+exports.onCommunityDelete = documentDeleted(
+    'communitys/{communityId}',
+    async (snap, context) => {
         const communityId = context.params.communityId;
 
         // 1) Community-Link-Docs entfernen (danach räumen die Link-Doc-Trigger die Indexe)
@@ -4646,7 +5062,7 @@ exports.onCommunityDelete = functions.firestore
  * Bug-Reports als JSON abrufen (nur Admins) — für Troubleshooting-Tools.
  * ?status=open|closed filtert optional.
  */
-app.get("/bugReports", authenticate, async (req, res) => {
+app.get("/bugReports", authenticate, verifyAppCheckWhenEnabled, async (req, res) => {
     const userDoc = await db.collection('users').doc(req.user.uid).get();
     if (!userDoc.exists || userDoc.data().role !== 'admin') {
         return res.status(403).json({ error: "Only admins can read bug reports." });
@@ -4744,7 +5160,7 @@ app.get("/youtubeChannelFeed", async (req, res) => {
  * Einmalig nach dem Deploy aufrufen (Backfill) oder zur Reparatur.
  * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/rebuildSearchIndex
  */
-app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
+app.get("/rebuildSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (req, res) => {
     // Only allow admins to run this
     const userId = req.user.uid;
     const userDoc = await db.collection('users').doc(userId).get();
@@ -4834,7 +5250,7 @@ app.get("/rebuildSearchIndex", authenticate, async (req, res) => {
  * Reparatur. Danach hält onProfileWrite den Index inkrementell aktuell.
  * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/rebuildUserSearchIndex
  */
-app.get("/rebuildUserSearchIndex", authenticate, async (req, res) => {
+app.get("/rebuildUserSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (req, res) => {
     const userId = req.user.uid;
     const userDoc = await db.collection('users').doc(userId).get();
 
@@ -4869,7 +5285,7 @@ app.get("/rebuildUserSearchIndex", authenticate, async (req, res) => {
 /**
  * Rebuilds effective rank permissions for every community member.
  */
-app.get("/backfillCommunityMemberPermissions", authenticate, async (req, res) => {
+app.get("/backfillCommunityMemberPermissions", authenticate, verifyAppCheckWhenEnabled, async (req, res) => {
     const userDoc = await db.collection('users').doc(req.user.uid).get();
     if (!userDoc.exists || userDoc.data().role !== 'admin') {
         return res.status(403).json({ error: "Only admins can backfill member permissions." });
@@ -4914,15 +5330,80 @@ app.get("/backfillCommunityMemberPermissions", authenticate, async (req, res) =>
     }
 });
 
+async function deleteExpiredSecurityDocuments(collectionName) {
+    const snapshot = await db.collection(collectionName)
+        .where("expiresAt", "<=", Timestamp.now())
+        .limit(400)
+        .get();
+    if (snapshot.empty) return 0;
+    const batch = db.batch();
+    snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    return snapshot.size;
+}
+
+async function migrateLegacyDiscordCredentials() {
+    const snapshot = await db.collection("users")
+        .where("discordRefreshToken", "!=", null)
+        .limit(200)
+        .get();
+    if (snapshot.empty) return 0;
+    const batch = db.batch();
+    snapshot.docs.forEach((userDoc) => {
+        const refreshToken = userDoc.data().discordRefreshToken;
+        if (typeof refreshToken === "string" && refreshToken) {
+            batch.set(
+                db.doc(`privateOAuthCredentials/${userDoc.id}`),
+                {
+                    migratedAt: Timestamp.now(),
+                    provider: DISCORD_OAUTH_PROVIDER,
+                    refreshToken,
+                    updatedAt: Timestamp.now(),
+                },
+                {merge: true},
+            );
+        }
+        batch.update(userDoc.ref, {
+            discordRefreshToken: FieldValue.delete(),
+        });
+    });
+    await batch.commit();
+    return snapshot.size;
+}
+
+// Removes expired one-time state/rate-limit records and evacuates provider
+// tokens that were stored in client-readable user documents by older releases.
+exports.maintainSecurityState = scheduled(
+    {
+        schedule: "30 3 * * *",
+        timeZone: "Europe/Berlin",
+    },
+    async () => {
+        const [oauthStatesDeleted, rateLimitsDeleted, credentialsMigrated] =
+            await Promise.all([
+                deleteExpiredSecurityDocuments("oauthStates"),
+                deleteExpiredSecurityDocuments("securityRateLimits"),
+                migrateLegacyDiscordCredentials(),
+            ]);
+        console.log("Security state maintenance completed.", {
+            credentialsMigrated,
+            oauthStatesDeleted,
+            rateLimitsDeleted,
+        });
+        return null;
+    });
+
 /**
  * Scheduled function to clean up unverified user accounts after 48 hours.
  * Runs daily at 3:00 AM Europe/Berlin time.
  * Deletes users who haven't verified their email within 48 hours of account creation.
  */
-exports.cleanupUnverifiedUsers = functions.pubsub
-    .schedule('0 3 * * *')
-    .timeZone('Europe/Berlin')
-    .onRun(async (context) => {
+exports.cleanupUnverifiedUsers = scheduled(
+    {
+        schedule: '0 3 * * *',
+        timeZone: 'Europe/Berlin',
+    },
+    async () => {
         const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours ago
 
         console.log(`Starting cleanup of unverified users created before ${cutoff.toISOString()}`);
@@ -4945,10 +5426,11 @@ exports.cleanupUnverifiedUsers = functions.pubsub
                         await admin.auth().deleteUser(user.uid);
 
                         // Delete associated Firestore documents
-                        await Promise.allSettled([
-                            db.doc(`users/${user.uid}`).delete(),
-                            db.doc(`profiles/${user.uid}`).delete()
-                        ]);
+                         await Promise.allSettled([
+                             db.doc(`users/${user.uid}`).delete(),
+                             db.doc(`profiles/${user.uid}`).delete(),
+                             db.doc(`privateOAuthCredentials/${user.uid}`).delete(),
+                         ]);
 
                         deletedCount++;
                     } catch (error) {

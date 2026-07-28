@@ -1,4 +1,8 @@
 import { initializeApp } from 'firebase/app';
+import {
+    initializeAppCheck,
+    ReCaptchaEnterpriseProvider,
+} from 'firebase/app-check';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 // ✅ 1. Import the correctly named function: enableIndexedDbPersistence
 import {
@@ -10,13 +14,13 @@ import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
 const firebaseConfig = {
-    apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-    authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.REACT_APP_FIREBASE_APP_ID,
-    measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 export const isConfigured = Boolean(
@@ -25,35 +29,52 @@ export const isConfigured = Boolean(
 );
 
 const useFirebaseEmulators =
-    process.env.NODE_ENV !== 'production' &&
-    process.env.REACT_APP_USE_FIREBASE_EMULATORS === 'true';
+    import.meta.env.DEV &&
+    import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
 
-let app, auth, db;
+let app, auth, db, appCheck;
 
 if (isConfigured) {
     app = initializeApp(firebaseConfig);
+    const appCheckSiteKey =
+        import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY;
+    if (!useFirebaseEmulators && appCheckSiteKey) {
+        if (import.meta.env.DEV &&
+            import.meta.env.VITE_FIREBASE_APP_CHECK_DEBUG === 'true' &&
+            typeof window !== 'undefined') {
+            window.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+        }
+        try {
+            appCheck = initializeAppCheck(app, {
+                provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
+                isTokenAutoRefreshEnabled: true,
+            });
+        } catch (error) {
+            console.error('Firebase App Check could not be initialized:', error);
+        }
+    }
     auth = getAuth(app);
     db = getFirestore(app);
 
     if (useFirebaseEmulators) {
         const emulatorHost =
-            process.env.REACT_APP_FIREBASE_EMULATOR_HOST || '127.0.0.1';
+            import.meta.env.VITE_FIREBASE_EMULATOR_HOST || '127.0.0.1';
         connectAuthEmulator(
             auth,
             `http://${emulatorHost}:${
-                process.env.REACT_APP_FIREBASE_AUTH_EMULATOR_PORT || '9099'
+                import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_PORT || '9099'
             }`,
             { disableWarnings: true }
         );
         connectFirestoreEmulator(
             db,
             emulatorHost,
-            Number(process.env.REACT_APP_FIRESTORE_EMULATOR_PORT || 8080)
+            Number(import.meta.env.VITE_FIRESTORE_EMULATOR_PORT || 8080)
         );
         connectFunctionsEmulator(
             getFunctions(app),
             emulatorHost,
-            Number(process.env.REACT_APP_FUNCTIONS_EMULATOR_PORT || 5001)
+            Number(import.meta.env.VITE_FUNCTIONS_EMULATOR_PORT || 5001)
         );
     } else {
         // ✅ 2. Call the function with its correct name
@@ -92,4 +113,4 @@ export async function getMessagingIfSupported() {
     return messagingInstance;
 }
 
-export { app, auth, db };
+export { app, appCheck, auth, db };
