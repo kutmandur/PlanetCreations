@@ -225,9 +225,102 @@ html.game-overlay-window #root { background: transparent !important; }
   opacity: .65;
 }
 /* Smooth the switch between themes for common surfaces. */
-body, body * {
-  transition-property: background-color, border-color;
-  transition-duration: 150ms;
+@layer base {
+  body, body * {
+    transition-property: background-color, border-color;
+    transition-duration: 150ms;
+  }
+}
+
+/* Springy micro-interactions for pill selectors and floating navigation.
+   The overshoot is intentionally subtle: it adds a tactile response without
+   turning normal navigation into a continuous animation. */
+:where(.absolute.rounded-full.transition-all) {
+  transition-timing-function: cubic-bezier(.22, 1.28, .36, 1);
+  transform-origin: center;
+  will-change: left, width, transform;
+}
+
+.pc-selector-pop {
+  animation: pc-selector-indicator-pop
+    var(--pc-selector-slide-duration, 500ms) linear both;
+}
+
+@keyframes pc-selector-indicator-pop {
+  0%, 38% { transform: none; }
+  40% { transform: translateY(-.28px) scaleX(1.0097) scaleY(1.0208); }
+  45% { transform: translateY(-.75px) scaleX(1.0263) scaleY(1.0564); }
+  50% { transform: translateY(-.96px) scaleX(1.0336) scaleY(1.0721); }
+  54% {
+    transform: translateY(-1px) scaleX(1.035) scaleY(1.075);
+  }
+  60% { transform: translateY(-.93px) scaleX(1.0324) scaleY(1.0695); }
+  70% { transform: translateY(-.63px) scaleX(1.0222) scaleY(1.0476); }
+  80% { transform: translateY(-.32px) scaleX(1.011) scaleY(1.0236); }
+  90% { transform: translateY(-.08px) scaleX(1.003) scaleY(1.0063); }
+  95% { transform: translateY(-.02px) scaleX(1.0008) scaleY(1.0016); }
+  100% { transform: none; }
+}
+
+/* Scrollable selectors still need clipping on small screens. From tablet width
+   onward their indicator may paint a few pixels beyond the outer capsule. */
+@media (min-width: 768px) {
+  :where(.overflow-x-auto:has(> .absolute.rounded-full.transition-all)) {
+    overflow: visible;
+  }
+}
+
+.pc-floating-action {
+  will-change: width, transform;
+  transition-timing-function: cubic-bezier(.22, 1.28, .36, 1);
+}
+
+.pc-floating-action--left {
+  transform-origin: left center;
+}
+
+.pc-floating-action--right {
+  transform-origin: right center;
+}
+
+.pc-floating-action:hover {
+  transform: translateY(-2px) scale(1.015);
+}
+
+.pc-floating-action:active {
+  transform: translateY(1px) scale(.94);
+  transition-duration: 80ms;
+}
+
+.pc-floating-label {
+  transition-timing-function: cubic-bezier(.22, 1.28, .36, 1);
+}
+
+.pc-floating-action:hover .pc-floating-icon {
+  animation: pc-floating-icon-breathe 680ms cubic-bezier(.22, 1.28, .36, 1) both;
+}
+
+@keyframes pc-floating-icon-breathe {
+  0% { transform: scale(1); }
+  42% { transform: translateY(-1px) scale(1.1); }
+  70% { transform: scale(.985); }
+  100% { transform: scale(1.035); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.absolute.rounded-full.transition-all),
+  .pc-floating-action,
+  .pc-floating-label {
+    transition-duration: 1ms !important;
+  }
+
+  .pc-floating-action:hover .pc-floating-icon {
+    animation: none;
+  }
+
+  .pc-selector-pop {
+    animation: none;
+  }
 }
 
 /* Spiel-Farb-Utilities: Die Farbe kommt aus CSS-Variablen, die getGameColor(id).style

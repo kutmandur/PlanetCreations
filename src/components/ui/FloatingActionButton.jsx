@@ -11,6 +11,7 @@ const FloatingActionButton = ({ activeTab }) => {
         <div
             style={{ bottom, ...color.style }}
             className={`
+                pc-floating-action pc-floating-action--right
                 group fixed right-8 h-16
                 ${color.bg} ${color.hoverBg}
                 text-white
@@ -24,8 +25,8 @@ const FloatingActionButton = ({ activeTab }) => {
             aria-label="New Creation"
         >
             <div className="flex items-center justify-center">
-                <Icon path={ICONS.plus} className="w-8 h-8 flex-shrink-0" />
-                <div className="overflow-hidden max-w-0 group-hover:max-w-xs transition-all duration-300 ease-in-out">
+                <Icon path={ICONS.plus} className="pc-floating-icon w-8 h-8 flex-shrink-0" />
+                <div className="pc-floating-label overflow-hidden max-w-0 group-hover:max-w-xs transition-all duration-300 ease-in-out">
                     <span className="pl-2 font-bold whitespace-nowrap">
                         New Creation
                     </span>

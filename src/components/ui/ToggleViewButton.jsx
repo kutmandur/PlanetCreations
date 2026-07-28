@@ -12,7 +12,7 @@ const ToggleViewButton = () => {
     // ✅ Check the URL path to determine state
     const isCommunitysPage = location.pathname.startsWith('/community');
 
-    const iconPath = isCommunitysPage ? ICONS.globe : ICONS.users;
+    const iconPath = isCommunitysPage ? ICONS.squares2x2 : ICONS.userGroup;
     const text = isCommunitysPage ? 'Creation Browser' : 'Communitys';
     const newPath = isCommunitysPage ? '/' : '/communitys';
 
@@ -22,27 +22,31 @@ const ToggleViewButton = () => {
             to={newPath}
             style={{ bottom }}
             className={`
-                group fixed left-8 h-16 w-16
+                pc-floating-action pc-floating-action--left
+                group fixed left-8 h-16 w-16 overflow-hidden
                 bg-yellow-500 hover:bg-yellow-600
                 text-white
                 rounded-full
-                flex items-center justify-center
+                flex items-center
                 shadow-lg
-                focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500
+                outline-none focus:outline-none
+                focus-visible:ring-2 focus-visible:ring-yellow-700
                 transition-all duration-300 ease-in-out
                 hover:w-52
             `}
             aria-label={text}
         >
-            <div className="flex items-center justify-center">
-                <Icon path={iconPath} className="w-8 h-8 flex-shrink-0" solid />
-                
-                <div className="overflow-hidden max-w-0 group-hover:max-w-xs transition-all duration-300 ease-in-out">
-                    <span className="pl-2 font-bold whitespace-nowrap">
-                        {text}
-                    </span>
-                </div>
-            </div>
+            <span className="pc-floating-icon flex h-16 w-16 flex-none items-center justify-center">
+                <Icon
+                    path={iconPath}
+                    className="h-8 w-8"
+                    strokeWidth={1.8}
+                />
+            </span>
+
+            <span className="pc-floating-label max-w-0 overflow-hidden whitespace-nowrap font-bold opacity-0 transition-all duration-300 ease-in-out group-hover:max-w-36 group-hover:pr-3 group-hover:opacity-100">
+                {text}
+            </span>
         </Link>
     );
 };
