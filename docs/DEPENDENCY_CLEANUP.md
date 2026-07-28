@@ -34,6 +34,9 @@ same Node 24.18 runtime.
   installs to reproducible `npm ci`.
 - Added DMG and ZIP outputs for both Intel and Apple Silicon. The ZIP target is
   required for macOS auto-update metadata.
+- Release drafts omit `.blockmap` assets to keep the public download list
+  understandable. Auto-updates therefore download the complete package instead
+  of using differential downloads; `latest*.yml` updater metadata remains.
 
 ## Environment migration
 
