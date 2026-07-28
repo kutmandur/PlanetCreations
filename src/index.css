@@ -11,6 +11,27 @@
   }
 }
 
+/* Tailwind 4 changed an unspecified border color from gray-200 to currentColor.
+   Keep the established PlanetCreations separators while allowing every explicit
+   border-color utility to override this base-layer compatibility default. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, #e5e7eb);
+  }
+
+  html.dark *,
+  html.dark ::after,
+  html.dark ::before,
+  html.dark ::backdrop,
+  html.dark ::file-selector-button {
+    border-color: var(--color-gray-700, #374151);
+  }
+}
+
 html, body, #root {
   height: 100vh;
   width: 100vw;
