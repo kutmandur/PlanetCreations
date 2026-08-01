@@ -37,8 +37,8 @@ file is the current hand-off source.
 | P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
 | P1 coordination | Released in v1.0.26; cleanup completed and deployed | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI; installed Windows production gate covers invitation and membership lifecycle | Manually repeat overlay/changelog/system-push scenarios through two signed-in installed clients and on macOS |
 | P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI; installed Windows production gate covers a signed copied PC2 save, member download and deletion | Manually cover Planet Zoo plus multi-version/retention behavior through installed clients |
-| P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
-| P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Monitor production and complete the remaining P1/P3 follow-ups |
+| P3 publish | Locally complete; deployment pending | Standing/legacy consent, completion freeze, signed-save publication, permanent contributor metadata, Creation/Profile credit UI and unanimous current-member revoke are implemented and locally green | Deploy Functions/rules/web, then run the authenticated production publish/download/revoke cleanup gate |
+| P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Deploy and production-test P3; continue the remaining manual P1 cross-platform checks |
 
 ## Work completed in the current continuation
 
@@ -117,6 +117,31 @@ file is the current hand-off source.
   by that page.
 - The detail route is protected and the overlay's “open collaboration” link now points to the actual
   singular `/collaboration/:id` route.
+
+### Publication and contributor credits (P3)
+
+- The owner can mark an active project complete only after the build lock is free and a current signed
+  save exists. Completion disables further building, todo/comment/work-session mutations and changelog
+  edits while keeping project metadata available for final review.
+- Every new membership records standing publication/credit consent. Existing memberships can confirm
+  once from the Publishing settings panel; publication remains blocked until every current member has
+  consent recorded.
+- `publishCollaboration` copies the exact current signed Collaboration package to the established
+  `creation-backups/{ownerId}/{creationId}` namespace and creates a normal public Creation owned by the
+  Collaboration owner. Existing Creation download, direct-install, search-index and cleanup paths are
+  reused; no second client/storage implementation was added.
+- The published Creation contains immutable `contributors`, `contributorIds` and source Collaboration/
+  version fields. Durable contributor history includes departed members, while its gallery is populated
+  newest-first from changelog images followed by the owner's starting gallery.
+- Creation details link every credited contributor to their profile. Profiles load a new `Collaborated
+  on` tab only when opened, using one automatically indexed `array-contains` query and local sorting.
+- Any current member can vote to remove the publication. The Creation is deleted only when all current
+  members have voted; voluntary departures and account removal drop departed voters from the quorum but
+  preserve their credit. Owners cannot remove dissenting members while a publication is active.
+- The Collaboration itself cannot be deleted while published. Published save packages cannot be replaced
+  or detached through the normal owner backup callables, and direct owner deletion of the generated
+  Creation is denied; moderator deletion repairs the Collaboration publication state through the existing
+  Creation cleanup trigger.
 
 ### Invitation and membership cleanup (P1)
 
@@ -335,14 +360,14 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
   stale-save warning,
   later author-edit coverage, local draft persistence, end-session draft hand-off and game-start
   collaboration version-update selection/installation plus targeted availability refresh events.
-- Cloud Functions Node tests: 39 passed, including invitation-grant/manager/build-lock policy,
+- Cloud Functions Node tests: 43 passed, including invitation-grant/manager/build-lock policy,
   public-view allowlists, strict member-only
   downloads, build-release notification fan-out policy, pending-save ownership, missing-save warnings
   and late-version promotion safeguards, exact collaboration-prefix cleanup validation and the two
   account-cleanup collection-group index requirements.
 - Electron module Node tests: 14 passed, including newest-save selection, two-minute staleness and the
   loopback-only isolated dev-server resolver.
-- Firestore Rules emulator tests: 11 passed. The suite proves member/outsider read boundaries,
+- Firestore Rules emulator tests: 15 passed. The suite proves member/outsider read boundaries,
   server-only collaboration/file/version/upload metadata, blocked self-promotion and forged
   membership, callable-only membership/role changes and inaccessible invitation grants/deprecated
   invite copies. Building the suite also closed direct outsider `memberIds` self-add, owner
@@ -392,12 +417,15 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
 12. Repeat the already-green in-app inbox/background-refresh flow with real system push enabled and
     confirm one OS notification is delivered.
 13. Completed and deployed: Firestore Rules emulator tests cover privilege escalation and server-only
-    version metadata; the expanded suite is now 11/11 passing locally.
+    version metadata; the P3-expanded suite is now 15/15 passing locally.
 14. Completed and deployed: P1 invitation inbox and membership/role cleanup, including its Functions,
     rules, corrected legacy account-cleanup indexes, IONOS web client and obsolete callable removal.
     The installed Windows production gate verified the invitation lifecycle and exact access cleanup;
     the manual signed-in UI/system-notification pass remains under items 1 and 12.
-15. Build P3 publish/profile-credit/revoke.
+15. P3 publish/profile-credit/revoke is implemented and locally green. Deploy its four callables,
+    Creation cleanup trigger, rules and web UI, then run one authenticated owner/member production flow:
+    consent, complete, publish, member download/direct install, both profile credits, unanimous revoke,
+    R2 Creation-package cleanup and final Collaboration deletion.
 
 ## Working-tree note
 

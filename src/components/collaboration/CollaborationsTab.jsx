@@ -164,14 +164,16 @@ const CollaborationsTab = ({ user, setModalMessage }) => {
                     >
                         <Icon path={ICONS.refresh} className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>
-                    <Link
-                        to="/collaboration/create"
-                        className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-amber-500 text-gray-950 transition hover:bg-amber-400"
-                        aria-label="Create a new collaboration"
-                        title="New collaboration"
-                    >
-                        <Icon path={ICONS.plus} className="h-5 w-5" />
-                    </Link>
+                    {isRunningInElectron && (
+                        <Link
+                            to="/collaboration/create"
+                            className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-amber-500 text-gray-950 transition hover:bg-amber-400"
+                            aria-label="Create a new collaboration"
+                            title="New collaboration"
+                        >
+                            <Icon path={ICONS.plus} className="h-5 w-5" />
+                        </Link>
+                    )}
                 </div>
             </form>
 
@@ -204,18 +206,26 @@ const CollaborationsTab = ({ user, setModalMessage }) => {
                         <Icon path={ICONS.users} className="h-7 w-7 text-gray-400" />
                     </span>
                     <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                        {searchTerm || filterStatus !== 'all' ? 'No matching collaborations' : 'Start your first collaboration'}
+                        {searchTerm || filterStatus !== 'all'
+                            ? 'No matching collaborations'
+                            : isRunningInElectron
+                                ? 'Start your first collaboration'
+                                : 'No collaborations yet'}
                     </h3>
                     <p className="mx-auto mt-2 max-w-md text-gray-500 dark:text-gray-400">
                         {searchTerm || filterStatus !== 'all'
                             ? 'Adjust the search or status filter to see more projects.'
-                            : 'Create a project for one shared park or zoo, or join an existing team with its code.'}
+                            : isRunningInElectron
+                                ? 'Create a project for one shared park or zoo, or join an existing team with its code.'
+                                : 'Join an existing team with its share code, or browse public projects here.'}
                     </p>
                     {!searchTerm && filterStatus === 'all' && (
                         <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
-                            <Link to="/collaboration/create" className="rounded-full bg-amber-500 px-5 py-2.5 font-bold text-gray-950 hover:bg-amber-400">
-                                Create collaboration
-                            </Link>
+                            {isRunningInElectron && (
+                                <Link to="/collaboration/create" className="rounded-full bg-amber-500 px-5 py-2.5 font-bold text-gray-950 hover:bg-amber-400">
+                                    Create collaboration
+                                </Link>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => {

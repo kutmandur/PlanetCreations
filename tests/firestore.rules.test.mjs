@@ -22,6 +22,7 @@ const OWNER_ID = "rules-owner";
 const MEMBER_ID = "rules-member";
 const OUTSIDER_ID = "rules-outsider";
 const MODERATOR_ID = "rules-moderator";
+const PUBLISHED_CREATION_ID = "rules-published-creation";
 
 const emulatorAddress =
   process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
@@ -103,6 +104,31 @@ async function seedCollaboration() {
       versionNumber: 1,
       hasSave: true,
       status: "complete",
+    });
+    batch.set(doc(db, `creations/${PUBLISHED_CREATION_ID}`), {
+      title: "Published Collaboration",
+      description: "A published rules fixture.",
+      game: "planet-coaster-2",
+      category: "Parks",
+      status: "finished",
+      platform: "pc",
+      tags: ["collaboration"],
+      userId: OWNER_ID,
+      contributors: [
+        { uid: OWNER_ID, username: "RulesOwner" },
+        { uid: MEMBER_ID, username: "RulesMember" },
+      ],
+      contributorIds: [OWNER_ID, MEMBER_ID],
+      sourceCollaborationId: COLLABORATION_ID,
+      sourceCollaborationTitle: "Rules Test Collaboration",
+      sourceCollaborationVersionId: "version-1",
+      backupObjectKey:
+        `creation-backups/${OWNER_ID}/${PUBLISHED_CREATION_ID}/version-1.PlanetCreations`,
+      backupStorageProvider: "cloudflare-r2",
+      backupIsSigned: true,
+      createdAt: 1,
+      updatedAt: 1,
+      likes: 0,
     });
 
     await batch.commit();
@@ -351,5 +377,77 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
       role: "owner",
       status: "pending",
     }));
+  });
+
+  test("completed collaborations reject direct project mutations", async () => {
+    const memberDb = authenticatedFirestore(MEMBER_ID);
+    await assertSucceeds(setDoc(
+      doc(memberDb, collaborationPath("todos", "active-todo")),
+      {
+        text: "Allowed while active",
+        createdBy: MEMBER_ID,
+        completed: false,
+      },
+    ));
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), collaborationPath()), {
+        status: "completed",
+      });
+    });
+    await assertFails(setDoc(
+      doc(memberDb, collaborationPath("todos", "completed-todo")),
+      {
+        text: "Must stay read-only",
+        createdBy: MEMBER_ID,
+        completed: false,
+      },
+    ));
+  });
+
+  test("clients cannot forge collaboration publication credits", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    await assertFails(setDoc(doc(ownerDb, "creations/forged-credit"), {
+      title: "Forged credit",
+      game: "planet-coaster-2",
+      category: "Parks",
+      userId: OWNER_ID,
+      tags: ["collaboration"],
+      contributors: [{ uid: OUTSIDER_ID, username: "Forged" }],
+      contributorIds: [OUTSIDER_ID],
+      sourceCollaborationId: COLLABORATION_ID,
+    }));
+  });
+
+  test("published credits stay immutable while normal owner edits work", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const creationRef = doc(
+      ownerDb,
+      `creations/${PUBLISHED_CREATION_ID}`,
+    );
+    await assertSucceeds(updateDoc(creationRef, {
+      title: "Edited published title",
+    }));
+    await assertFails(updateDoc(creationRef, {
+      contributors: [{ uid: OWNER_ID, username: "RulesOwner" }],
+      contributorIds: [OWNER_ID],
+    }));
+    await assertFails(updateDoc(creationRef, {
+      sourceCollaborationId: null,
+    }));
+  });
+
+  test("only staff can directly delete a published collaboration creation", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const moderatorDb = authenticatedFirestore(MODERATOR_ID, {
+      role: "moderator",
+    });
+    await assertFails(deleteDoc(doc(
+      ownerDb,
+      `creations/${PUBLISHED_CREATION_ID}`,
+    )));
+    await assertSucceeds(deleteDoc(doc(
+      moderatorDb,
+      `creations/${PUBLISHED_CREATION_ID}`,
+    )));
   });
 });

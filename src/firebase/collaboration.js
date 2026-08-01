@@ -362,6 +362,40 @@ export const deleteCollaboration = async (collaborationId) => {
     return result.data;
 };
 
+/** Freeze an active collaboration after its final build session. Owner only. */
+export const completeCollaboration = async (collaborationId) => {
+    const callable = httpsCallable(getFunctions(), 'completeCollaboration');
+    const result = await callable({ collaborationId });
+    return result.data;
+};
+
+/** Record publication credit consent for legacy memberships. */
+export const confirmCollaborationPublishConsent = async (collaborationId) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'confirmCollaborationPublishConsent',
+    );
+    const result = await callable({ collaborationId });
+    return result.data;
+};
+
+/** Publish the final signed save as a normal Creation. Owner only. */
+export const publishCollaboration = async (collaborationId) => {
+    const callable = httpsCallable(getFunctions(), 'publishCollaboration');
+    const result = await callable({ collaborationId });
+    return result.data;
+};
+
+/** Add the current member's vote to unanimously revoke a publication. */
+export const voteRevokeCollaborationPublish = async (collaborationId) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'voteRevokeCollaborationPublish',
+    );
+    const result = await callable({ collaborationId });
+    return result.data;
+};
+
 /**
  * Fetch all members of a collaboration.
  * @param {string} collaborationId - The collaboration ID.

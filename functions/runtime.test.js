@@ -8,7 +8,7 @@ const exportedFunctions = require("./index");
 test("exports every function as a second-generation endpoint", () => {
   const endpoints = Object.entries(exportedFunctions);
 
-  assert.equal(endpoints.length, 77);
+  assert.equal(endpoints.length, 81);
   for (const [name, fn] of endpoints) {
     assert.equal(
       fn.__endpoint?.platform,
@@ -34,6 +34,7 @@ test("limits archive processing concurrency and scale", () => {
     "deleteCollaboration",
     "finalizeBackupUpload",
     "finalizeCollaborationVersion",
+    "publishCollaboration",
   ];
 
   for (const name of archiveFunctions) {
