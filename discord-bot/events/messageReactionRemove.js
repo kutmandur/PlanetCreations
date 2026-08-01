@@ -1,5 +1,4 @@
 const { Events } = require('discord.js');
-const admin = require('firebase-admin');
 
 module.exports = {
     name: Events.MessageReactionRemove,

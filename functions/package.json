@@ -20,13 +20,16 @@
     "adm-zip": "^0.6.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "firebase-admin": "^13.10.0",
-    "firebase-functions": "^7.3.0"
+    "firebase-admin": "^14.2.0",
+    "firebase-functions": "^7.3.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.8.0",
     "globals": "^17.8.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   },
   "private": true
 }

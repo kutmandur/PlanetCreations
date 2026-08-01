@@ -1,5 +1,7 @@
 require('dotenv').config();
-const admin = require('firebase-admin');
+const { cert, initializeApp } = require('firebase-admin/app');
+const { FieldValue, getFirestore, Timestamp } = require('firebase-admin/firestore');
+const { getMessaging } = require('firebase-admin/messaging');
 
 try {
   const encodedServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
@@ -9,8 +11,8 @@ try {
   const decodedJson = Buffer.from(encodedServiceAccount, 'base64').toString('utf8');
   const serviceAccount = JSON.parse(decodedJson);
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+  initializeApp({
+    credential: cert(serviceAccount)
   });
   
   console.log('✅ Firebase connection initialized successfully!');
@@ -20,7 +22,8 @@ try {
   process.exit(1);
 }
 
-const db = admin.firestore();
+const db = getFirestore();
+const messaging = getMessaging();
 
 // Export the initialized services
-module.exports = { admin, db };
+module.exports = { db, FieldValue, messaging, Timestamp };

@@ -73,20 +73,20 @@ names.
 
 No production audit currently reports a critical finding.
 
-- Functions and Discord bot each retain eight moderate findings in transitive
-  Google Cloud dependencies used by Firebase Admin 13. npm's proposed
-  "solution" is an older Admin release; that is not an upgrade and does not
-  remove the underlying upstream chain.
+- The Functions and Discord-bot production audits are clean after upgrading to
+  Firebase Admin 14.2, migrating the remaining legacy namespace imports and
+  resolving the transitive Google Cloud Storage chain to patched `uuid` 11.1.1.
+  Keep the `uuid` override until `@google-cloud/storage` no longer requests the
+  older major itself; its affected consumers use only the compatible `v4()` API.
 - The root production audit reports React Router's RSC-mode CSRF advisory.
   This app uses `HashRouter` in declarative SPA mode and has no React Server
-  Components or server actions, so the affected path is not reachable. No
-  fixed newer React Router release exists in the registry yet; npm only
-  proposes a downgrade.
-- The full development audit also reports electron-builder's transitive archive
-  and installer tools. They are build-time-only and are not shipped as runtime
-  dependencies. The current electron-builder release is already installed;
-  npm again proposes a downgrade. Recheck both chains when upstream releases
-  become available instead of forcing incompatible overrides.
+  Components or server actions, so the affected path is not reachable. The
+  patched React Router major is not the current stable npm release; npm proposes
+  a downgrade instead of an upgrade.
+- The full root development audit additionally reports `brace-expansion` below
+  patched versions inside Electron packaging tools. Those copies are build-time
+  only and are not shipped as application runtime dependencies. Recheck both
+  root chains when compatible upstream releases become available.
 
 ## Next release checks
 
