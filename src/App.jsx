@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -795,7 +795,16 @@ const AppContent = () => {
                             <Route path="/event/:eventId/edit" element={<ProtectedRoute user={user} userProfile={userProfile} checkEventManagement={true}><EventForm user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/event/:eventId/manage" element={<ProtectedRoute user={user} userProfile={userProfile} checkEventManagement={true}><EventManager user={user} userProfile={userProfile} setModalMessage={setModalMessage} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/create-community" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="influencer"><CreateCommunityForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
-                            <Route path="/collaboration/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreateCollaborationForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
+                            <Route
+                                path="/collaboration/create"
+                                element={window.electronAPI?.isElectron ? (
+                                    <ProtectedRoute user={user} userProfile={userProfile}>
+                                        <CreateCollaborationForm user={user} setModalMessage={setModalMessage} />
+                                    </ProtectedRoute>
+                                ) : (
+                                    <Navigate to="/client-info" replace />
+                                )}
+                            />
                             <Route path="/collaboration/:collaborationId/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><CreateCollaborationForm user={user} setModalMessage={setModalMessage} /></ProtectedRoute>} />
                             <Route path="/manager/:id" element={<ProtectedRoute user={user} userProfile={userProfile} checkCommunityOwnership={true} setShowRickRoll={setShowRickRoll}><CommunityManagerPage setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} setConfirmation={setConfirmation} blacklist={blacklist} userProfile={userProfile} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/admin" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="admin" setShowRickRoll={setShowRickRoll}><AdminPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setPasswordConfirm={setPasswordConfirm} /></ProtectedRoute>} />

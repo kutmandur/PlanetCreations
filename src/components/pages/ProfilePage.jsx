@@ -115,6 +115,8 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     const [showcases, setShowcases] = useState(null); // null = noch nicht geladen
     const [loadingShowcases, setLoadingShowcases] = useState(false);
+    const [collaboratedCreations, setCollaboratedCreations] = useState(null);
+    const [loadingCollaboratedCreations, setLoadingCollaboratedCreations] = useState(false);
 
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
     const [isFollowing, setIsFollowing] = useState(false);
@@ -186,6 +188,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         setLoadingProfile(true);
         setLoadingMemberships(true);
         setShowcases(null);
+        setCollaboratedCreations(null);
         setActiveSection('Creations');
         setActivePanel(0);
         setFilterState({ searchTerm: '', status: 'all', rank: 'all', tag: '', dlc: 'all' });
@@ -310,6 +313,44 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         return () => { isMounted = false; };
     }, [activeSection, showcases, memberships, loadingMemberships, userId]);
 
+    // Contributor credits are queried only when this tab is opened. No listener
+    // or profile fan-out is needed; contributorIds has Firestore's automatic
+    // array index and the small result is sorted locally.
+    useEffect(() => {
+        if (activeSection !== 'Collaborated on' ||
+            collaboratedCreations !== null || !userId) return;
+        let isMounted = true;
+        const loadCollaboratedCreations = async () => {
+            setLoadingCollaboratedCreations(true);
+            try {
+                const snapshot = await getDocs(query(
+                    collection(db, 'creations'),
+                    where('contributorIds', 'array-contains', userId),
+                    limit(60),
+                ));
+                const results = snapshot.docs
+                    .map((creationDoc) => ({
+                        id: creationDoc.id,
+                        ...creationDoc.data(),
+                    }))
+                    .filter((creation) => creation.userId !== userId)
+                    .sort((left, right) => {
+                        const leftTime = left.createdAt?.toMillis?.() || 0;
+                        const rightTime = right.createdAt?.toMillis?.() || 0;
+                        return rightTime - leftTime;
+                    });
+                if (isMounted) setCollaboratedCreations(results);
+            } catch (error) {
+                console.error('Error loading collaborated creations:', error);
+                if (isMounted) setCollaboratedCreations([]);
+            } finally {
+                if (isMounted) setLoadingCollaboratedCreations(false);
+            }
+        };
+        loadCollaboratedCreations();
+        return () => { isMounted = false; };
+    }, [activeSection, collaboratedCreations, userId]);
+
     const handleFilterChange = (field, value) => {
         setFilterState(prev => ({ ...prev, [field]: value }));
     };
@@ -321,6 +362,19 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             return creationMatchesFilters(c, { searchTerm: filterState.searchTerm, rank: 'all', tag: filterState.tag, dlc: 'all' });
         });
     }, [creations, selectedGame, filterState]);
+
+    const visibleCollaboratedCreations = useMemo(() => {
+        return (collaboratedCreations || []).filter((creation) => {
+            if (selectedGame !== 'all' && creation.game !== selectedGame) return false;
+            if (filterState.status !== 'all' && creation.status !== filterState.status) return false;
+            return creationMatchesFilters(creation, {
+                searchTerm: filterState.searchTerm,
+                rank: 'all',
+                tag: filterState.tag,
+                dlc: 'all',
+            });
+        });
+    }, [collaboratedCreations, selectedGame, filterState]);
 
     const loading = loadingProfile || loadingInitialCreations || loadingMemberships;
 
@@ -829,7 +883,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             <div style={{ '--theme-color': themeHex }}>
                 <div className="my-6 flex justify-center">
                     <div className="relative flex items-center overflow-x-auto rounded-full bg-gray-200 p-1 shadow-inner dark:bg-gray-700">
-                        {['Creations', 'Showcases'].map((section) => (
+                        {['Creations', 'Collaborated on', 'Showcases'].map((section) => (
                             <button
                                 key={section}
                                 onClick={() => setActiveSection(section)}
@@ -845,7 +899,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                     </div>
                 </div>
 
-                {activeSection === 'Creations' && (
+                {(activeSection === 'Creations' || activeSection === 'Collaborated on') && (
                     <>
                         <div className="mb-6 flex justify-center">
                             <div className="relative flex items-center overflow-x-auto rounded-full bg-gray-200 p-1 shadow-inner dark:bg-gray-700">
@@ -914,7 +968,9 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                         {activePanel === 0
                             ? activeSection === 'Showcases'
                                 ? `Showcases featuring ${profile?.username || 'this user'}`
-                                : `Creations by ${profile?.username || 'this user'}`
+                                : activeSection === 'Collaborated on'
+                                    ? `Collaborations featuring ${profile?.username || 'this user'}`
+                                    : `Creations by ${profile?.username || 'this user'}`
                             : 'Community Memberships'}
                     </h3>
                     {activePanel === 0 && (
@@ -970,6 +1026,38 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                 {!hasMoreCreations && creations.length > 0 && (
                                     <p className="col-span-full mt-10 text-center text-xl text-gray-500">
                                         You've seen all their creations!
+                                    </p>
+                                )}
+                            </>
+                        )}
+
+                        {activeSection === 'Collaborated on' && (
+                            <>
+                                <h3 className="mb-4 hidden text-center text-2xl font-bold text-gray-800 dark:text-gray-100 lg:block">
+                                    Collaborations featuring {profile?.username || 'this user'}
+                                </h3>
+                                {loadingCollaboratedCreations || collaboratedCreations === null ? (
+                                    <div className="py-16">
+                                        <Spinner />
+                                    </div>
+                                ) : visibleCollaboratedCreations.length > 0 ? (
+                                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                                        {visibleCollaboratedCreations.map((creation) => (
+                                            <CreationCard
+                                                key={creation.id}
+                                                creation={creation}
+                                                accentBorderColor={themeHex}
+                                                onTagClick={(tag) =>
+                                                    handleFilterChange('tag', tag)
+                                                }
+                                            />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-10 rounded-lg bg-white py-10 text-center text-gray-500 shadow-md dark:bg-gray-800 dark:text-gray-400">
+                                        {(collaboratedCreations || []).length > 0
+                                            ? 'No collaborations match your filters.'
+                                            : "This user hasn't contributed to a published collaboration yet."}
                                     </p>
                                 )}
                             </>

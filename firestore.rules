@@ -69,6 +69,20 @@ service cloud.firestore {
       ]);
     }
 
+    function hasNoServerCollaborationPublicationFields(data) {
+      return !data.keys().hasAny([
+        'contributors', 'contributorIds', 'sourceCollaborationId',
+        'sourceCollaborationTitle', 'sourceCollaborationVersionId'
+      ]);
+    }
+
+    function collaborationPublicationFieldsAreUnchanged(data, existing) {
+      return !data.diff(existing).affectedKeys().hasAny([
+        'contributors', 'contributorIds', 'sourceCollaborationId',
+        'sourceCollaborationTitle', 'sourceCollaborationVersionId'
+      ]);
+    }
+
     // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
@@ -83,6 +97,7 @@ service cloud.firestore {
              data.category is string && data.category.size() <= 50 &&
              data.userId == request.auth.uid &&
              hasNoServerBackupFields(data) &&
+             hasNoServerCollaborationPublicationFields(data) &&
              (!('likes' in data.keys()) || data.likes == 0) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
@@ -322,10 +337,17 @@ service cloud.firestore {
           request.resource.data.views == resource.data.get('views', 0) + 1
       ) || (isLoggedIn() && (
           serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
+          collaborationPublicationFieldsAreUnchanged(request.resource.data, resource.data) &&
           ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
           isModerator())
        ));
-      allow delete: if isLoggedIn() && (isOwner(resource.data.userId) || isModerator());
+      allow delete: if isLoggedIn() && (
+        isModerator() ||
+        (
+          isOwner(resource.data.userId) &&
+          resource.data.get('sourceCollaborationId', null) == null
+        )
+      );
 
       match /votes/{userId} {
         allow read: if true;
@@ -566,6 +588,10 @@ service cloud.firestore {
       return isLoggedIn() &&
         get(collaborationPath).data.get('ownerId', '') == request.auth.uid;
     }
+    function isCollaborationActive(collaborationId) {
+      return get(/databases/$(database)/documents/collaborations/$(collaborationId))
+        .data.get('status', 'active') == 'active';
+    }
     // Collaboration owner OR site moderator/admin
     function isCollaborationOwnerOrMod(collaborationId) {
       return isCollaborationOwner(collaborationId) || isModerator();
@@ -635,12 +661,16 @@ service cloud.firestore {
 
       match /comments/{commentId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationMember(collaborationId) || isModerator();
-        allow update: if isLoggedIn() && (resource.data.userId == request.auth.uid || isModerator());
-        // Allow mods to delete comments even for orphaned collaborations
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
+        allow create: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator());
+        allow update: if isCollaborationActive(collaborationId) &&
+          isLoggedIn() && (resource.data.userId == request.auth.uid || isModerator());
+        // Completed/published workspaces remain readable but are immutable.
+        allow delete: if isCollaborationActive(collaborationId) && (
+          isCollaborationOwnerOrMod(collaborationId) ||
           (isLoggedIn() && resource.data.userId == request.auth.uid) ||
-          isModerator();
+          isModerator()
+        );
       }
 
       match /invitations/{inviteId} {
@@ -651,26 +681,34 @@ service cloud.firestore {
       // Todo items
       match /todos/{todoId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationMember(collaborationId) || isModerator();
-        allow update: if isCollaborationMember(collaborationId) || isModerator();
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) ||
+        allow create: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator());
+        allow update: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator());
+        allow delete: if isCollaborationActive(collaborationId) && (
+          isCollaborationOwnerOrMod(collaborationId) ||
           (isLoggedIn() && resource.data.createdBy == request.auth.uid) ||
-          isModerator();
+          isModerator()
+        );
       }
 
       // Work sessions (build history)
       match /workSessions/{sessionId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationMember(collaborationId) || isModerator();
-        allow update: if isLoggedIn() && resource.data.userId == request.auth.uid;
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        allow create: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator());
+        allow update: if isCollaborationActive(collaborationId) &&
+          isLoggedIn() && resource.data.userId == request.auth.uid;
+        allow delete: if isCollaborationActive(collaborationId) &&
+          (isCollaborationOwnerOrMod(collaborationId) || isModerator());
       }
 
       // Upload entries (changelog history)
       match /uploads/{uploadId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
         allow create: if false;
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        allow delete: if isCollaborationActive(collaborationId) &&
+          (isCollaborationOwnerOrMod(collaborationId) || isModerator());
       }
     }
 

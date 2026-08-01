@@ -11,16 +11,20 @@ import {
 import { db } from '../../firebase/config';
 import {
     addTodo,
+    completeCollaboration,
+    confirmCollaborationPublishConsent,
     deleteCollaboration,
     deleteTodo,
     endBuildSession,
     fetchPublicCollaborationView,
     getCollaborationVersionDownloadUrl,
     leaveCollaboration,
+    publishCollaboration,
     regenerateInviteCode,
     toggleTodo,
     startBuildSession,
     updateCollaborationChangelogEntry,
+    voteRevokeCollaborationPublish,
 } from '../../firebase/collaboration';
 import {
     endRememberedCollaborationBuild,
@@ -120,6 +124,7 @@ const CollaborationDetailPage = ({
     const [activeGalleryIndex, setActiveGalleryIndex] = useState(0);
     const [activeSettingsSection, setActiveSettingsSection] = useState('project');
     const [settingsMobileOpen, setSettingsMobileOpen] = useState(false);
+    const [publishingBusy, setPublishingBusy] = useState('');
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
     const galleryRef = useRef(null);
@@ -134,7 +139,8 @@ const CollaborationDetailPage = ({
     const isOwner = userRole === 'owner';
     const isSiteMod = ['moderator', 'admin'].includes(userProfile?.role);
     const hasOwnerPermissions = isOwner || isSiteMod;
-    const canEdit = userRole && userRole !== 'viewer';
+    const collaborationActive = collaboration?.status === 'active';
+    const canEdit = userRole && userRole !== 'viewer' && collaborationActive;
     const canDownloadVersions = Boolean(currentMember);
     const buildLock = collaboration?.buildLock;
     const lockActive = Boolean(
@@ -184,6 +190,16 @@ const CollaborationDetailPage = ({
         entry.hasSave !== true &&
         !entry.versionId
     )) || null;
+    const publishInfo = collaboration?.publish || {};
+    const activeMemberIds = new Set(members.map((member) => member.id));
+    const revokeVoterIds = (publishInfo.revokeVoterIds || [])
+        .filter((memberId) => activeMemberIds.has(memberId));
+    const hasVotedToRevoke = revokeVoterIds.includes(user?.uid);
+    const consentedMemberCount = members.filter(
+        (member) => member.publishConsent?.agreed === true,
+    ).length;
+    const allMembersConsented = members.length > 0 &&
+        consentedMemberCount === members.length;
 
     const formatTimeLeft = (timestamp) => {
         const minutes = Math.max(0, Math.ceil((toMillis(timestamp) - Date.now()) / 60000));
@@ -583,6 +599,75 @@ const CollaborationDetailPage = ({
                     navigate('/communitys');
                 } catch (error) {
                     setModalMessage(`Error: ${error.message}`);
+                }
+            },
+        });
+    };
+
+    const handleConfirmPublishConsent = async () => {
+        setPublishingBusy('consent');
+        try {
+            await confirmCollaborationPublishConsent(collaborationId);
+            await loadMembers();
+            setModalMessage('Your publication consent is recorded.');
+        } catch (error) {
+            setModalMessage(`Error: ${error.message}`);
+        } finally {
+            setPublishingBusy('');
+        }
+    };
+
+    const handleCompleteCollaboration = () => {
+        setConfirmation({
+            message: 'Mark this collaboration as complete? Building, tasks, comments and changelogs will be frozen.',
+            onConfirm: async () => {
+                setPublishingBusy('complete');
+                try {
+                    await completeCollaboration(collaborationId);
+                    setModalMessage('Collaboration completed. It is ready to publish.');
+                } catch (error) {
+                    setModalMessage(`Error: ${error.message}`);
+                } finally {
+                    setPublishingBusy('');
+                }
+            },
+        });
+    };
+
+    const handlePublishCollaboration = () => {
+        setConfirmation({
+            message: 'Publish the final signed version as a public Creation with permanent contributor credits?',
+            onConfirm: async () => {
+                setPublishingBusy('publish');
+                try {
+                    const result = await publishCollaboration(collaborationId);
+                    setModalMessage('Collaboration published as a Creation.');
+                    if (result.creationId) navigate(`/creation/${result.creationId}`);
+                } catch (error) {
+                    setModalMessage(`Error: ${error.message}`);
+                } finally {
+                    setPublishingBusy('');
+                }
+            },
+        });
+    };
+
+    const handleVoteRevokePublish = () => {
+        setConfirmation({
+            message: 'Vote to remove the published Creation? It is removed only after every current member has voted.',
+            onConfirm: async () => {
+                setPublishingBusy('revoke');
+                try {
+                    const result = await voteRevokeCollaborationPublish(
+                        collaborationId,
+                    );
+                    setModalMessage(result.revoked
+                        ? 'The unanimous vote is complete. The published Creation was removed.'
+                        : `Your vote was recorded (${result.voteCount}/${result.requiredCount}).`);
+                } catch (error) {
+                    setModalMessage(`Error: ${error.message}`);
+                } finally {
+                    setPublishingBusy('');
                 }
             },
         });
@@ -1494,6 +1579,7 @@ const CollaborationDetailPage = ({
             { id: 'project', label: 'Project', hint: 'Details, media and visibility', icon: ICONS.cog, tint: 'bg-blue-500' },
             { id: 'access', label: 'Access & invite', hint: 'Join mode and share code', icon: ICONS.share, tint: 'bg-emerald-500' },
             { id: 'versions', label: 'Versions', hint: 'History and retention', icon: ICONS.refresh, tint: 'bg-purple-500' },
+            { id: 'publishing', label: 'Publishing', hint: 'Completion, credits and release', icon: ICONS.shieldCheck, tint: 'bg-amber-500' },
             { id: 'danger', label: 'Danger zone', hint: 'Leave or delete', icon: ICONS.trash, tint: 'bg-red-500' },
         ];
         const openSection = (sectionId) => {
@@ -1614,7 +1700,7 @@ const CollaborationDetailPage = ({
                                     <button type="button" onClick={copyInviteCode} className="rounded-lg border border-gray-300 p-3 text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700" title="Copy share code">
                                         <Icon path={ICONS.copy} className="h-5 w-5" />
                                     </button>
-                                    {hasOwnerPermissions && (
+                                    {hasOwnerPermissions && collaborationActive && (
                                         <button type="button" onClick={handleRegenerateInvite} className="rounded-lg border border-gray-300 p-3 text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700" title="Generate a new share code">
                                             <Icon path={ICONS.refresh} className="h-5 w-5" />
                                         </button>
@@ -1664,6 +1750,122 @@ const CollaborationDetailPage = ({
                         </div>
                     )}
 
+                    {activeSettingsSection === 'publishing' && (
+                        <div className={panelClass}>
+                            <h2 className="text-center text-2xl font-bold text-gray-900 dark:text-white">Publish this project</h2>
+                            <p className="mx-auto mt-1 max-w-2xl text-center text-gray-600 dark:text-gray-300">
+                                The final signed save becomes a normal public Creation. Everyone who contributed stays credited, even after leaving the collaboration.
+                            </p>
+
+                            <div className="mt-6 rounded-lg border border-gray-200 p-5 text-center dark:border-gray-700">
+                                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Publication consent</p>
+                                <p className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">
+                                    {consentedMemberCount}/{members.length}
+                                </p>
+                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                                    New members agree when joining. Older memberships can confirm here once.
+                                </p>
+                                {currentMember && !currentMember.publishConsent?.agreed && publishInfo.state !== 'revoked' && (
+                                    <button
+                                        type="button"
+                                        onClick={handleConfirmPublishConsent}
+                                        disabled={Boolean(publishingBusy)}
+                                        className="pc-tactile-button mt-4 rounded-lg px-5 py-2.5 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+                                        style={{ backgroundColor: gameColor.hex }}
+                                    >
+                                        {publishingBusy === 'consent' ? 'Recording...' : 'Agree to credit & publication'}
+                                    </button>
+                                )}
+                            </div>
+
+                            {collaboration.status === 'active' && (
+                                <div className="mt-5 rounded-lg bg-gray-50 p-5 text-center dark:bg-gray-900/50">
+                                    <h3 className="font-bold text-gray-900 dark:text-white">1. Complete the collaboration</h3>
+                                    <p className="mx-auto mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">
+                                        This permanently ends building and freezes tasks, comments and changelogs for review.
+                                    </p>
+                                    {isOwner ? (
+                                        <button
+                                            type="button"
+                                            onClick={handleCompleteCollaboration}
+                                            disabled={Boolean(publishingBusy) || lockActive}
+                                            className="pc-tactile-button mt-4 rounded-lg px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+                                            style={!publishingBusy && !lockActive ? { backgroundColor: gameColor.hex } : undefined}
+                                        >
+                                            {publishingBusy === 'complete' ? 'Completing...' : 'Mark as complete'}
+                                        </button>
+                                    ) : (
+                                        <p className="mt-4 font-semibold text-gray-600 dark:text-gray-300">The owner completes the project.</p>
+                                    )}
+                                    {lockActive && (
+                                        <p className="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">Finish the active build session first.</p>
+                                    )}
+                                </div>
+                            )}
+
+                            {collaboration.status === 'completed' && publishInfo.state === 'ready' && (
+                                <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50/70 p-5 text-center dark:border-gray-700 dark:bg-gray-900/45">
+                                    <h3 className="font-bold text-emerald-800 dark:text-emerald-200">2. Publish the final version</h3>
+                                    <p className="mx-auto mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">
+                                        Version {currentVersion?.number || 'current'} will be copied to the regular Creation download system.
+                                    </p>
+                                    {isOwner ? (
+                                        <button
+                                            type="button"
+                                            onClick={handlePublishCollaboration}
+                                            disabled={Boolean(publishingBusy) || !allMembersConsented}
+                                            className="pc-tactile-button mt-4 rounded-lg bg-emerald-600 px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+                                        >
+                                            {publishingBusy === 'publish' ? 'Publishing...' : 'Publish as Creation'}
+                                        </button>
+                                    ) : (
+                                        <p className="mt-4 font-semibold text-emerald-800 dark:text-emerald-200">Ready for the owner to publish.</p>
+                                    )}
+                                    {!allMembersConsented && (
+                                        <p className="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">Waiting for every current member's consent.</p>
+                                    )}
+                                </div>
+                            )}
+
+                            {publishInfo.state === 'published' && (
+                                <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50/70 p-5 text-center dark:border-gray-700 dark:bg-gray-900/45">
+                                    <h3 className="font-bold text-blue-800 dark:text-blue-200">Published</h3>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate(`/creation/${publishInfo.publishedCreationId}`)}
+                                        className="pc-tactile-button mt-3 rounded-lg px-5 py-2.5 font-bold text-white"
+                                        style={{ backgroundColor: gameColor.hex }}
+                                    >
+                                        Open published Creation
+                                    </button>
+                                    <div className="mt-5 border-t border-gray-200 pt-5 dark:border-gray-700">
+                                        <p className="font-semibold text-gray-900 dark:text-gray-100">Removal vote: {revokeVoterIds.length}/{members.length}</p>
+                                        <p className="mx-auto mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">
+                                            The Creation is removed only after every current member votes. Members who leave no longer count toward the total.
+                                        </p>
+                                        {currentMember && (
+                                            <button
+                                                type="button"
+                                                onClick={handleVoteRevokePublish}
+                                                disabled={Boolean(publishingBusy) || hasVotedToRevoke}
+                                                className="pc-tactile-button mt-4 rounded-lg border border-red-300 bg-white px-5 py-2.5 font-bold text-red-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800 dark:bg-gray-900 dark:text-red-300"
+                                            >
+                                                {hasVotedToRevoke ? 'Removal vote recorded' : publishingBusy === 'revoke' ? 'Recording vote...' : 'Vote to remove publication'}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {publishInfo.state === 'revoked' && (
+                                <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50 p-5 text-center dark:border-gray-700 dark:bg-gray-900/50">
+                                    <h3 className="font-bold text-gray-900 dark:text-white">Publication removed</h3>
+                                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">This collaboration cannot be published again.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {activeSettingsSection === 'danger' && (
                         <div className="rounded-lg border border-red-200 bg-red-50 p-6 shadow-md dark:border-red-900 dark:bg-red-950/20">
                             <h2 className="text-center text-2xl font-bold text-red-700 dark:text-red-200">Danger zone</h2>
@@ -1677,11 +1879,21 @@ const CollaborationDetailPage = ({
                                     </button>
                                 )}
                                 {hasOwnerPermissions && (
-                                    <button type="button" onClick={handleDelete} className="rounded-lg bg-red-600 px-5 py-3 font-bold text-white hover:bg-red-700">
+                                    <button
+                                        type="button"
+                                        onClick={handleDelete}
+                                        disabled={publishInfo.state === 'published'}
+                                        className="rounded-lg bg-red-600 px-5 py-3 font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+                                    >
                                         Delete collaboration
                                     </button>
                                 )}
                             </div>
+                            {publishInfo.state === 'published' && (
+                                <p className="mt-3 text-center text-sm font-semibold text-red-600 dark:text-red-300">
+                                    The published Creation must be unanimously removed first.
+                                </p>
+                            )}
                         </div>
                     )}
                 </section>
@@ -1800,7 +2012,7 @@ const CollaborationDetailPage = ({
                         </div>
                     </div>
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
-                        {!publicReadOnly && userRole && (
+                        {!publicReadOnly && userRole && collaborationActive && (
                         <button
                             type="button"
                             onClick={() => setShowInviteModal(true)}

@@ -83,6 +83,12 @@ const {
     isCollaborationManager,
 } = require("./collaborationAccess");
 const {
+    getCollaborationRevokeVoteState,
+    hasAllMemberPublishConsent,
+    mergeCollaborationContributors,
+    selectCollaborationPublicationCategory,
+} = require("./collaborationPublish");
+const {
     PUBLIC_COLLABORATION_VISIBILITY,
     normalizeCollaborationVisibility,
     buildPublicCollaborationSummary,
@@ -964,6 +970,12 @@ exports.finalizeBackupUpload = onCallWith(
         if (!creationSnap.exists || creationSnap.data().userId !== uid) {
             throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
         }
+        if (creationSnap.data().sourceCollaborationId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "A published collaboration package is immutable.",
+            );
+        }
         const session = sessionSnap.data();
         if (!session.uploadConsent || session.uploadConsent.ownershipConfirmed !== true ||
             session.uploadConsent.hostingAccepted !== true || session.uploadConsent.confirmedBy !== uid) {
@@ -1099,6 +1111,12 @@ exports.removeCreationBackup = onCallWith(
         const creationSnap = await creationRef.get();
         if (!creationSnap.exists || creationSnap.data().userId !== uid) {
             throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
+        }
+        if (creationSnap.data().sourceCollaborationId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "A published collaboration package is immutable.",
+            );
         }
         const objectKey = creationSnap.data().backupObjectKey;
         if (objectKey && objectKey.startsWith(`creation-backups/${uid}/${creationId}/`)) {
@@ -1384,10 +1402,14 @@ async function removeDeletedUserFromCollaborations(userId) {
             .forEach((collaborationDocument) => {
                 batch.delete(collaborationDocument.ref.collection("members")
                     .doc(userId));
-                batch.update(collaborationDocument.ref, {
-                    memberIds: FieldValue.arrayRemove(userId),
-                    updatedAt: FieldValue.serverTimestamp(),
-                });
+                batch.update(
+                    collaborationDocument.ref,
+                    buildCollaborationMemberDepartureUpdate(
+                        batch,
+                        collaborationDocument.data(),
+                        userId,
+                    ),
+                );
             });
         await batch.commit();
     }
@@ -1698,6 +1720,48 @@ exports.onCreationDelete = documentDeleted(
             !objectKey.includes("..") && !objectKey.includes("\\")) {
             await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }))
                 .catch((error) => console.error(`Failed to delete R2 object ${objectKey}:`, error));
+        }
+
+        // Staff/account cleanup can delete a published Creation outside the
+        // unanimous vote callable. Repair the source Collaboration so it never
+        // keeps a dangling publishedCreationId.
+        const sourceCollaborationId = deletedData.sourceCollaborationId;
+        try {
+            requireSafeId(sourceCollaborationId, "Source collaboration ID");
+            const collaborationRef = db.doc(
+                `collaborations/${sourceCollaborationId}`,
+            );
+            await db.runTransaction(async (transaction) => {
+                const collaborationSnapshot = await transaction.get(
+                    collaborationRef,
+                );
+                if (!collaborationSnapshot.exists) return;
+                const collaboration = collaborationSnapshot.data();
+                if (collaboration.publish?.state !== "published" ||
+                    collaboration.publish?.publishedCreationId !== creationId) {
+                    return;
+                }
+                const now = Timestamp.now();
+                transaction.update(collaborationRef, {
+                    status: "completed",
+                    updatedAt: now,
+                    publish: {
+                        ...collaboration.publish,
+                        state: "revoked",
+                        publishedCreationId: null,
+                        revokedCreationId: creationId,
+                        revokedAt: now,
+                        revokedReason: "creation-deleted",
+                    },
+                });
+            });
+        } catch (error) {
+            if (sourceCollaborationId) {
+                console.error(
+                    `Failed to repair source collaboration ${sourceCollaborationId}:`,
+                    error,
+                );
+            }
         }
         return null;
     },
@@ -3094,21 +3158,41 @@ exports.joinCollaborationByInviteCode = onCall(async (data, context) => {
     }
 
     const collaborationId = snap.docs[0].id;
-    const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
-    const memberSnap = await memberRef.get();
-    if (memberSnap.exists) {
-        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
-    }
-
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members").doc(userId);
     const profileSnap = await db.doc(`profiles/${userId}`).get();
     const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
-
-    const batch = db.batch();
-    batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
-    batch.update(db.doc(`collaborations/${collaborationId}`), {
-        memberIds: FieldValue.arrayUnion(userId),
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        const latestCollaboration = collaborationSnapshot.data();
+        if (!collaborationSnapshot.exists ||
+            latestCollaboration?.status !== "active" ||
+            (latestCollaboration.joinMode || "invite") !== "invite") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This collaboration is no longer available.",
+            );
+        }
+        if (memberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "already-exists",
+                "You are already a member of this collaboration.",
+            );
+        }
+        transaction.set(
+            memberRef,
+            buildCollaborationMemberDoc("editor", username),
+        );
+        transaction.update(collaborationRef, {
+            memberIds: FieldValue.arrayUnion(userId),
+            contributors: FieldValue.arrayUnion(
+                buildCollaborationContributor(userId, username),
+            ),
+        });
     });
-    await batch.commit();
 
     return { collaborationId };
 });
@@ -3133,6 +3217,56 @@ function buildCollaborationMemberDoc(role, username) {
         username,
         publishConsent: { agreed: true, at: now },
     };
+}
+
+function buildCollaborationContributor(uid, username) {
+    return {
+        uid,
+        username: String(username || "Unknown contributor").slice(0, 30),
+    };
+}
+
+function buildCollaborationMemberDepartureUpdate(
+    writer,
+    collaboration,
+    departingUserId,
+) {
+    const memberIds = [...new Set((collaboration.memberIds || [])
+        .filter((memberId) => memberId !== departingUserId))];
+    const update = {
+        memberIds,
+        updatedAt: Timestamp.now(),
+    };
+    if (collaboration.publish?.state !== "published") return update;
+
+    const voteState = getCollaborationRevokeVoteState(
+        memberIds,
+        collaboration.publish.revokeVoterIds,
+    );
+    update.publish = {
+        ...collaboration.publish,
+        revokeVoterIds: voteState.voterIds,
+        revokeVoteCount: voteState.voteCount,
+        revokeRequiredCount: voteState.requiredCount,
+    };
+    if (!voteState.unanimous) return update;
+
+    const creationId = collaboration.publish.publishedCreationId;
+    try {
+        requireSafeId(creationId, "Published creation ID");
+    } catch {
+        return update;
+    }
+    writer.delete(db.doc(`creations/${creationId}`));
+    update.status = "completed";
+    update.publish = {
+        ...update.publish,
+        state: "revoked",
+        publishedCreationId: null,
+        revokedCreationId: creationId,
+        revokedAt: Timestamp.now(),
+    };
+    return update;
 }
 
 const collaborationInvitationGrantCollection = db.collection(
@@ -3418,6 +3552,9 @@ exports.createCollaboration = onCallWith({
                     galleryImageUrls,
                     ownerId: userId,
                     memberIds: [userId],
+                    contributors: [
+                        buildCollaborationContributor(userId, username),
+                    ],
                     createdAt: now,
                     updatedAt: now,
                     status: "active",
@@ -3620,6 +3757,12 @@ exports.deleteCollaboration = onCallWith({
             throw new functions.https.HttpsError(
                 "permission-denied",
                 "Only the owner or site staff can delete this collaboration.",
+            );
+        }
+        if (collaborationSnap.data().publish?.state === "published") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Revoke the published creation before deleting this collaboration.",
             );
         }
 
@@ -3954,6 +4097,9 @@ exports.respondToCollaborationInvitation = onCall(async (data, context) => {
                 );
                 transaction.update(collaborationRef, {
                     memberIds: FieldValue.arrayUnion(userId),
+                    contributors: FieldValue.arrayUnion(
+                        buildCollaborationContributor(userId, username),
+                    ),
                 });
             }
         }
@@ -4164,20 +4310,50 @@ exports.joinCollaborationByPassword = onCall(async (data, context) => {
     if ((collab.joinMode || 'invite') !== 'password') {
         throw new functions.https.HttpsError('failed-precondition', 'This collaboration does not use a join password.');
     }
-    const hash = crypto.createHash('sha256').update((collab.passwordSalt || '') + password).digest('hex');
-    if (hash !== collab.passwordHash) {
-        throw new functions.https.HttpsError('permission-denied', 'Incorrect password.');
-    }
-    const memberRef = db.doc(`collaborations/${collabDoc.id}/members/${userId}`);
-    if ((await memberRef.get()).exists) {
-        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
-    }
+    const collaborationRef = collabDoc.ref;
+    const memberRef = collaborationRef.collection("members").doc(userId);
     const profileSnap = await db.doc(`profiles/${userId}`).get();
     const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
-    const batch = db.batch();
-    batch.set(memberRef, buildCollaborationMemberDoc('editor', username));
-    batch.update(collabDoc.ref, { memberIds: FieldValue.arrayUnion(userId) });
-    await batch.commit();
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        const latestCollaboration = collaborationSnapshot.data();
+        if (!collaborationSnapshot.exists ||
+            latestCollaboration?.status !== "active" ||
+            (latestCollaboration.joinMode || "invite") !== "password") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This collaboration is no longer available.",
+            );
+        }
+        const hash = crypto.createHash("sha256")
+            .update((latestCollaboration.passwordSalt || "") + password)
+            .digest("hex");
+        if (hash !== latestCollaboration.passwordHash) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Incorrect password.",
+            );
+        }
+        if (memberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "already-exists",
+                "You are already a member of this collaboration.",
+            );
+        }
+        transaction.set(
+            memberRef,
+            buildCollaborationMemberDoc("editor", username),
+        );
+        transaction.update(collaborationRef, {
+            memberIds: FieldValue.arrayUnion(userId),
+            contributors: FieldValue.arrayUnion(
+                buildCollaborationContributor(userId, username),
+            ),
+        });
+    });
     return { collaborationId: collabDoc.id };
 });
 
@@ -4230,33 +4406,65 @@ exports.respondToCollaborationApplication = onCall(async (data, context) => {
         throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration or applicant id.');
     }
     const collabRef = db.doc(`collaborations/${collaborationId}`);
-    const collabSnap = await collabRef.get();
-    if (!collabSnap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Collaboration not found.');
-    }
-    if (collabSnap.data().ownerId !== ownerId) {
-        throw new functions.https.HttpsError('permission-denied', 'Only the owner can respond to applications.');
-    }
     const appRef = db.doc(`collaborations/${collaborationId}/applications/${applicantId}`);
-    const appSnap = await appRef.get();
-    if (!appSnap.exists || appSnap.data().status !== 'pending') {
-        throw new functions.https.HttpsError('failed-precondition', 'No pending application for this user.');
-    }
-
-    if (!approve) {
-        await appRef.update({ status: 'declined', respondedAt: FieldValue.serverTimestamp() });
-        return { ok: true, approved: false };
-    }
-
     const memberRef = db.doc(`collaborations/${collaborationId}/members/${applicantId}`);
-    const batch = db.batch();
-    if (!(await memberRef.get()).exists) {
-        batch.set(memberRef, buildCollaborationMemberDoc('editor', appSnap.data().username || 'Unknown'));
-        batch.update(collabRef, { memberIds: FieldValue.arrayUnion(applicantId) });
-    }
-    batch.update(appRef, { status: 'accepted', respondedAt: FieldValue.serverTimestamp() });
-    await batch.commit();
-    return { ok: true, approved: true };
+    return db.runTransaction(async (transaction) => {
+        const [collabSnap, appSnap, memberSnap] = await Promise.all([
+            transaction.get(collabRef),
+            transaction.get(appRef),
+            transaction.get(memberRef),
+        ]);
+        if (!collabSnap.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        if (collabSnap.data().ownerId !== ownerId) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner can respond to applications.",
+            );
+        }
+        if (approve && collabSnap.data().status !== "active") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Only active collaborations can accept new contributors.",
+            );
+        }
+        if (!appSnap.exists || appSnap.data().status !== "pending") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "No pending application for this user.",
+            );
+        }
+        const respondedAt = FieldValue.serverTimestamp();
+        if (!approve) {
+            transaction.update(appRef, {
+                status: "declined",
+                respondedAt,
+            });
+            return {ok: true, approved: false};
+        }
+        if (!memberSnap.exists) {
+            const username = appSnap.data().username || "Unknown";
+            transaction.set(
+                memberRef,
+                buildCollaborationMemberDoc("editor", username),
+            );
+            transaction.update(collabRef, {
+                memberIds: FieldValue.arrayUnion(applicantId),
+                contributors: FieldValue.arrayUnion(
+                    buildCollaborationContributor(applicantId, username),
+                ),
+            });
+        }
+        transaction.update(appRef, {
+            status: "accepted",
+            respondedAt,
+        });
+        return {ok: true, approved: true};
+    });
 });
 
 // --- Owner: Collaboration-Einstellungen bearbeiten (Titel/Beschreibung/Join-Modus/
@@ -4379,10 +4587,14 @@ exports.leaveCollaboration = onCall(async (data, context) => {
             );
         }
         transaction.delete(memberRef);
-        transaction.update(collaborationRef, {
-            memberIds: FieldValue.arrayRemove(userId),
-            updatedAt: FieldValue.serverTimestamp(),
-        });
+        transaction.update(
+            collaborationRef,
+            buildCollaborationMemberDepartureUpdate(
+                transaction,
+                collaboration,
+                userId,
+            ),
+        );
     });
     return { left: true };
 });
@@ -4500,6 +4712,12 @@ exports.removeCollaborationMember = onCall(async (data, context) => {
                 "The owner cannot be removed.",
             );
         }
+        if (collaboration.publish?.state === "published") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Published collaboration members must leave voluntarily.",
+            );
+        }
         if (hasActiveCollaborationBuildLock(
             collaboration,
             targetUserId,
@@ -4510,10 +4728,14 @@ exports.removeCollaborationMember = onCall(async (data, context) => {
             );
         }
         transaction.delete(memberRef);
-        transaction.update(collaborationRef, {
-            memberIds: FieldValue.arrayRemove(targetUserId),
-            updatedAt: FieldValue.serverTimestamp(),
-        });
+        transaction.update(
+            collaborationRef,
+            buildCollaborationMemberDepartureUpdate(
+                transaction,
+                collaboration,
+                targetUserId,
+            ),
+        );
     });
     return { removed: true };
 });
@@ -5469,6 +5691,525 @@ function normalizeCollaborationCompletedTodos(values) {
 // --- Changelog-Text/Bilder/erledigte Todos dürfen ausschließlich vom
 //     ursprünglichen Builder bearbeitet werden. Der Versions-/Save-Link bleibt
 //     serververwaltet. ---
+function hasUnexpiredCollaborationBuildLock(
+    collaboration,
+    nowMillis = Date.now(),
+) {
+    const lock = collaboration.buildLock || {};
+    const expiresAtMillis = lock.expiresAt &&
+        typeof lock.expiresAt.toMillis === "function" ?
+        lock.expiresAt.toMillis() :
+        0;
+    return Boolean(lock.activeBuilderId && expiresAtMillis > nowMillis);
+}
+
+function buildPublishedCollaborationImages(uploads, galleryImageUrls) {
+    const urls = [];
+    for (const upload of uploads) {
+        for (const imageUrl of upload.imageUrls || []) {
+            if (typeof imageUrl === "string" &&
+                /^https?:\/\//i.test(imageUrl) &&
+                !urls.includes(imageUrl)) {
+                urls.push(imageUrl);
+            }
+        }
+    }
+    for (const imageUrl of galleryImageUrls || []) {
+        if (typeof imageUrl === "string" &&
+            /^https?:\/\//i.test(imageUrl) &&
+            !urls.includes(imageUrl)) {
+            urls.push(imageUrl);
+        }
+    }
+    return urls.slice(0, 25);
+}
+
+function buildPublishedCollaborationChangelog(uploadDocuments) {
+    return uploadDocuments.map((document) => {
+        const upload = document.data();
+        return {
+            text: String(upload.changelog || "").trim() ||
+                `${upload.username || "A contributor"} finished building.`,
+            timestamp: upload.createdAt || upload.updatedAt || Timestamp.now(),
+            contributorId: upload.userId || null,
+            contributorUsername: upload.username || null,
+            collaborationChangelogId: document.id,
+            versionId: upload.versionId || null,
+            versionNumber: upload.versionNumber || null,
+            completedTodos: Array.isArray(upload.completedTodos) ?
+                upload.completedTodos :
+                [],
+        };
+    });
+}
+
+// Completing freezes the build workspace. Publication remains a separate,
+// deliberate owner action so the owner can review the final project first.
+exports.confirmCollaborationPublishConsent = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members").doc(userId);
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        if (!collaborationSnapshot.exists || !memberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "You are not a member of this collaboration.",
+            );
+        }
+        if (collaborationSnapshot.data().publish?.state === "revoked") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This publication has already been revoked.",
+            );
+        }
+        const now = Timestamp.now();
+        transaction.update(memberRef, {
+            publishConsent: {agreed: true, at: now},
+        });
+        transaction.update(collaborationRef, {updatedAt: now});
+    });
+    return {agreed: true};
+});
+
+exports.completeCollaboration = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+
+    return db.runTransaction(async (transaction) => {
+        const collaborationSnapshot = await transaction.get(collaborationRef);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (collaboration.ownerId !== userId) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner can complete this collaboration.",
+            );
+        }
+        if (collaboration.publish?.state === "published" ||
+            collaboration.publish?.state === "revoked") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This collaboration has already passed the publication stage.",
+            );
+        }
+        if (collaboration.status === "completed" &&
+            collaboration.publish?.state === "ready") {
+            return {completed: true, alreadyCompleted: true};
+        }
+        if (collaboration.status !== "active") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Only an active collaboration can be completed.",
+            );
+        }
+        if (!collaboration.currentVersion?.versionId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The collaboration has no current save version.",
+            );
+        }
+        if (hasUnexpiredCollaborationBuildLock(collaboration)) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Finish the active build session before completing the collaboration.",
+            );
+        }
+
+        const now = Timestamp.now();
+        transaction.update(collaborationRef, {
+            status: "completed",
+            completedAt: now,
+            updatedAt: now,
+            buildLock: FieldValue.delete(),
+            publish: {
+                state: "ready",
+                publishedCreationId: null,
+                revokeVoterIds: [],
+                revokeVoteCount: 0,
+                revokeRequiredCount: (collaboration.memberIds || []).length,
+            },
+        });
+        return {completed: true, alreadyCompleted: false};
+    });
+});
+
+// Copies the exact signed current collaboration version to the regular
+// creation-backup namespace, so existing download/install clients can use it.
+exports.publishCollaboration = onCallWith(
+    {
+        concurrency: 2,
+        maxInstances: 5,
+        memory: "1GiB",
+        timeoutSeconds: 300,
+        secrets: [r2AccessKeyId, r2SecretAccessKey],
+    },
+    async (data, context) => {
+        const userId = requireAuthenticated(context);
+        const collaborationId = requireCallableSafeId(
+            data,
+            "collaborationId",
+            "Collaboration ID",
+        );
+        await enforceCallableRateLimit({
+            action: "publish-collaboration",
+            subject: userId,
+            limit: 10,
+            windowMs: 60 * 60 * 1000,
+        });
+
+        const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+        const collaborationSnapshot = await collaborationRef.get();
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (collaboration.ownerId !== userId) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner can publish this collaboration.",
+            );
+        }
+        if (collaboration.status !== "completed" ||
+            collaboration.publish?.state !== "ready") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Complete the collaboration before publishing it.",
+            );
+        }
+        if (hasUnexpiredCollaborationBuildLock(collaboration)) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The collaboration still has an active build session.",
+            );
+        }
+
+        const currentVersionId = collaboration.currentVersion?.versionId;
+        try {
+            requireSafeId(currentVersionId, "Current version ID");
+        } catch (error) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                error.message,
+            );
+        }
+        const fileRef = collaborationRef
+            .collection("files")
+            .doc(COLLABORATION_FILE_ID);
+        const versionRef = fileRef.collection("versions")
+            .doc(currentVersionId);
+        const [
+            memberSnapshot,
+            versionSnapshot,
+            uploadSnapshot,
+            ownerProfileSnapshot,
+            categorySnapshot,
+        ] = await Promise.all([
+            collaborationRef.collection("members").get(),
+            versionRef.get(),
+            collaborationRef.collection("uploads")
+                .orderBy("createdAt", "desc")
+                .limit(100)
+                .get(),
+            db.doc(`profiles/${userId}`).get(),
+            db.doc(`categories/${collaboration.game}`).get(),
+        ]);
+        if (!versionSnapshot.exists ||
+            !isCollaborationVersionStorageKey(
+                versionSnapshot.data().storageKey,
+                collaborationId,
+                currentVersionId,
+            )) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The current signed collaboration version is unavailable.",
+            );
+        }
+        const memberRecords = memberSnapshot.docs.map((document) => ({
+            uid: document.id,
+            ...document.data(),
+        }));
+        if (!hasAllMemberPublishConsent(
+            collaboration.memberIds,
+            memberRecords,
+        )) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Every current member must have publication consent recorded.",
+            );
+        }
+
+        const uploads = uploadSnapshot.docs.map((document) => document.data());
+        const ownerProfile = ownerProfileSnapshot.data() || {};
+        const ownerMember = memberRecords.find(({uid}) => uid === userId);
+        const username = ownerProfile.username || ownerMember?.username ||
+            "Unknown";
+        const contributors = mergeCollaborationContributors(
+            collaboration.contributors || [],
+            memberRecords.map((member) => ({
+                uid: member.uid,
+                username: member.username,
+            })),
+            uploads.map((upload) => ({
+                uid: upload.userId,
+                username: upload.username,
+            })),
+            [{uid: userId, username}],
+        );
+        const version = versionSnapshot.data();
+        const category = selectCollaborationPublicationCategory(
+            version.fileKind,
+            categorySnapshot.data()?.names,
+        );
+        const creationRef = db.collection("creations").doc();
+        const destinationKey =
+            `creation-backups/${userId}/${creationRef.id}/` +
+            `${currentVersionId}.PlanetCreations`;
+        const bucket = getR2Bucket();
+        let copied = false;
+        try {
+            const head = await getS3().send(new HeadObjectCommand({
+                Bucket: bucket,
+                Key: version.storageKey,
+            }));
+            if (!Number.isSafeInteger(head.ContentLength) ||
+                head.ContentLength <= 0 ||
+                head.ContentLength > MAX_BACKUP_SIZE_BYTES) {
+                throw new Error("The current collaboration package is invalid.");
+            }
+            await getS3().send(new CopyObjectCommand({
+                Bucket: bucket,
+                CopySource: encodeCopySource(bucket, version.storageKey),
+                Key: destinationKey,
+                ContentType: uploadContentType,
+                MetadataDirective: "REPLACE",
+            }));
+            copied = true;
+
+            const now = Timestamp.now();
+            const imageUrls = buildPublishedCollaborationImages(
+                uploads,
+                collaboration.galleryImageUrls,
+            );
+            const changelog = buildPublishedCollaborationChangelog(
+                uploadSnapshot.docs,
+            );
+            await db.runTransaction(async (transaction) => {
+                const [latestCollaboration, latestVersion] =
+                    await Promise.all([
+                        transaction.get(collaborationRef),
+                        transaction.get(versionRef),
+                    ]);
+                const latestCollaborationData = latestCollaboration.data();
+                if (!latestCollaboration.exists ||
+                    latestCollaborationData?.ownerId !== userId ||
+                    latestCollaborationData.status !== "completed" ||
+                    latestCollaborationData.publish?.state !== "ready" ||
+                    latestCollaborationData.currentVersion?.versionId !==
+                        currentVersionId ||
+                    !latestVersion.exists ||
+                    latestVersion.data().storageKey !== version.storageKey) {
+                    throw new functions.https.HttpsError(
+                        "aborted",
+                        "The collaboration changed while it was being published.",
+                    );
+                }
+
+                transaction.create(creationRef, {
+                    title: String(collaboration.title || "Collaboration")
+                        .slice(0, 200),
+                    description: String(collaboration.description || "")
+                        .slice(0, 5000),
+                    game: collaboration.game,
+                    category,
+                    status: "finished",
+                    platform: "pc",
+                    shareCode: "",
+                    imageUrls,
+                    videoUrls: [],
+                    customMediaLink: "",
+                    tags: ["collaboration"],
+                    mods: [],
+                    modStatus: "noMods",
+                    requiredDlcs: [],
+                    communityIds: [],
+                    communityAssignments: [],
+                    communitySpecificData: {},
+                    userId,
+                    username,
+                    userProfilePictureUrl:
+                        ownerProfile.profilePictureUrl || null,
+                    createdAt: now,
+                    updatedAt: now,
+                    likes: 0,
+                    dislikes: 0,
+                    views: 0,
+                    reportCount: 0,
+                    eventIds: [],
+                    changelog,
+                    contributors,
+                    contributorIds: contributors.map(({uid}) => uid),
+                    sourceCollaborationId: collaborationId,
+                    sourceCollaborationTitle:
+                        String(collaboration.title || "Collaboration")
+                            .slice(0, 200),
+                    sourceCollaborationVersionId: currentVersionId,
+                    backupObjectKey: destinationKey,
+                    backupStorageProvider: "cloudflare-r2",
+                    backupUrl: null,
+                    backupFileSize: head.ContentLength,
+                    backupIsSigned: true,
+                    backupSignerUid: version.uploadedBy || null,
+                    backupSignerUsername:
+                        version.uploadedByUsername || null,
+                    backupOriginalFileName:
+                        version.originalFileName || "save",
+                    backupPackageId: version.packageId || null,
+                    backupMediaSetId: null,
+                    backupProcessingError: null,
+                    backupUpdatedAt: now,
+                    backupUploadConsent: {
+                        ownershipConfirmed: true,
+                        hostingAccepted: true,
+                        confirmedBy: userId,
+                        confirmedAt: now,
+                        version: 1,
+                        source: "collaboration-publish",
+                    },
+                });
+                transaction.update(collaborationRef, {
+                    status: "published",
+                    updatedAt: now,
+                    publish: {
+                        state: "published",
+                        publishedCreationId: creationRef.id,
+                        publishedVersionId: currentVersionId,
+                        publishedAt: now,
+                        revokeVoterIds: [],
+                        revokeVoteCount: 0,
+                        revokeRequiredCount:
+                            (latestCollaborationData.memberIds || []).length,
+                    },
+                });
+            });
+            return {published: true, creationId: creationRef.id};
+        } catch (error) {
+            if (copied) {
+                await deleteR2ObjectSafely(
+                    destinationKey,
+                    "Published collaboration copy cleanup failed",
+                );
+            }
+            console.error(
+                `Collaboration publication failed for ${collaborationId}:`,
+                error,
+            );
+            if (error instanceof functions.https.HttpsError) throw error;
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                error.message,
+            );
+        }
+    },
+);
+
+exports.voteRevokeCollaborationPublish = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+
+    return db.runTransaction(async (transaction) => {
+        const collaborationSnapshot = await transaction.get(collaborationRef);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (collaboration.publish?.state !== "published" ||
+            !collaboration.publish?.publishedCreationId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This collaboration has no active publication.",
+            );
+        }
+        if (!(collaboration.memberIds || []).includes(userId)) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only current collaboration members can vote.",
+            );
+        }
+        const voteState = getCollaborationRevokeVoteState(
+            collaboration.memberIds,
+            collaboration.publish.revokeVoterIds,
+            userId,
+        );
+        const now = Timestamp.now();
+        const publishUpdate = {
+            ...collaboration.publish,
+            revokeVoterIds: voteState.voterIds,
+            revokeVoteCount: voteState.voteCount,
+            revokeRequiredCount: voteState.requiredCount,
+        };
+        if (!voteState.unanimous) {
+            transaction.update(collaborationRef, {
+                publish: publishUpdate,
+                updatedAt: now,
+            });
+            return {revoked: false, ...voteState};
+        }
+
+        const creationId = collaboration.publish.publishedCreationId;
+        try {
+            requireSafeId(creationId, "Published creation ID");
+        } catch (error) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                error.message,
+            );
+        }
+        transaction.delete(db.doc(`creations/${creationId}`));
+        transaction.update(collaborationRef, {
+            status: "completed",
+            updatedAt: now,
+            publish: {
+                ...publishUpdate,
+                state: "revoked",
+                publishedCreationId: null,
+                revokedCreationId: creationId,
+                revokedAt: now,
+            },
+        });
+        return {revoked: true, ...voteState};
+    });
+});
+
 exports.updateCollaborationChangelogEntry = onCall(
     async (data, context) => {
         const uid = requireAuthenticated(context);
@@ -5518,6 +6259,12 @@ exports.updateCollaborationChangelogEntry = onCall(
                 throw new functions.https.HttpsError(
                     "permission-denied",
                     "You are no longer a member of this collaboration.",
+                );
+            }
+            if (collabSnap.data().status !== "active") {
+                throw new functions.https.HttpsError(
+                    "failed-precondition",
+                    "Completed collaboration changelogs are read-only.",
                 );
             }
             if (!uploadSnap.exists ||

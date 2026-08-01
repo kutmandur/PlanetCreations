@@ -410,7 +410,11 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     const isOwner = user && user.uid === creation.userId;
     const canEdit = isOwner;
-    const canDelete = isOwner || (userProfile && ['admin', 'moderator'].includes(userProfile.role));
+    const isSiteStaff = userProfile && ['admin', 'moderator'].includes(userProfile.role);
+    const canDelete = isSiteStaff || (isOwner && !creation.sourceCollaborationId);
+    const collaborationContributors = (creation.contributors || []).filter(
+        (contributor) => contributor?.uid && contributor?.username,
+    );
     const color = getGameColor(creation.game);
     const liveStream = creation.liveStream;
     const liveIsActive = isLiveStreamActive(liveStream);
@@ -732,6 +736,27 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </>
                             )}
                         </Link>
+                        {creation.sourceCollaborationId && collaborationContributors.length > 0 && (
+                            <div className="mt-5 border-t border-gray-200 pt-5 text-center dark:border-gray-700">
+                                <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Collaboration contributors</p>
+                                {creation.sourceCollaborationTitle && (
+                                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        Published from {creation.sourceCollaborationTitle}
+                                    </p>
+                                )}
+                                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                                    {collaborationContributors.map((contributor) => (
+                                        <Link
+                                            key={contributor.uid}
+                                            to={`/profile/${contributor.uid}`}
+                                            className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 transition hover:border-[--game-color] hover:text-[--game-color] dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                                        >
+                                            {contributor.username}
+                                        </Link>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <div className="mt-6 pt-6 border-t dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 space-y-4">
                             <div className="flex items-center justify-between"><span className="font-bold">Status:</span><span className={`px-2 py-1 rounded-full font-semibold text-xs ${creation.status === 'finished' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>{creation.status === 'finished' ? 'Finished' : 'Work in Progress'}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Rating:</span><div className="flex items-center space-x-4"><button onClick={() => handleVote('like')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}><Icon path={ICONS.thumbUp} className="w-5 h-5" solid={userVote === 'like'}/><span className="font-bold">{creation.likes || 0}</span></button><button onClick={() => handleVote('dislike')} disabled={isVoting || !user} className={`flex items-center space-x-1 transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}><Icon path={ICONS.thumbDown} className="w-5 h-5" solid={userVote === 'dislike'}/><span className="font-bold">{creation.dislikes || 0}</span></button></div></div>

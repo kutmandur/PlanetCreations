@@ -296,6 +296,45 @@ html.game-overlay-window #root { background: transparent !important; }
   transition-timing-function: cubic-bezier(.22, 1.28, .36, 1);
 }
 
+/* Tactile response for prominent in-page actions. The quick press and
+   springy return mirror the floating controls without moving normal form
+   buttons as far across the page. */
+.pc-tactile-button {
+  transform: translateZ(0);
+  transform-origin: center;
+  transition:
+    transform 280ms cubic-bezier(.22, 1.28, .36, 1),
+    box-shadow 180ms ease,
+    filter 180ms ease,
+    opacity 150ms ease;
+  will-change: transform;
+}
+
+.pc-tactile-button:hover:not(:disabled) {
+  filter: brightness(1.035);
+  transform: translateY(-1px) scale(1.012);
+  box-shadow: 0 7px 16px rgb(15 23 42 / .13);
+}
+
+.pc-tactile-button:active:not(:disabled) {
+  filter: brightness(.98);
+  transform: translateY(1px) scale(.955);
+  transition-duration: 75ms;
+}
+
+.pc-tactile-button:focus {
+  outline: none;
+}
+
+.pc-tactile-button:focus-visible {
+  outline: 3px solid color-mix(
+    in srgb,
+    var(--game-color, #3b82f6) 68%,
+    transparent
+  );
+  outline-offset: 3px;
+}
+
 .pc-floating-action:hover .pc-floating-icon {
   animation: pc-floating-icon-breathe 680ms cubic-bezier(.22, 1.28, .36, 1) both;
 }
@@ -316,6 +355,15 @@ html.game-overlay-window #root { background: transparent !important; }
 
   .pc-floating-action:hover .pc-floating-icon {
     animation: none;
+  }
+
+  .pc-tactile-button {
+    transition-duration: 1ms !important;
+  }
+
+  .pc-tactile-button:hover:not(:disabled),
+  .pc-tactile-button:active:not(:disabled) {
+    transform: none;
   }
 
   .pc-selector-pop {
