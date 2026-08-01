@@ -11,10 +11,13 @@ const {
     scheduled,
 } = require("./runtime");
 const { defineSecret } = require("firebase-functions/params");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getAppCheck } = require("firebase-admin/app-check");
+const { getAuth } = require("firebase-admin/auth");
 const {
     FieldPath,
     FieldValue,
+    getFirestore,
     Timestamp,
 } = require("firebase-admin/firestore");
 const express = require("express");
@@ -83,8 +86,10 @@ const {
     sanitizePublicUpload,
     sanitizePublicTodo,
 } = require("./collaborationPublicView");
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const appCheck = getAppCheck();
+const auth = getAuth();
+const db = getFirestore();
 
 // Shared notification fan-out (inbox doc + web push)
 const { notifyUser } = require("./notify");
@@ -234,7 +239,7 @@ const verifyAppCheckWhenEnabled = async (req, res, next) => {
         return res.status(401).json({error: "Missing App Check token."});
     }
     try {
-        req.appCheck = await admin.appCheck().verifyToken(token);
+        req.appCheck = await appCheck.verifyToken(token);
         return next();
     } catch {
         return res.status(401).json({error: "Invalid App Check token."});
@@ -248,7 +253,7 @@ const authenticate = async (req, res, next) => {
     }
     const idToken = req.headers.authorization.split('Bearer ')[1];
     try {
-        const decodedIdToken = await admin.auth().verifyIdToken(idToken);
+        const decodedIdToken = await auth.verifyIdToken(idToken);
         req.user = decodedIdToken;
         next();
     } catch {
@@ -1396,7 +1401,7 @@ exports.deleteOwnAccount = onCall(async (data, context) => {
         }
 
         await batch.commit();
-        await admin.auth().deleteUser(userId);
+        await auth.deleteUser(userId);
 
         return { success: true, message: `User ${userId} and all their content has been deleted.` };
     } catch (error) {
@@ -1472,7 +1477,7 @@ exports.deleteUserAndContent = onCall(async (data, context) => {
         await batch.commit();
         console.log("Firestore data deleted successfully.");
 
-        await admin.auth().deleteUser(userIdToDelete);
+        await auth.deleteUser(userIdToDelete);
         console.log(`Successfully deleted user ${userIdToDelete} from Firebase Auth.`);
 
         return { success: true, message: `User ${userIdToDelete} and all their content has been deleted.` };
@@ -1493,7 +1498,7 @@ exports.getAllUserEmails = onCall(async (data, context) => {
   let nextPageToken;
   try {
     do {
-      const listUsersResult = await admin.auth().listUsers(1000, nextPageToken);
+      const listUsersResult = await auth.listUsers(1000, nextPageToken);
       listUsersResult.users.forEach((userRecord) => { if (userRecord.email) { emails.push(userRecord.email); } });
       nextPageToken = listUsersResult.pageToken;
     } while (nextPageToken);
@@ -2096,7 +2101,7 @@ exports.setCustomClaims = documentWritten("users/{userId}", async (change, conte
     const newRole = userData.role;
     if (previousRole === newRole) return null;
     try {
-        await admin.auth().setCustomUserClaims(userId, { role: newRole });
+        await auth.setCustomUserClaims(userId, { role: newRole });
         const profileRef = db.collection('profiles').doc(userId);
         await profileRef.set({ role: newRole }, { merge: true });
         console.log(`Custom claim and profile role set for user ${userId}: { role: '${newRole}' }`);
@@ -5413,7 +5418,7 @@ exports.cleanupUnverifiedUsers = scheduled(
 
         // Paginate through all users (Firebase limits to 1000 per request)
         do {
-            const listUsersResult = await admin.auth().listUsers(1000, pageToken);
+            const listUsersResult = await auth.listUsers(1000, pageToken);
             pageToken = listUsersResult.pageToken;
 
             for (const user of listUsersResult.users) {
@@ -5423,7 +5428,7 @@ exports.cleanupUnverifiedUsers = scheduled(
 
                     try {
                         // Delete user from Firebase Auth
-                        await admin.auth().deleteUser(user.uid);
+                        await auth.deleteUser(user.uid);
 
                         // Delete associated Firestore documents
                          await Promise.allSettled([

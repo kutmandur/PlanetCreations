@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const { getActiveEventsCache, getManagingEventsCache } = require('./firestoreListeners');
-const { db, admin } = require('../utils/firebase');
+const { db, FieldValue } = require('../utils/firebase');
 const { notifyCommunityEvent, notifyUser } = require('../utils/notify');
 const { EmbedBuilder, Client } = require('discord.js');
 
@@ -107,7 +107,7 @@ function startEventNotifier(client) {
                             if (wantSite) {
                                 await notifyCommunityEvent(event.communityId, { title: `Reminder: ${event.title}`, message: customText || `Submissions end in ${timeRemaining}.`, link: `/event/${event.id}` });
                             }
-                            await eventDocRef.update({ sentReminders: admin.firestore.FieldValue.arrayUnion(reminderType) });
+                            await eventDocRef.update({ sentReminders: FieldValue.arrayUnion(reminderType) });
                         }
                     }
                 }
@@ -144,7 +144,7 @@ function startEventNotifier(client) {
                             if (wantSite) {
                                 await notifyCommunityEvent(event.communityId, { title: `Voting reminder: ${event.title}`, message: customText || `Voting ends in ${timeRemaining}.`, link: `/event/${event.id}` });
                             }
-                            await eventDocRef.update({ sentVoteReminders: admin.firestore.FieldValue.arrayUnion(reminderType) });
+                            await eventDocRef.update({ sentVoteReminders: FieldValue.arrayUnion(reminderType) });
                         }
                     }
                 }

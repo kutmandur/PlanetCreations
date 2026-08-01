@@ -1,4 +1,4 @@
-const { admin, db } = require('./firebase');
+const { db, FieldValue, messaging, Timestamp } = require('./firebase');
 
 // Bot-side mirror of functions/notify.js: append to a user's capped inbox doc and
 // send web push, respecting prefs. Also fans a community event out to members who
@@ -22,7 +22,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
     if (!tokens || tokens.length === 0) return;
     let res;
     try {
-        res = await admin.messaging().sendEachForMulticast({
+        res = await messaging.sendEachForMulticast({
             tokens,
             data: {
                 title: title || 'PlanetCreations',
@@ -48,7 +48,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
     });
     if (invalid.length) {
         await db.doc(`users/${uid}/meta/inbox`)
-            .update({ pushTokens: admin.firestore.FieldValue.arrayRemove(...invalid) })
+            .update({ pushTokens: FieldValue.arrayRemove(...invalid) })
             .catch(() => {});
     }
 }
@@ -73,7 +73,7 @@ async function notifyUser(uid, type, { title, message, link }) {
                 title: title || '',
                 message: message || '',
                 link: link || '/',
-                timestamp: admin.firestore.Timestamp.now(),
+                timestamp: Timestamp.now(),
                 isRead: false,
             };
             const items = [item, ...(data.items || [])].slice(0, INBOX_CAP);

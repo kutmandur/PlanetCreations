@@ -1,5 +1,5 @@
-const admin = require("firebase-admin");
-const {FieldValue, Timestamp} = require("firebase-admin/firestore");
+const {FieldValue, getFirestore, Timestamp} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
 
 // Shared notification fan-out: append to a user's single capped inbox doc
 // (users/{uid}/meta/inbox) and send a web-push (FCM) to their stored tokens,
@@ -25,7 +25,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
     if (!tokens || tokens.length === 0) return;
     let res;
     try {
-        res = await admin.messaging().sendEachForMulticast({
+        res = await getMessaging().sendEachForMulticast({
             tokens,
             // DATA-ONLY (no `notification` field) so the SW builds the notification
             // and the browser doesn't also auto-display a duplicate.
@@ -54,7 +54,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
         }
     });
     if (invalid.length) {
-        await admin.firestore().doc(`users/${uid}/meta/inbox`)
+        await getFirestore().doc(`users/${uid}/meta/inbox`)
             .update({ pushTokens: FieldValue.arrayRemove(...invalid) })
             .catch(() => {});
     }
@@ -66,7 +66,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
  */
 async function notifyUser(uid, type, { title, message, link }) {
     if (!uid) return;
-    const db = admin.firestore();
+    const db = getFirestore();
     const inboxRef = db.doc(`users/${uid}/meta/inbox`);
 
     let pushTokens = [];
