@@ -35,8 +35,8 @@ file is the current hand-off source.
 | Phase | Status | Implemented | Still required |
 | --- | --- | --- | --- |
 | P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
-| P1 coordination | Released in v1.0.26; cleanup completed and deployed | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Run installed-client post-release smoke tests |
-| P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Run installed-client two-account production smoke tests |
+| P1 coordination | Released in v1.0.26; cleanup completed and deployed | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI; installed Windows production gate covers invitation and membership lifecycle | Manually repeat overlay/changelog/system-push scenarios through two signed-in installed clients and on macOS |
+| P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI; installed Windows production gate covers a signed copied PC2 save, member download and deletion | Manually cover Planet Zoo plus multi-version/retention behavior through installed clients |
 | P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
 | P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Monitor production and complete the remaining P1/P3 follow-ups |
 
@@ -231,8 +231,36 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
   `index.html` was uploaded last; cache-busted public index and main-bundle hashes also matched.
 - Firestore Rules were released, the two obsolete `collaborationInvites`/`invitations` compound
   indexes were removed and the replaced `acceptCollaborationInvitation` Function was deleted.
+- The subsequent installed-client production gate exposed two required legacy invitation
+  collection-group field indexes (`invitations.targetUserId` and `invitations.senderId`) that the
+  account-cleanup path still uses. Both were restored and deployed; a Functions regression test now
+  prevents removing them while those queries exist.
 
 ## Verification completed
+
+### Installed Windows production smoke (2026-08-01)
+
+- Added `npm run test:installed-production`, which starts two installed v1.0.27 clients with isolated
+  user-data directories and remote inspection ports. Both exposed distinct persisted device IDs and
+  the real sandboxed Electron preload/IPC bridge without touching the user's normal client profile.
+- The gate creates and later revokes its own Firebase App Check debug token. The secret remains only in
+  process memory; a failed run also removes the token by its unique display name. The production Auth,
+  Firestore and callable requests all reported valid App Check verification.
+- Registered a temporary owner through the installed production UI, created a second temporary member,
+  and used the installed client's `prepareBackupForUpload` IPC path to sign the ignored copied PC2 park.
+  The resulting package was uploaded through the production presigned R2 path as the required initial
+  save and created version 1.
+- Verified invitation listing for owner and recipient, cancellation, decline and acceptance; viewer/
+  editor role changes; byte-identical member download; download denial after removal; reinvite, leave
+  and invite-code regeneration.
+- Deleting the collaboration reported its R2 deletion and the previously valid signed URL returned
+  HTTP 404. Both temporary Auth accounts and their Firestore content were then deleted successfully.
+- Earlier aborted attempts left 15 narrowly named `pcsmoke(owner|member)<8 hex>` profile artifact sets.
+  The gate enumerated only that validated namespace and removed all exact `profiles`, `users` and
+  `usernames` paths. No temporary App Check debug token remains.
+- The first cleanup attempt found that `deleteOwnAccount` could not run without the two legacy
+  invitation collection-group indexes. After deploying and waiting for those indexes, the same full
+  test finished with `INSTALLED_PRODUCTION_SMOKE_OK`.
 
 ### Local multi-instance Firebase E2E (2026-07-27)
 
@@ -307,10 +335,11 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
   stale-save warning,
   later author-edit coverage, local draft persistence, end-session draft hand-off and game-start
   collaboration version-update selection/installation plus targeted availability refresh events.
-- Cloud Functions Node tests: 38 passed, including invitation-grant/manager/build-lock policy,
+- Cloud Functions Node tests: 39 passed, including invitation-grant/manager/build-lock policy,
   public-view allowlists, strict member-only
   downloads, build-release notification fan-out policy, pending-save ownership, missing-save warnings
-  and late-version promotion safeguards plus exact collaboration-prefix cleanup validation.
+  and late-version promotion safeguards, exact collaboration-prefix cleanup validation and the two
+  account-cleanup collection-group index requirements.
 - Electron module Node tests: 14 passed, including newest-save selection, two-minute staleness and the
   loopback-only isolated dev-server resolver.
 - Firestore Rules emulator tests: 11 passed. The suite proves member/outsider read boundaries,
@@ -327,12 +356,17 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
   refresh. The three-process native run covered real IPC scanning and unsigned package integrity on
   copied Frontier data. Authenticated signing, actual R2 upload/download, payload integrity and R2
   cleanup are green. The coordinated production deployment and cross-platform v1.0.26 build are
-  complete; installed-client interaction with production remains a post-release smoke-test item.
+  complete. The automated installed Windows production gate is green for device isolation, App Check,
+  signed PC2 upload/download, invitation/membership operations, access revocation and full R2/account
+  cleanup; the remaining installed-client checks are the manual overlay, Planet Zoo, retention,
+  notification and cross-platform scenarios below.
 
 ## Post-release execution order
 
-1. Repeat the green three-development-Electron and signed-R2 gates through two authenticated installed
-   v1.0.26 clients. Isolated identities, IPC scanning, copied PC2 data and backend R2 transfer are green.
+1. Automated Windows production gate completed with two isolated installed v1.0.27 clients: distinct
+   identities, valid App Check, real IPC signing of copied PC2 data, invitation/membership lifecycle,
+   member-only R2 transfer, access revocation and complete R2/account cleanup are green. A manual
+   two-window signed-in UI pass and macOS repetition remain.
 2. Create a collaboration with an initial PC2 save and one with an initial Planet Zoo save. Confirm
    that cancellation, wrong-game files and unsigned/invalid packages cannot create partial projects.
 3. For both games, verify manual log-off and game close open the changelog popover in the main client.
@@ -360,8 +394,9 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
 13. Completed and deployed: Firestore Rules emulator tests cover privilege escalation and server-only
     version metadata; the expanded suite is now 11/11 passing locally.
 14. Completed and deployed: P1 invitation inbox and membership/role cleanup, including its Functions,
-    rules, index removals, IONOS web client and obsolete callable removal. Test the new invitation
-    lifecycle through two installed production clients.
+    rules, corrected legacy account-cleanup indexes, IONOS web client and obsolete callable removal.
+    The installed Windows production gate verified the invitation lifecycle and exact access cleanup;
+    the manual signed-in UI/system-notification pass remains under items 1 and 12.
 15. Build P3 publish/profile-credit/revoke.
 
 ## Working-tree note
