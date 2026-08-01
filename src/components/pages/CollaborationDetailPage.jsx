@@ -563,7 +563,7 @@ const CollaborationDetailPage = ({
             message: 'Are you sure you want to leave this collaboration?',
             onConfirm: async () => {
                 try {
-                    await leaveCollaboration(collaborationId, user.uid);
+                    await leaveCollaboration(collaborationId);
                     setModalMessage('You have left the collaboration.');
                     navigate('/communitys');
                 } catch (error) {

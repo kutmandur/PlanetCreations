@@ -592,44 +592,20 @@ service cloud.firestore {
       // Nur über die createCollaboration Cloud Function (Admin-SDK umgeht Rules):
       // verhindert gefälschte ownerId/memberIds und ungeprüfte Docs.
       allow create: if false;
-      // Settings, build locks and version pointers are written by callable
-      // Functions. Direct owner/mod updates remain limited to the two legacy
-      // client operations: member removal and invite-code rotation.
-      allow update: if (
-        isCollaborationOwnerOrMod(collaborationId) &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['memberIds', 'inviteCode', 'updatedAt'])
-      ) || (
-        // A non-owner member may only remove their own uid while leaving. New
-        // memberships are always created by a callable Function, otherwise an
-        // outsider could add themselves to memberIds and read the private doc.
-        isCollaborationMember(collaborationId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
-        !(request.auth.uid in request.resource.data.memberIds) &&
-        request.auth.uid in resource.data.memberIds &&
-        request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
-      );
+      // Settings, build locks, invite-code rotation, membership indexes and
+      // version pointers are all written by callable Functions.
+      allow update: if false;
       // Deletion is server-only so R2 objects are removed before metadata.
       allow delete: if false;
 
       match /members/{userId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
         // Member-Docs entstehen NUR über Cloud Functions (createCollaboration,
-        // joinCollaborationByInviteCode, acceptCollaborationInvitation). Direkter
+        // joinCollaborationByInviteCode, respondToCollaborationInvitation). Direkter
         // Client-Create ist verboten — sonst könnte sich jeder Eingeloggte selbst
         // mit role:'owner' in eine beliebige Collaboration schreiben.
         allow create: if false;
-        allow update: if isCollaborationOwnerOrMod(collaborationId) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']) &&
-          request.resource.data.get('role', '') in ['editor', 'viewer'];
-        // Owners may remove other members, non-owner members may leave, and
-        // site moderators may also repair orphaned collaborations. The owner
-        // cannot delete their own membership and orphan the project.
-        allow delete: if isModerator() ||
-          (isCollaborationOwner(collaborationId) && request.auth.uid != userId) ||
-          (isOwner(userId) &&
-            get(/databases/$(database)/documents/collaborations/$(collaborationId))
-              .data.get('ownerId', '') != userId);
+        allow update, delete: if false;
       }
 
       match /applications/{applicantId} {
@@ -668,13 +644,8 @@ service cloud.firestore {
       }
 
       match /invitations/{inviteId} {
-        allow read: if isCollaborationMember(collaborationId) ||
-          (isLoggedIn() && resource.data.targetUserId == request.auth.uid) ||
-          isModerator();
-        allow create: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
-        allow update: if isLoggedIn() && resource.data.targetUserId == request.auth.uid;
-        // Allow mods to delete invitations even for orphaned collaborations
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        // Deprecated invite copies are no longer part of the client contract.
+        allow read, write: if false;
       }
 
       // Todo items
@@ -703,21 +674,14 @@ service cloud.firestore {
       }
     }
 
-    // User's collaboration invites (notifications)
+    // Deprecated per-user invite copies are replaced by the standard inbox and
+    // server-only collaborationInvitationGrants.
     match /users/{userId}/collaborationInvites/{inviteId} {
-      allow read: if isOwner(userId);
-      // Nur echte Mitglieder der Collaboration dürfen Einladungen versenden
-      // (senderId muss der eigene uid sein) — verhindert Invite-Spam an beliebige Nutzer.
-      allow create: if isLoggedIn() &&
-          request.resource.data.senderId == request.auth.uid &&
-          (isCollaborationMember(request.resource.data.collaborationId) || isModerator());
-      allow update: if isOwner(userId);
-      // Empfänger, echter Absender oder ein Collaboration-Owner/Mod
-      // (cancelInvitation darf auch ein Mit-Owner ausführen, der nicht
-      // der ursprüngliche Absender ist).
-      allow delete: if isOwner(userId) ||
-          (isLoggedIn() && resource.data.senderId == request.auth.uid) ||
-          isCollaborationOwnerOrMod(resource.data.collaborationId);
+      allow read, write: if false;
+    }
+
+    match /collaborationInvitationGrants/{grantId} {
+      allow read, write: if false;
     }
   }
 }

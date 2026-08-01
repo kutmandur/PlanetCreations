@@ -10,6 +10,8 @@ const TYPES = [
     { key: 'communityEvent', label: 'Community events' },
     { key: 'eventSubmission', label: 'Confirmation when you submit to an event' },
     { key: 'eventResults', label: 'Results of events you participated in' },
+    { key: 'collaborationInvite', label: 'Collaboration invitations' },
+    { key: 'collaborationAvailable', label: 'Collaboration build turns becoming available' },
     { key: 'newFollower', label: 'Someone follows you' },
 ];
 

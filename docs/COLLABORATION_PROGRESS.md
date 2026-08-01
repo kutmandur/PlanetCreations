@@ -1,6 +1,6 @@
 # Collaboration rebuild — implementation status
 
-Last updated: 2026-07-28
+Last updated: 2026-08-01
 
 This is the repository-local continuation record for Claude's plan:
 
@@ -35,7 +35,7 @@ file is the current hand-off source.
 | Phase | Status | Implemented | Still required |
 | --- | --- | --- | --- |
 | P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
-| P1 coordination | Released in v1.0.26; follow-up cleanup remains | Create/edit wizard, invite/password/application gates, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Replace the legacy invite subcollection with inbox items; finish membership/role cleanup; run installed-client post-release smoke tests |
+| P1 coordination | Released in v1.0.26; cleanup complete locally and pending deployment | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Deploy the invitation/membership cleanup; run installed-client post-release smoke tests |
 | P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Run installed-client two-account production smoke tests |
 | P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
 | P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Monitor production and complete the remaining P1/P3 follow-ups |
@@ -117,6 +117,24 @@ file is the current hand-off source.
   by that page.
 - The detail route is protected and the overlay's “open collaboration” link now points to the actual
   singular `/collaboration/:id` route.
+
+### Invitation and membership cleanup (P1)
+
+- Direct invitations now use one deterministic, server-only grant per collaboration and recipient.
+  The obsolete collaboration and per-user invite subcollections are no longer read or written.
+- Invitation delivery uses the site's existing capped inbox/push system. Clearing or editing the
+  visible notification cannot create, alter, cancel or accept the underlying invitation grant.
+- Send, list, accept, decline and cancel operations validate the authenticated account, collaboration
+  ownership/site role, target membership, requested role and current invitation state in callables.
+- Leaving, member removal, editor/viewer changes and invite-code regeneration are callable-only.
+  Active builders must finish their turn before leaving, being removed or being downgraded to viewer.
+- Account deletion removes non-owner collaboration memberships and invitation grants. Accounts that
+  still own a collaboration or hold an active build lock must resolve those first, preventing orphaned
+  projects and locks.
+- Collaboration deletion now also removes its private invitation grants. The two obsolete composite
+  invite indexes were removed from the index manifest.
+- Firestore rules deny every direct client mutation of the collaboration root, member documents and
+  invitation grants, including otherwise privileged owner/moderator clients.
 
 ### Required initial save, changelog and gallery (P1/P2)
 
@@ -201,9 +219,8 @@ The coordinated v1.0.26 release completed on 2026-07-28:
 - The release contains the Windows installer and blockmap, Apple Silicon DMG and blockmap, Linux
   AppImage, plus all three updater metadata files.
 
-Non-blocking maintenance warnings remain: Cloud Functions still use the deprecated Node.js 20 runtime
-and legacy `functions.config()` API, and GitHub Actions transparently run older JavaScript actions on
-Node.js 24. These should be migrated before their provider deadlines.
+The later v1.0.27 runtime/security modernization moved all Functions to second-generation Node.js 22,
+removed the legacy `functions.config()` dependency and updated the release workflow/runtime stack.
 
 ## Verification completed
 
@@ -280,16 +297,17 @@ Node.js 24. These should be migrated before their provider deadlines.
   stale-save warning,
   later author-edit coverage, local draft persistence, end-session draft hand-off and game-start
   collaboration version-update selection/installation plus targeted availability refresh events.
-- Cloud Functions Node tests: 35 passed, including public-view allowlists, strict member-only
+- Cloud Functions Node tests: 38 passed, including invitation-grant/manager/build-lock policy,
+  public-view allowlists, strict member-only
   downloads, build-release notification fan-out policy, pending-save ownership, missing-save warnings
   and late-version promotion safeguards plus exact collaboration-prefix cleanup validation.
 - Electron module Node tests: 14 passed, including newest-save selection, two-minute staleness and the
   loopback-only isolated dev-server resolver.
-- Firestore Rules emulator tests: 10 passed. The suite proves member/outsider read boundaries,
+- Firestore Rules emulator tests: 11 passed. The suite proves member/outsider read boundaries,
   server-only collaboration/file/version/upload metadata, blocked self-promotion and forged
-  membership, safe role changes, atomic member leave and owner-orphan protection. Building the suite
-  also closed direct outsider `memberIds` self-add, owner version-pointer writes and unrestricted
-  member role/consent updates.
+  membership, callable-only membership/role changes and inaccessible invitation grants/deprecated
+  invite copies. Building the suite also closed direct outsider `memberIds` self-add, owner
+  version-pointer writes and unrestricted member role/consent updates.
 - Functions ESLint: passed.
 - Electron main/preload/module syntax checks: passed.
 - React production build: compiled successfully.
@@ -330,8 +348,9 @@ Node.js 24. These should be migrated before their provider deadlines.
 12. Repeat the already-green in-app inbox/background-refresh flow with real system push enabled and
     confirm one OS notification is delivered.
 13. Completed and deployed: Firestore Rules emulator tests cover privilege escalation and server-only
-    version metadata (10/10 passing); the accompanying hardened rules are live in production.
-14. Finish the P1 inbox/membership cleanup.
+    version metadata; the expanded suite is now 11/11 passing locally.
+14. Completed locally: P1 invitation inbox and membership/role cleanup. Deploy its Functions, rules,
+    index removals and web client together before testing the new invitation lifecycle in production.
 15. Build P3 publish/profile-credit/revoke.
 
 ## Working-tree note

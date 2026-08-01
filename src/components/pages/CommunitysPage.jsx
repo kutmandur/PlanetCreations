@@ -170,10 +170,10 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
 
     useEffect(() => {
         const requestedTab = new URLSearchParams(location.search).get('tab');
-        if (requestedTab === 'Invitations' && invitations.length > 0) {
-            setCommunitysState(prev => ({ ...prev, activeTab: 'Invitations' }));
+        if (requestedTab && TABS.includes(requestedTab)) {
+            setCommunitysState(prev => ({ ...prev, activeTab: requestedTab }));
         }
-    }, [invitations.length, location.search, setCommunitysState]);
+    }, [location.search, setCommunitysState, TABS]);
 
     useEffect(() => {
         if (communitysState.activeTab === 'Invitations' && invitations.length === 0) {

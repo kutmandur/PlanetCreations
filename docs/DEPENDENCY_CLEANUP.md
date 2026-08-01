@@ -62,7 +62,7 @@ names.
 
 - Frontend: 22 Vitest files, 116 tests
 - Electron modules: 14 Node tests
-- Firebase Functions: 35 Node tests
+- Firebase Functions: 38 Node tests
 - Discord bot: all CommonJS files parsed on Node 24
 - Functions ESLint 10 flat configuration
 - Vite production build

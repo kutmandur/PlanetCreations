@@ -10,6 +10,7 @@ const SendInviteModal = ({
     existingMemberIds,
     accentColor = '#6B7280',
     onClose,
+    onInvitationSent,
     setModalMessage,
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -64,7 +65,8 @@ const SendInviteModal = ({
         if (!selectedUser || sending) return;
         setSending(true);
         try {
-            await sendInvitation(collaborationId, currentUserId, selectedUser.id, selectedRole);
+            await sendInvitation(collaborationId, selectedUser.id, selectedRole);
+            await onInvitationSent?.();
             setModalMessage(`Invitation sent to ${selectedUser.username}.`);
             onClose();
         } catch (error) {

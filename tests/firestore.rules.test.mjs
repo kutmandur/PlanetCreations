@@ -8,7 +8,6 @@ import {
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import {
-  arrayRemove,
   deleteDoc,
   doc,
   getDoc,
@@ -170,7 +169,7 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
     }));
   });
 
-  test("members cannot promote themselves or be promoted to owner", async () => {
+  test("all collaboration role mutations are server-only", async () => {
     const memberDb = authenticatedFirestore(MEMBER_ID);
     const ownerDb = authenticatedFirestore(OWNER_ID);
 
@@ -182,7 +181,7 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
       doc(ownerDb, collaborationPath("members", MEMBER_ID)),
       { role: "owner" },
     ));
-    await assertSucceeds(updateDoc(
+    await assertFails(updateDoc(
       doc(ownerDb, collaborationPath("members", MEMBER_ID)),
       { role: "viewer" },
     ));
@@ -197,16 +196,15 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
     ));
   });
 
-  test("a member can leave atomically but the owner cannot orphan the project", async () => {
+  test("all membership removals are server-only", async () => {
     const memberDb = authenticatedFirestore(MEMBER_ID);
     const memberLeave = writeBatch(memberDb);
     memberLeave.delete(doc(memberDb, collaborationPath("members", MEMBER_ID)));
     memberLeave.update(doc(memberDb, collaborationPath()), {
-      memberIds: arrayRemove(MEMBER_ID),
+      memberIds: [OWNER_ID],
     });
-    await assertSucceeds(memberLeave.commit());
+    await assertFails(memberLeave.commit());
 
-    await seedCollaboration();
     const ownerDb = authenticatedFirestore(OWNER_ID);
     await assertFails(deleteDoc(
       doc(ownerDb, collaborationPath("members", OWNER_ID)),
@@ -215,9 +213,9 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
     const ownerRemoval = writeBatch(ownerDb);
     ownerRemoval.delete(doc(ownerDb, collaborationPath("members", MEMBER_ID)));
     ownerRemoval.update(doc(ownerDb, collaborationPath()), {
-      memberIds: arrayRemove(MEMBER_ID),
+      memberIds: [OWNER_ID],
     });
-    await assertSucceeds(ownerRemoval.commit());
+    await assertFails(ownerRemoval.commit());
   });
 
   test("direct collaboration version pointers remain server-only", async () => {
@@ -284,16 +282,74 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
     ));
   });
 
-  test("legacy owner operations do not open server-managed metadata", async () => {
+  test("all top-level collaboration mutations are server-only", async () => {
     const ownerDb = authenticatedFirestore(OWNER_ID);
 
-    await assertSucceeds(updateDoc(doc(ownerDb, collaborationPath()), {
+    await assertFails(updateDoc(doc(ownerDb, collaborationPath()), {
       inviteCode: "RULES002",
       updatedAt: 2,
     }));
     await assertFails(updateDoc(doc(ownerDb, collaborationPath()), {
       title: "Direct client settings write",
       updatedAt: 3,
+    }));
+  });
+
+  test("invitation grants and deprecated invite copies are server-only", async () => {
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      const batch = writeBatch(adminDb);
+      batch.set(doc(
+        adminDb,
+        `collaborationInvitationGrants/${COLLABORATION_ID}--${MEMBER_ID}`,
+      ), {
+        collaborationId: COLLABORATION_ID,
+        targetUserId: MEMBER_ID,
+        role: "editor",
+        status: "pending",
+      });
+      batch.set(doc(
+        adminDb,
+        collaborationPath("invitations", "legacy-invite"),
+      ), {
+        targetUserId: MEMBER_ID,
+        role: "editor",
+        status: "pending",
+      });
+      batch.set(doc(
+        adminDb,
+        `users/${MEMBER_ID}/collaborationInvites/legacy-invite`,
+      ), {
+        collaborationId: COLLABORATION_ID,
+        targetUserId: MEMBER_ID,
+        role: "editor",
+        status: "pending",
+      });
+      await batch.commit();
+    });
+
+    const memberDb = authenticatedFirestore(MEMBER_ID);
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const grantPath =
+      `collaborationInvitationGrants/${COLLABORATION_ID}--${MEMBER_ID}`;
+    await assertFails(getDoc(doc(memberDb, grantPath)));
+    await assertFails(getDoc(doc(ownerDb, grantPath)));
+    await assertFails(getDoc(doc(
+      memberDb,
+      collaborationPath("invitations", "legacy-invite"),
+    )));
+    await assertFails(getDoc(doc(
+      memberDb,
+      `users/${MEMBER_ID}/collaborationInvites/legacy-invite`,
+    )));
+    await assertFails(setDoc(doc(
+      memberDb,
+      `collaborationInvitationGrants/${COLLABORATION_ID}--forged`,
+    ), {
+      collaborationId: COLLABORATION_ID,
+      targetUserId: MEMBER_ID,
+      role: "owner",
+      status: "pending",
     }));
   });
 });
