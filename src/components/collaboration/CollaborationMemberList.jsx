@@ -98,7 +98,10 @@ const CollaborationMemberList = ({
             message: `Cancel the invitation to ${invitation.targetUsername}?`,
             onConfirm: async () => {
                 try {
-                    await cancelInvitation(collaborationId, invitation.id);
+                    await cancelInvitation(
+                        collaborationId,
+                        invitation.targetUserId,
+                    );
                     setPendingInvites((current) => current.filter((item) => item.id !== invitation.id));
                     setModalMessage('Invitation cancelled.');
                 } catch (error) {
@@ -311,6 +314,7 @@ const CollaborationMemberList = ({
                     existingMemberIds={members.map((member) => member.id)}
                     accentColor={accentColor}
                     onClose={() => setShowInviteModal(false)}
+                    onInvitationSent={loadPending}
                     setModalMessage={setModalMessage}
                 />
             )}

@@ -169,19 +169,6 @@ export const fetchCollaborationById = async (collaborationId) => {
     return { id: docSnap.id, ...docSnap.data() };
 };
 
-/**
- * Updates collaboration settings.
- * @param {string} collaborationId - The collaboration ID.
- * @param {object} updates - The fields to update.
- */
-export const updateCollaboration = async (collaborationId, updates) => {
-    const collaborationRef = doc(db, 'collaborations', collaborationId);
-    await updateDoc(collaborationRef, {
-        ...updates,
-        updatedAt: serverTimestamp()
-    });
-};
-
 // ============================================
 // MEMBER MANAGEMENT
 // ============================================
@@ -334,23 +321,9 @@ export const getCollaborationVersionDownloadUrl = async (collaborationId, versio
  * @param {string} collaborationId - The collaboration ID.
  * @param {string} userId - The user leaving.
  */
-export const leaveCollaboration = async (collaborationId, userId) => {
-    const collaborationSnap = await getDoc(doc(db, 'collaborations', collaborationId));
-    if (!collaborationSnap.exists()) {
-        throw new Error('Collaboration not found.');
-    }
-
-    if (collaborationSnap.data().ownerId === userId) {
-        throw new Error('Owner cannot leave. Transfer ownership or delete the collaboration.');
-    }
-
-    // Remove member and update memberIds array
-    const batch = writeBatch(db);
-    batch.delete(doc(db, 'collaborations', collaborationId, 'members', userId));
-    batch.update(doc(db, 'collaborations', collaborationId), {
-        memberIds: arrayRemove(userId)
-    });
-    await batch.commit();
+export const leaveCollaboration = async (collaborationId) => {
+    const callable = httpsCallable(getFunctions(), 'leaveCollaboration');
+    await callable({ collaborationId });
 };
 
 /**
@@ -364,8 +337,8 @@ export const updateMemberRole = async (collaborationId, targetUserId, newRole) =
         throw new Error('Invalid role. Must be "editor" or "viewer".');
     }
 
-    const memberRef = doc(db, 'collaborations', collaborationId, 'members', targetUserId);
-    await updateDoc(memberRef, { role: newRole });
+    const callable = httpsCallable(getFunctions(), 'updateCollaborationMemberRole');
+    await callable({ collaborationId, targetUserId, role: newRole });
 };
 
 /**
@@ -374,12 +347,8 @@ export const updateMemberRole = async (collaborationId, targetUserId, newRole) =
  * @param {string} targetUserId - The user to remove.
  */
 export const removeMember = async (collaborationId, targetUserId) => {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, 'collaborations', collaborationId, 'members', targetUserId));
-    batch.update(doc(db, 'collaborations', collaborationId), {
-        memberIds: arrayRemove(targetUserId)
-    });
-    await batch.commit();
+    const callable = httpsCallable(getFunctions(), 'removeCollaborationMember');
+    await callable({ collaborationId, targetUserId });
 };
 
 /**
@@ -409,12 +378,12 @@ export const fetchCollaborationMembers = async (collaborationId) => {
  * @returns {string} The new invite code.
  */
 export const regenerateInviteCode = async (collaborationId) => {
-    const newCode = generateInviteCode();
-    await updateDoc(doc(db, 'collaborations', collaborationId), {
-        inviteCode: newCode,
-        updatedAt: serverTimestamp()
-    });
-    return newCode;
+    const callable = httpsCallable(
+        getFunctions(),
+        'regenerateCollaborationInviteCode',
+    );
+    const result = await callable({ collaborationId });
+    return result.data.inviteCode;
 };
 
 // ============================================
@@ -424,121 +393,37 @@ export const regenerateInviteCode = async (collaborationId) => {
 /**
  * Send an invitation to a user.
  * @param {string} collaborationId - The collaboration ID.
- * @param {string} senderId - The user sending the invitation.
  * @param {string} targetUserId - The user to invite.
  * @param {string} role - The role to assign ('editor' or 'viewer').
  */
-export const sendInvitation = async (collaborationId, senderId, targetUserId, role = 'editor') => {
-    // Check if target is already a member
-    const memberRef = doc(db, 'collaborations', collaborationId, 'members', targetUserId);
-    const memberSnap = await getDoc(memberRef);
-    if (memberSnap.exists()) {
-        throw new Error('User is already a member of this collaboration.');
-    }
-
-    // Check if invitation already exists
-    const existingInviteQuery = query(
-        collection(db, 'collaborations', collaborationId, 'invitations'),
-        where('targetUserId', '==', targetUserId),
-        where('status', '==', 'pending')
-    );
-    const existingInviteSnap = await getDocs(existingInviteQuery);
-    if (!existingInviteSnap.empty) {
-        throw new Error('An invitation is already pending for this user.');
-    }
-
-    // Get sender and collaboration info
-    const [senderProfile, collaborationSnap] = await Promise.all([
-        getDoc(doc(db, 'profiles', senderId)),
-        getDoc(doc(db, 'collaborations', collaborationId))
-    ]);
-
-    const senderUsername = senderProfile.exists() ? senderProfile.data().username : 'Unknown';
-    const collaborationTitle = collaborationSnap.exists() ? collaborationSnap.data().title : 'Unknown';
-
-    // Create invitation in collaboration subcollection
-    const inviteRef = await addDoc(collection(db, 'collaborations', collaborationId, 'invitations'), {
-        targetUserId,
-        senderId,
-        senderUsername,
-        role,
-        status: 'pending', // 'pending', 'accepted', 'declined'
-        createdAt: serverTimestamp()
-    });
-
-    // Also create a notification/invite in the target user's invitations
-    await addDoc(collection(db, 'users', targetUserId, 'collaborationInvites'), {
-        collaborationId,
-        collaborationTitle,
-        inviteId: inviteRef.id,
-        senderId,
-        senderUsername,
-        role,
-        status: 'pending',
-        createdAt: serverTimestamp()
-    });
-
-    return inviteRef.id;
+export const sendInvitation = async (collaborationId, targetUserId, role = 'editor') => {
+    const callable = httpsCallable(getFunctions(), 'sendCollaborationInvitation');
+    const result = await callable({ collaborationId, targetUserId, role });
+    return result.data.invitation;
 };
 
 /**
  * Accept an invitation.
  * @param {string} collaborationId - The collaboration ID.
- * @param {string} inviteId - The invitation ID.
- * @param {string} userId - The user accepting.
  */
-export const acceptInvitation = async (collaborationId, inviteId, userId) => {
-    // Serverseitig: das Member-Doc wird von der Cloud Function geschrieben, damit
-    // niemand clientseitig ein Member-Doc mit beliebiger Rolle anlegen kann.
-    const callable = httpsCallable(getFunctions(), 'acceptCollaborationInvitation');
-    await callable({ collaborationId, inviteId });
+export const acceptInvitation = async (collaborationId) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'respondToCollaborationInvitation',
+    );
+    await callable({ collaborationId, accept: true });
 };
 
 /**
  * Decline an invitation.
  * @param {string} collaborationId - The collaboration ID.
- * @param {string} inviteId - The invitation ID.
- * @param {string} userId - The user declining.
  */
-export const declineInvitation = async (collaborationId, inviteId, userId) => {
-    const inviteRef = doc(db, 'collaborations', collaborationId, 'invitations', inviteId);
-    const inviteSnap = await getDoc(inviteRef);
-
-    if (!inviteSnap.exists()) {
-        throw new Error('Invitation not found.');
-    }
-
-    const invite = inviteSnap.data();
-    if (invite.targetUserId !== userId) {
-        throw new Error('This invitation is not for you.');
-    }
-
-    if (invite.status !== 'pending') {
-        throw new Error('This invitation has already been processed.');
-    }
-
-    const batch = writeBatch(db);
-
-    // Update invitation status
-    batch.update(inviteRef, {
-        status: 'declined',
-        respondedAt: serverTimestamp()
-    });
-
-    // Update user's invite
-    const userInvitesQuery = query(
-        collection(db, 'users', userId, 'collaborationInvites'),
-        where('inviteId', '==', inviteId)
+export const declineInvitation = async (collaborationId) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'respondToCollaborationInvitation',
     );
-    const userInvitesSnap = await getDocs(userInvitesQuery);
-    userInvitesSnap.docs.forEach(docSnap => {
-        batch.update(docSnap.ref, {
-            status: 'declined',
-            respondedAt: serverTimestamp()
-        });
-    });
-
-    await batch.commit();
+    await callable({ collaborationId, accept: false });
 };
 
 /**
@@ -547,14 +432,13 @@ export const declineInvitation = async (collaborationId, inviteId, userId) => {
  * @returns {Array} List of pending invitations.
  */
 export const fetchUserPendingInvitations = async (userId) => {
-    const invitesQuery = query(
-        collection(db, 'users', userId, 'collaborationInvites'),
-        where('status', '==', 'pending'),
-        orderBy('createdAt', 'desc')
+    if (!userId) return [];
+    const callable = httpsCallable(
+        getFunctions(),
+        'listMyCollaborationInvitations',
     );
-
-    const snapshot = await getDocs(invitesQuery);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const result = await callable();
+    return result.data.invitations || [];
 };
 
 /**
@@ -563,57 +447,25 @@ export const fetchUserPendingInvitations = async (userId) => {
  * @returns {Array} List of pending invitations.
  */
 export const fetchCollaborationPendingInvitations = async (collaborationId) => {
-    const invitesQuery = query(
-        collection(db, 'collaborations', collaborationId, 'invitations'),
-        where('status', '==', 'pending'),
-        orderBy('createdAt', 'desc')
+    const callable = httpsCallable(
+        getFunctions(),
+        'listCollaborationInvitations',
     );
-
-    const snapshot = await getDocs(invitesQuery);
-
-    // Get target user info
-    const invites = [];
-    for (const docSnap of snapshot.docs) {
-        const data = docSnap.data();
-        const targetProfile = await getDoc(doc(db, 'profiles', data.targetUserId));
-        invites.push({
-            id: docSnap.id,
-            ...data,
-            targetUsername: targetProfile.exists() ? targetProfile.data().username : 'Unknown'
-        });
-    }
-
-    return invites;
+    const result = await callable({ collaborationId });
+    return result.data.invitations || [];
 };
 
 /**
- * Cancel a pending invitation (by owner/sender).
+ * Cancel a pending invitation (by owner/site staff).
  * @param {string} collaborationId - The collaboration ID.
- * @param {string} inviteId - The invitation ID.
+ * @param {string} targetUserId - The invited user ID.
  */
-export const cancelInvitation = async (collaborationId, inviteId) => {
-    const inviteRef = doc(db, 'collaborations', collaborationId, 'invitations', inviteId);
-    const inviteSnap = await getDoc(inviteRef);
-
-    if (!inviteSnap.exists()) {
-        throw new Error('Invitation not found.');
-    }
-
-    const invite = inviteSnap.data();
-    const batch = writeBatch(db);
-
-    // Delete invitation
-    batch.delete(inviteRef);
-
-    // Delete from user's invites
-    const userInvitesQuery = query(
-        collection(db, 'users', invite.targetUserId, 'collaborationInvites'),
-        where('inviteId', '==', inviteId)
+export const cancelInvitation = async (collaborationId, targetUserId) => {
+    const callable = httpsCallable(
+        getFunctions(),
+        'cancelCollaborationInvitation',
     );
-    const userInvitesSnap = await getDocs(userInvitesQuery);
-    userInvitesSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
-
-    await batch.commit();
+    await callable({ collaborationId, targetUserId });
 };
 
 /**
@@ -1178,23 +1030,6 @@ const notifyWaitingUsers = async (collaborationId, fileId, fileName, releasedBy,
     const batch = writeBatch(db);
     batch.update(fileRef, { waitingUsers: [] });
     await batch.commit();
-};
-
-// ============================================
-// HELPERS
-// ============================================
-
-/**
- * Generate a random invite code.
- * @returns {string} A random 8-character code.
- */
-const generateInviteCode = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let code = '';
-    for (let i = 0; i < 8; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
 };
 
 // ============================================

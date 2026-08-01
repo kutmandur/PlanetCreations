@@ -78,6 +78,11 @@ const {
     canAttachPendingSave,
 } = require("./collaborationChangelogState");
 const {
+    getCollaborationInvitationGrantId,
+    hasActiveCollaborationBuildLock,
+    isCollaborationManager,
+} = require("./collaborationAccess");
+const {
     PUBLIC_COLLABORATION_VISIBILITY,
     normalizeCollaborationVisibility,
     buildPublicCollaborationSummary,
@@ -1346,6 +1351,83 @@ exports.unlinkDiscordAccount = onCallWith(
     },
 );
 
+async function removeDeletedUserFromCollaborations(userId) {
+    const [ownedSnapshot, membershipSnapshot] = await Promise.all([
+        db.collection("collaborations")
+            .where("ownerId", "==", userId)
+            .limit(1)
+            .get(),
+        db.collection("collaborations")
+            .where("memberIds", "array-contains", userId)
+            .get(),
+    ]);
+    if (!ownedSnapshot.empty) {
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            "Delete collaborations you own before deleting this account.",
+        );
+    }
+    const activeBuild = membershipSnapshot.docs.find((document) =>
+        hasActiveCollaborationBuildLock(document.data(), userId),
+    );
+    if (activeBuild) {
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            "Finish the active collaboration build session before deleting " +
+                "this account.",
+        );
+    }
+
+    for (let index = 0; index < membershipSnapshot.docs.length; index += 200) {
+        const batch = db.batch();
+        membershipSnapshot.docs.slice(index, index + 200)
+            .forEach((collaborationDocument) => {
+                batch.delete(collaborationDocument.ref.collection("members")
+                    .doc(userId));
+                batch.update(collaborationDocument.ref, {
+                    memberIds: FieldValue.arrayRemove(userId),
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+            });
+        await batch.commit();
+    }
+
+    const [
+        receivedGrants,
+        sentGrants,
+        legacyUserInvitations,
+        legacyReceivedInvitations,
+        legacySentInvitations,
+    ] = await Promise.all([
+        collaborationInvitationGrantCollection
+            .where("targetUserId", "==", userId)
+            .get(),
+        collaborationInvitationGrantCollection
+            .where("senderId", "==", userId)
+            .get(),
+        db.collection(`users/${userId}/collaborationInvites`).get(),
+        db.collectionGroup("invitations")
+            .where("targetUserId", "==", userId)
+            .get(),
+        db.collectionGroup("invitations")
+            .where("senderId", "==", userId)
+            .get(),
+    ]);
+    const invitationRefs = new Map();
+    [
+        ...receivedGrants.docs,
+        ...sentGrants.docs,
+        ...legacyUserInvitations.docs,
+        ...legacyReceivedInvitations.docs,
+        ...legacySentInvitations.docs,
+    ]
+        .forEach((document) => invitationRefs.set(
+            document.ref.path,
+            document.ref,
+        ));
+    await deleteDocumentRefs([...invitationRefs.values()]);
+}
+
 exports.deleteOwnAccount = onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to perform this action.');
@@ -1354,6 +1436,7 @@ exports.deleteOwnAccount = onCall(async (data, context) => {
     console.log(`User ${userId} initiating self-deletion.`);
 
     try {
+        await removeDeletedUserFromCollaborations(userId);
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userId}`);
         const userRef = db.doc(`users/${userId}`);
@@ -1406,6 +1489,7 @@ exports.deleteOwnAccount = onCall(async (data, context) => {
         return { success: true, message: `User ${userId} and all their content has been deleted.` };
     } catch (error) {
         console.error(`Failed to delete user ${userId}:`, error);
+        if (error instanceof functions.https.HttpsError) throw error;
         throw new functions.https.HttpsError('internal', 'An error occurred during the account deletion process.');
     }
 });
@@ -1425,6 +1509,7 @@ exports.deleteUserAndContent = onCall(async (data, context) => {
     console.log(`Admin ${context.auth.uid} initiating deletion for user ${userIdToDelete}.`);
 
     try {
+        await removeDeletedUserFromCollaborations(userIdToDelete);
         const batch = db.batch();
         const profileRef = db.doc(`profiles/${userIdToDelete}`);
         const userRef = db.doc(`users/${userIdToDelete}`);
@@ -1483,6 +1568,7 @@ exports.deleteUserAndContent = onCall(async (data, context) => {
         return { success: true, message: `User ${userIdToDelete} and all their content has been deleted.` };
     } catch (error) {
         console.error(`Failed to delete user ${userIdToDelete}:`, error);
+        if (error instanceof functions.https.HttpsError) throw error;
         throw new functions.https.HttpsError('internal', 'An error occurred during the deletion process.');
     }
 });
@@ -3049,6 +3135,41 @@ function buildCollaborationMemberDoc(role, username) {
     };
 }
 
+const collaborationInvitationGrantCollection = db.collection(
+    "collaborationInvitationGrants",
+);
+
+function requireCallableSafeId(data, field, label) {
+    const value = ((data && data[field]) || "").trim();
+    try {
+        return requireSafeId(value, label);
+    } catch (error) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            error.message,
+        );
+    }
+}
+
+function serializeCollaborationInvitation(document) {
+    const invitation = document.data();
+    return {
+        id: document.id,
+        collaborationId: invitation.collaborationId,
+        collaborationTitle: invitation.collaborationTitle,
+        targetUserId: invitation.targetUserId,
+        targetUsername: invitation.targetUsername,
+        senderId: invitation.senderId,
+        senderUsername: invitation.senderUsername,
+        role: invitation.role === "viewer" ? "viewer" : "editor",
+        status: invitation.status,
+        createdAt: invitation.createdAt &&
+            typeof invitation.createdAt.toMillis === "function" ?
+            invitation.createdAt.toMillis() :
+            null,
+    };
+}
+
 // --- Collaboration serverseitig anlegen: verhindert, dass Clients ownerId/memberIds
 //     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
 exports.createCollaboration = onCallWith({
@@ -3505,6 +3626,13 @@ exports.deleteCollaboration = onCallWith({
         const uploadSessions = await uploadSessionCollection
             .where("collaborationId", "==", collaborationId)
             .get();
+        const invitationGrants = await collaborationInvitationGrantCollection
+            .where("collaborationId", "==", collaborationId)
+            .get();
+        const legacyUserInvitations = await db
+            .collectionGroup("collaborationInvites")
+            .where("collaborationId", "==", collaborationId)
+            .get();
         const objectKeys = await listCollaborationR2ObjectKeys(
             collaborationId,
         );
@@ -3532,70 +3660,364 @@ exports.deleteCollaboration = onCallWith({
 
         await db.recursiveDelete(collaborationRef);
         await deleteDocumentRefs(
-            uploadSessions.docs.map((document) => document.ref),
+            [
+                ...uploadSessions.docs,
+                ...invitationGrants.docs,
+                ...legacyUserInvitations.docs,
+            ].map((document) => document.ref),
         );
 
         return {
             success: true,
             deletedR2ObjectCount,
             deletedUploadSessionCount: uploadSessions.size,
+            deletedInvitationGrantCount: invitationGrants.size,
+            deletedLegacyInvitationCount: legacyUserInvitations.size,
         };
     });
 
-// --- Einladung annehmen (serverseitig, damit Member-Docs nicht clientseitig mit
-//     beliebiger Rolle geschrieben werden können). ---
-exports.acceptCollaborationInvitation = onCall(async (data, context) => {
-    if (!context.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
+// Direct invitations use private server-authoritative grants plus the standard
+// notification inbox. The visible inbox item is never an authorization source.
+exports.sendCollaborationInvitation = onCall(async (data, context) => {
+    const senderId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const targetUserId = requireCallableSafeId(
+        data,
+        "targetUserId",
+        "Target user ID",
+    );
+    const requestedRole = data && data.role;
+    if (requestedRole != null &&
+        requestedRole !== "editor" &&
+        requestedRole !== "viewer") {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Invitation role must be editor or viewer.",
+        );
     }
-    const userId = context.auth.uid;
-    const collaborationId = ((data && data.collaborationId) || '').trim();
-    const inviteId = ((data && data.inviteId) || '').trim();
-    if (!collaborationId || !inviteId) {
-        throw new functions.https.HttpsError('invalid-argument', 'Missing collaboration or invite id.');
+    const role = requestedRole === "viewer" ? "viewer" : "editor";
+    if (targetUserId === senderId) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "You cannot invite yourself.",
+        );
     }
 
-    const inviteRef = db.doc(`collaborations/${collaborationId}/invitations/${inviteId}`);
-    const inviteSnap = await inviteRef.get();
-    if (!inviteSnap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Invitation not found.');
-    }
-    const invite = inviteSnap.data();
-    if (invite.targetUserId !== userId) {
-        throw new functions.https.HttpsError('permission-denied', 'This invitation is not for you.');
-    }
-    if (invite.status !== 'pending') {
-        throw new functions.https.HttpsError('failed-precondition', 'This invitation has already been processed.');
-    }
-
-    const memberRef = db.doc(`collaborations/${collaborationId}/members/${userId}`);
-    if ((await memberRef.get()).exists) {
-        throw new functions.https.HttpsError('already-exists', 'You are already a member of this collaboration.');
-    }
-
-    const role = invite.role === 'viewer' ? 'viewer' : 'editor';
-    const profileSnap = await db.doc(`profiles/${userId}`).get();
-    const username = profileSnap.exists ? (profileSnap.data().username || 'Unknown') : 'Unknown';
-
-    const batch = db.batch();
-    batch.set(memberRef, buildCollaborationMemberDoc(role, username));
-    batch.update(db.doc(`collaborations/${collaborationId}`), {
-        memberIds: FieldValue.arrayUnion(userId),
+    await enforceCallableRateLimit({
+        action: "send-collaboration-invitation",
+        subject: senderId,
+        limit: 30,
+        windowMs: 60 * 60 * 1000,
     });
-    batch.update(inviteRef, {
-        status: 'accepted',
-        respondedAt: FieldValue.serverTimestamp(),
+
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const targetMemberRef = collaborationRef.collection("members")
+        .doc(targetUserId);
+    const senderProfileRef = db.doc(`profiles/${senderId}`);
+    const targetProfileRef = db.doc(`profiles/${targetUserId}`);
+    const grantRef = collaborationInvitationGrantCollection.doc(
+        getCollaborationInvitationGrantId(collaborationId, targetUserId),
+    );
+    const siteRole = context.auth.token && context.auth.token.role;
+    const createdAt = Timestamp.now();
+
+    const invitation = await db.runTransaction(async (transaction) => {
+        const [
+            collaborationSnapshot,
+            targetMemberSnapshot,
+            senderProfileSnapshot,
+            targetProfileSnapshot,
+            existingGrantSnapshot,
+        ] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(targetMemberRef),
+            transaction.get(senderProfileRef),
+            transaction.get(targetProfileRef),
+            transaction.get(grantRef),
+        ]);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (!isCollaborationManager(
+            collaboration,
+            senderId,
+            siteRole,
+        )) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can invite contributors.",
+            );
+        }
+        if (collaboration.status !== "active") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Only active collaborations can accept new contributors.",
+            );
+        }
+        if (targetMemberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "already-exists",
+                "This user is already a member of the collaboration.",
+            );
+        }
+        if (!targetProfileSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "The selected user no longer exists.",
+            );
+        }
+        if (existingGrantSnapshot.exists &&
+            existingGrantSnapshot.data().status === "pending") {
+            throw new functions.https.HttpsError(
+                "already-exists",
+                "An invitation is already pending for this user.",
+            );
+        }
+
+        const grant = {
+            collaborationId,
+            collaborationTitle: collaboration.title || "Collaboration",
+            targetUserId,
+            targetUsername:
+                targetProfileSnapshot.data().username || "Unknown",
+            senderId,
+            senderUsername: senderProfileSnapshot.exists ?
+                senderProfileSnapshot.data().username || "Unknown" :
+                "Unknown",
+            role,
+            status: "pending",
+            createdAt,
+            respondedAt: null,
+        };
+        transaction.set(grantRef, grant);
+        return grant;
     });
-    const userInvites = await db.collection(`users/${userId}/collaborationInvites`)
-        .where('inviteId', '==', inviteId)
+
+    try {
+        await notifyUser(targetUserId, "collaborationInvite", {
+            title: "Collaboration invitation",
+            message: `${invitation.senderUsername} invited you to join ` +
+                `${invitation.collaborationTitle}.`,
+            link: "/communitys?tab=Collaborations",
+        });
+    } catch (error) {
+        // The invitation remains visible in the collaboration tab even if its
+        // optional inbox/push delivery has a transient failure.
+        console.error(
+            `Collaboration invitation notification failed for ${targetUserId}:`,
+            error,
+        );
+    }
+
+    return {
+        invitation: serializeCollaborationInvitation({
+            id: grantRef.id,
+            data: () => invitation,
+        }),
+    };
+});
+
+exports.listMyCollaborationInvitations = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const snapshot = await collaborationInvitationGrantCollection
+        .where("targetUserId", "==", userId)
         .get();
-    userInvites.forEach((docSnap) => batch.update(docSnap.ref, {
-        status: 'accepted',
-        respondedAt: FieldValue.serverTimestamp(),
-    }));
-    await batch.commit();
+    return {
+        invitations: snapshot.docs
+            .filter((document) => document.data().status === "pending")
+            .sort((left, right) => {
+                const leftMillis = left.data().createdAt?.toMillis?.() || 0;
+                const rightMillis = right.data().createdAt?.toMillis?.() || 0;
+                return rightMillis - leftMillis;
+            })
+            .slice(0, 50)
+            .map(serializeCollaborationInvitation),
+    };
+});
 
-    return { ok: true };
+exports.listCollaborationInvitations = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationSnapshot = await db.doc(
+        `collaborations/${collaborationId}`,
+    ).get();
+    if (!collaborationSnapshot.exists) {
+        throw new functions.https.HttpsError(
+            "not-found",
+            "Collaboration not found.",
+        );
+    }
+    const siteRole = context.auth.token && context.auth.token.role;
+    if (!isCollaborationManager(
+        collaborationSnapshot.data(),
+        userId,
+        siteRole,
+    )) {
+        throw new functions.https.HttpsError(
+            "permission-denied",
+            "Only the owner or site staff can view pending invitations.",
+        );
+    }
+
+    const snapshot = await collaborationInvitationGrantCollection
+        .where("collaborationId", "==", collaborationId)
+        .get();
+    return {
+        invitations: snapshot.docs
+            .filter((document) => document.data().status === "pending")
+            .sort((left, right) => {
+                const leftMillis = left.data().createdAt?.toMillis?.() || 0;
+                const rightMillis = right.data().createdAt?.toMillis?.() || 0;
+                return rightMillis - leftMillis;
+            })
+            .slice(0, 100)
+            .map(serializeCollaborationInvitation),
+    };
+});
+
+exports.respondToCollaborationInvitation = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const accept = data && data.accept === true;
+    const grantRef = collaborationInvitationGrantCollection.doc(
+        getCollaborationInvitationGrantId(collaborationId, userId),
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members").doc(userId);
+    const profileRef = db.doc(`profiles/${userId}`);
+
+    await db.runTransaction(async (transaction) => {
+        const [
+            grantSnapshot,
+            collaborationSnapshot,
+            memberSnapshot,
+            profileSnapshot,
+        ] = await Promise.all([
+            transaction.get(grantRef),
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+            transaction.get(profileRef),
+        ]);
+        if (!grantSnapshot.exists ||
+            grantSnapshot.data().targetUserId !== userId ||
+            grantSnapshot.data().collaborationId !== collaborationId) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Invitation not found.",
+            );
+        }
+        if (grantSnapshot.data().status !== "pending") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This invitation has already been processed.",
+            );
+        }
+        if (!collaborationSnapshot.exists ||
+            collaborationSnapshot.data().status !== "active") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "This collaboration is no longer available.",
+            );
+        }
+
+        if (accept) {
+            if (memberSnapshot.exists) {
+                // Joining by share code while a direct invitation is pending is
+                // a valid race. Resolve the stale invitation without changing
+                // the member's existing role.
+            } else {
+                const role = grantSnapshot.data().role === "viewer" ?
+                    "viewer" :
+                    "editor";
+                const username = profileSnapshot.exists ?
+                    profileSnapshot.data().username || "Unknown" :
+                    "Unknown";
+                transaction.set(
+                    memberRef,
+                    buildCollaborationMemberDoc(role, username),
+                );
+                transaction.update(collaborationRef, {
+                    memberIds: FieldValue.arrayUnion(userId),
+                });
+            }
+        }
+        transaction.update(grantRef, {
+            status: accept ? "accepted" : "declined",
+            respondedAt: FieldValue.serverTimestamp(),
+        });
+    });
+
+    return { accepted: accept, collaborationId };
+});
+
+exports.cancelCollaborationInvitation = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const targetUserId = requireCallableSafeId(
+        data,
+        "targetUserId",
+        "Target user ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const grantRef = collaborationInvitationGrantCollection.doc(
+        getCollaborationInvitationGrantId(collaborationId, targetUserId),
+    );
+    const siteRole = context.auth.token && context.auth.token.role;
+
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, grantSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(grantRef),
+        ]);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        if (!isCollaborationManager(
+            collaborationSnapshot.data(),
+            userId,
+            siteRole,
+        )) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can cancel invitations.",
+            );
+        }
+        if (!grantSnapshot.exists ||
+            grantSnapshot.data().status !== "pending") {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Pending invitation not found.",
+            );
+        }
+        transaction.update(grantRef, {
+            status: "cancelled",
+            respondedAt: FieldValue.serverTimestamp(),
+        });
+    });
+    return { cancelled: true };
 });
 
 // Hilfsfunktion: aktive Collaboration per Invite-Code finden (serverseitig, damit
@@ -3920,6 +4342,219 @@ exports.updateCollaborationSettings = onCall(async (data, context) => {
     }
     await ref.update(update);
     return { ok: true };
+});
+
+exports.leaveCollaboration = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members").doc(userId);
+
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        if (!collaborationSnapshot.exists || !memberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration membership not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (collaboration.ownerId === userId) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The owner cannot leave the collaboration.",
+            );
+        }
+        if (hasActiveCollaborationBuildLock(collaboration, userId)) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Finish the active build session before leaving.",
+            );
+        }
+        transaction.delete(memberRef);
+        transaction.update(collaborationRef, {
+            memberIds: FieldValue.arrayRemove(userId),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+    });
+    return { left: true };
+});
+
+exports.updateCollaborationMemberRole = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const targetUserId = requireCallableSafeId(
+        data,
+        "targetUserId",
+        "Target user ID",
+    );
+    const role = data && data.role;
+    if (role !== "editor" && role !== "viewer") {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Role must be editor or viewer.",
+        );
+    }
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members")
+        .doc(targetUserId);
+    const siteRole = context.auth.token && context.auth.token.role;
+
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (!isCollaborationManager(collaboration, userId, siteRole)) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can change contributor roles.",
+            );
+        }
+        if (!memberSnapshot.exists ||
+            collaboration.ownerId === targetUserId ||
+            memberSnapshot.data().role === "owner") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The owner's role cannot be changed.",
+            );
+        }
+        if (role === "viewer" &&
+            hasActiveCollaborationBuildLock(collaboration, targetUserId)) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Finish the contributor's active build session first.",
+            );
+        }
+        transaction.update(memberRef, { role });
+        transaction.update(collaborationRef, {
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+    });
+    return { updated: true, role };
+});
+
+exports.removeCollaborationMember = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const targetUserId = requireCallableSafeId(
+        data,
+        "targetUserId",
+        "Target user ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const memberRef = collaborationRef.collection("members")
+        .doc(targetUserId);
+    const siteRole = context.auth.token && context.auth.token.role;
+
+    await db.runTransaction(async (transaction) => {
+        const [collaborationSnapshot, memberSnapshot] = await Promise.all([
+            transaction.get(collaborationRef),
+            transaction.get(memberRef),
+        ]);
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        const collaboration = collaborationSnapshot.data();
+        if (!isCollaborationManager(collaboration, userId, siteRole)) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can remove contributors.",
+            );
+        }
+        if (!memberSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration member not found.",
+            );
+        }
+        if (collaboration.ownerId === targetUserId ||
+            memberSnapshot.data().role === "owner") {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "The owner cannot be removed.",
+            );
+        }
+        if (hasActiveCollaborationBuildLock(
+            collaboration,
+            targetUserId,
+        )) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "Finish the contributor's active build session first.",
+            );
+        }
+        transaction.delete(memberRef);
+        transaction.update(collaborationRef, {
+            memberIds: FieldValue.arrayRemove(targetUserId),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+    });
+    return { removed: true };
+});
+
+exports.regenerateCollaborationInviteCode = onCall(async (data, context) => {
+    const userId = requireAuthenticated(context);
+    const collaborationId = requireCallableSafeId(
+        data,
+        "collaborationId",
+        "Collaboration ID",
+    );
+    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
+    const siteRole = context.auth.token && context.auth.token.role;
+    const inviteCode = generateCollaborationInviteCode();
+
+    await db.runTransaction(async (transaction) => {
+        const collaborationSnapshot = await transaction.get(
+            collaborationRef,
+        );
+        if (!collaborationSnapshot.exists) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "Collaboration not found.",
+            );
+        }
+        if (!isCollaborationManager(
+            collaborationSnapshot.data(),
+            userId,
+            siteRole,
+        )) {
+            throw new functions.https.HttpsError(
+                "permission-denied",
+                "Only the owner or site staff can replace the invite code.",
+            );
+        }
+        transaction.update(collaborationRef, {
+            inviteCode,
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+    });
+    return { inviteCode };
 });
 
 // --- Build-Session starten (advisory Turn-Lock: nur einer baut gleichzeitig). ---

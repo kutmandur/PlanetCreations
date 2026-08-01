@@ -42,9 +42,9 @@ const PendingInvitations = ({
         setProcessingId(invitation.id);
         try {
             if (accept) {
-                await acceptInvitation(invitation.collaborationId, invitation.inviteId, userId);
+                await acceptInvitation(invitation.collaborationId);
             } else {
-                await declineInvitation(invitation.collaborationId, invitation.inviteId, userId);
+                await declineInvitation(invitation.collaborationId);
             }
             setInvitations((current) => current.filter((item) => item.id !== invitation.id));
             setModalMessage(
