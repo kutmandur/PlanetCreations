@@ -942,6 +942,7 @@ exports.abortBackupUpload = onCallWith(
 exports.finalizeBackupUpload = onCallWith(
     {
         concurrency: 2,
+        cpu: 1,
         maxInstances: 5,
         memory: "1GiB",
         timeoutSeconds: 300,
@@ -1718,8 +1719,10 @@ exports.onCreationDelete = documentDeleted(
         const expectedPrefix = `creation-backups/${deletedData.userId}/${creationId}/`;
         if (typeof objectKey === "string" && objectKey.startsWith(expectedPrefix) &&
             !objectKey.includes("..") && !objectKey.includes("\\")) {
-            await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }))
-                .catch((error) => console.error(`Failed to delete R2 object ${objectKey}:`, error));
+            await getS3().send(new DeleteObjectCommand({
+                Bucket: getR2Bucket(),
+                Key: objectKey,
+            }));
         }
 
         // Staff/account cleanup can delete a published Creation outside the
@@ -1765,7 +1768,7 @@ exports.onCreationDelete = documentDeleted(
         }
         return null;
     },
-    uploadFunctionOptions,
+    {...uploadFunctionOptions, retry: true},
 );
 
 exports.onMemberJoin = documentCreated(
@@ -3308,6 +3311,7 @@ function serializeCollaborationInvitation(document) {
 //     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
 exports.createCollaboration = onCallWith({
         concurrency: 2,
+        cpu: 1,
         maxInstances: 5,
         memory: "1GiB",
         timeoutSeconds: 300,
@@ -3720,6 +3724,7 @@ async function deleteDocumentRefs(documentRefs) {
 // can never lose the exact object keys required for storage cleanup.
 exports.deleteCollaboration = onCallWith({
         concurrency: 2,
+        cpu: 1,
         maxInstances: 5,
         memory: "1GiB",
         timeoutSeconds: 300,
@@ -3779,6 +3784,29 @@ exports.deleteCollaboration = onCallWith({
         const objectKeys = await listCollaborationR2ObjectKeys(
             collaborationId,
         );
+        const collaboration = collaborationSnap.data();
+        const revokedCreationId =
+            collaboration.publish?.revokedCreationId;
+        const publishedVersionId =
+            collaboration.currentVersion?.versionId;
+        if (collaboration.publish?.state === "revoked" &&
+            typeof revokedCreationId === "string" &&
+            typeof publishedVersionId === "string") {
+            try {
+                requireSafeId(collaboration.ownerId, "Collaboration owner ID");
+                requireSafeId(revokedCreationId, "Revoked creation ID");
+                requireSafeId(publishedVersionId, "Published version ID");
+                objectKeys.push(
+                    `creation-backups/${collaboration.ownerId}/` +
+                    `${revokedCreationId}/${publishedVersionId}.PlanetCreations`,
+                );
+            } catch (error) {
+                console.warn(
+                    `Skipped invalid revoked publication cleanup for ${collaborationId}:`,
+                    error.message,
+                );
+            }
+        }
         for (const sessionDocument of uploadSessions.docs) {
             const session = sessionDocument.data();
             if (isOwnedObjectKey(
@@ -5236,6 +5264,7 @@ async function deleteR2ObjectSafely(objectKey, label) {
 exports.finalizeCollaborationVersion = onCallWith(
     {
         concurrency: 2,
+        cpu: 1,
         maxInstances: 5,
         memory: "1GiB",
         timeoutSeconds: 300,
@@ -5857,6 +5886,7 @@ exports.completeCollaboration = onCall(async (data, context) => {
 exports.publishCollaboration = onCallWith(
     {
         concurrency: 2,
+        cpu: 1,
         maxInstances: 5,
         memory: "1GiB",
         timeoutSeconds: 300,
@@ -6134,81 +6164,126 @@ exports.publishCollaboration = onCallWith(
     },
 );
 
-exports.voteRevokeCollaborationPublish = onCall(async (data, context) => {
-    const userId = requireAuthenticated(context);
-    const collaborationId = requireCallableSafeId(
-        data,
-        "collaborationId",
-        "Collaboration ID",
-    );
-    const collaborationRef = db.doc(`collaborations/${collaborationId}`);
-
-    return db.runTransaction(async (transaction) => {
-        const collaborationSnapshot = await transaction.get(collaborationRef);
-        if (!collaborationSnapshot.exists) {
-            throw new functions.https.HttpsError(
-                "not-found",
-                "Collaboration not found.",
-            );
-        }
-        const collaboration = collaborationSnapshot.data();
-        if (collaboration.publish?.state !== "published" ||
-            !collaboration.publish?.publishedCreationId) {
-            throw new functions.https.HttpsError(
-                "failed-precondition",
-                "This collaboration has no active publication.",
-            );
-        }
-        if (!(collaboration.memberIds || []).includes(userId)) {
-            throw new functions.https.HttpsError(
-                "permission-denied",
-                "Only current collaboration members can vote.",
-            );
-        }
-        const voteState = getCollaborationRevokeVoteState(
-            collaboration.memberIds,
-            collaboration.publish.revokeVoterIds,
-            userId,
+exports.voteRevokeCollaborationPublish = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
+        const userId = requireAuthenticated(context);
+        const collaborationId = requireCallableSafeId(
+            data,
+            "collaborationId",
+            "Collaboration ID",
         );
-        const now = Timestamp.now();
-        const publishUpdate = {
-            ...collaboration.publish,
-            revokeVoterIds: voteState.voterIds,
-            revokeVoteCount: voteState.voteCount,
-            revokeRequiredCount: voteState.requiredCount,
-        };
-        if (!voteState.unanimous) {
-            transaction.update(collaborationRef, {
-                publish: publishUpdate,
-                updatedAt: now,
-            });
-            return {revoked: false, ...voteState};
-        }
+        const collaborationRef = db.doc(`collaborations/${collaborationId}`);
 
-        const creationId = collaboration.publish.publishedCreationId;
-        try {
-            requireSafeId(creationId, "Published creation ID");
-        } catch (error) {
-            throw new functions.https.HttpsError(
-                "failed-precondition",
-                error.message,
+        const result = await db.runTransaction(async (transaction) => {
+            const collaborationSnapshot = await transaction.get(
+                collaborationRef,
             );
-        }
-        transaction.delete(db.doc(`creations/${creationId}`));
-        transaction.update(collaborationRef, {
-            status: "completed",
-            updatedAt: now,
-            publish: {
-                ...publishUpdate,
-                state: "revoked",
-                publishedCreationId: null,
-                revokedCreationId: creationId,
-                revokedAt: now,
-            },
+            if (!collaborationSnapshot.exists) {
+                throw new functions.https.HttpsError(
+                    "not-found",
+                    "Collaboration not found.",
+                );
+            }
+            const collaboration = collaborationSnapshot.data();
+            if (collaboration.publish?.state !== "published" ||
+                !collaboration.publish?.publishedCreationId) {
+                throw new functions.https.HttpsError(
+                    "failed-precondition",
+                    "This collaboration has no active publication.",
+                );
+            }
+            if (!(collaboration.memberIds || []).includes(userId)) {
+                throw new functions.https.HttpsError(
+                    "permission-denied",
+                    "Only current collaboration members can vote.",
+                );
+            }
+            const voteState = getCollaborationRevokeVoteState(
+                collaboration.memberIds,
+                collaboration.publish.revokeVoterIds,
+                userId,
+            );
+            const now = Timestamp.now();
+            const publishUpdate = {
+                ...collaboration.publish,
+                revokeVoterIds: voteState.voterIds,
+                revokeVoteCount: voteState.voteCount,
+                revokeRequiredCount: voteState.requiredCount,
+            };
+            if (!voteState.unanimous) {
+                transaction.update(collaborationRef, {
+                    publish: publishUpdate,
+                    updatedAt: now,
+                });
+                return {revoked: false, ...voteState};
+            }
+
+            const creationId = collaboration.publish.publishedCreationId;
+            try {
+                requireSafeId(creationId, "Published creation ID");
+            } catch (error) {
+                throw new functions.https.HttpsError(
+                    "failed-precondition",
+                    error.message,
+                );
+            }
+            const creationRef = db.doc(`creations/${creationId}`);
+            const creationSnapshot = await transaction.get(creationRef);
+            let cleanupObjectKey = null;
+            if (creationSnapshot.exists) {
+                const creation = creationSnapshot.data();
+                const expectedPrefix =
+                    `creation-backups/${creation.userId}/${creationId}/`;
+                if (creation.sourceCollaborationId !== collaborationId ||
+                    !isOwnedObjectKey(
+                        creation.backupObjectKey,
+                        creation.userId,
+                        "creation-backups",
+                    ) || !creation.backupObjectKey.startsWith(expectedPrefix)) {
+                    throw new functions.https.HttpsError(
+                        "failed-precondition",
+                        "The published creation has an invalid backup object.",
+                    );
+                }
+                cleanupObjectKey = creation.backupObjectKey;
+            }
+            transaction.delete(creationRef);
+            transaction.update(collaborationRef, {
+                status: "completed",
+                updatedAt: now,
+                publish: {
+                    ...publishUpdate,
+                    state: "revoked",
+                    publishedCreationId: null,
+                    revokedCreationId: creationId,
+                    revokedAt: now,
+                },
+            });
+            return {revoked: true, ...voteState, cleanupObjectKey};
         });
-        return {revoked: true, ...voteState};
-    });
-});
+
+        const {cleanupObjectKey, ...publicResult} = result;
+        if (cleanupObjectKey) {
+            try {
+                await getS3().send(new DeleteObjectCommand({
+                    Bucket: getR2Bucket(),
+                    Key: cleanupObjectKey,
+                }));
+            } catch (error) {
+                console.error(
+                    `Published collaboration cleanup failed for ${collaborationId}:`,
+                    error,
+                );
+                throw new functions.https.HttpsError(
+                    "internal",
+                    "The publication was revoked, but its stored package is still being cleaned up.",
+                );
+            }
+        }
+        return publicResult;
+    },
+);
 
 exports.updateCollaborationChangelogEntry = onCall(
     async (data, context) => {

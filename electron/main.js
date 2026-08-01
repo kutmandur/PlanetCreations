@@ -16,6 +16,7 @@ const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor')
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
+const { responseToBuffer } = require('./modules/ResponseBuffer');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
 
@@ -701,7 +702,7 @@ async function downloadR2PackageToTemp(downloadUrl) {
     if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
         throw new Error('The download exceeds the 300 MB package limit.');
     }
-    const buffer = await response.buffer();
+    const buffer = await responseToBuffer(response);
     if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
         throw new Error('The downloaded package has an invalid size.');
     }
