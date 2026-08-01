@@ -3,7 +3,8 @@
 const functions = require("firebase-functions/v2");
 
 const REQUEST_RUNTIME_OPTIONS = Object.freeze({
-  concurrency: 40,
+  concurrency: 1,
+  cpu: "gcf_gen1",
   maxInstances: 10,
   minInstances: 0,
 });

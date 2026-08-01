@@ -12,12 +12,14 @@ import WebSocket from "ws";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const functionsBase = "https://us-central1-planetcreationsdotnet.cloudfunctions.net";
 const identityBase = "https://identitytoolkit.googleapis.com/v1";
-const installedClient = path.join(
-  process.env.LOCALAPPDATA || "",
-  "Programs",
-  "planet-creation-net",
-  "PlanetCreations Client.exe",
-);
+const installedClient = process.env.PLANETCREATIONS_CLIENT_EXE
+  ? path.resolve(process.env.PLANETCREATIONS_CLIENT_EXE)
+  : path.join(
+    process.env.LOCALAPPDATA || "",
+    "Programs",
+    "planet-creation-net",
+    "PlanetCreations Client.exe",
+  );
 const isolatedRoot = path.join(projectRoot, ".local-runtimes", "installed-smoke");
 const firebaseCli = process.platform === "win32" ? process.execPath : "npx";
 const firebaseCliPrefix = process.platform === "win32" ? [path.join(
@@ -67,6 +69,23 @@ async function callFunction(name, data, idToken, appCheckToken) {
   });
   const body = await readJson(response, name);
   return body.result;
+}
+
+async function callFunctionWithRetry(name, data, idToken, appCheckToken, attempts = 6) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await callFunction(name, data, idToken, appCheckToken);
+    } catch (error) {
+      lastError = error;
+      if (!/429|500|502|503|504|quota|unavailable/i.test(error.message) ||
+          attempt === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1_000));
+    }
+  }
+  throw lastError;
 }
 
 async function signIn(apiKey, email, password, appCheckToken = null) {
@@ -143,6 +162,76 @@ async function createTemporaryProfile(apiKey, account, appCheckToken) {
     },
   );
   await readJson(response, "temporary member profile creation");
+}
+
+async function getFirestoreDocument(
+  apiKey,
+  documentPath,
+  idToken,
+  appCheckToken,
+) {
+  const encodedPath = documentPath.split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const response = await fetch(
+    "https://firestore.googleapis.com/v1/projects/planetcreationsdotnet/" +
+    `databases/(default)/documents/${encodedPath}?key=${encodeURIComponent(apiKey)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "X-Firebase-AppCheck": appCheckToken,
+      },
+    },
+  );
+  if (response.status === 404) return null;
+  return readJson(response, `Firestore document ${documentPath}`);
+}
+
+async function queryContributorCreationIds(
+  apiKey,
+  contributorId,
+  idToken,
+  appCheckToken,
+) {
+  const response = await fetch(
+    "https://firestore.googleapis.com/v1/projects/planetcreationsdotnet/" +
+    `databases/(default)/documents:runQuery?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+        "X-Firebase-AppCheck": appCheckToken,
+      },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "creations" }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: "contributorIds" },
+              op: "ARRAY_CONTAINS",
+              value: { stringValue: contributorId },
+            },
+          },
+        },
+      }),
+    },
+  );
+  const rows = await readJson(response, "published contributor query");
+  return rows.flatMap((row) => {
+    const name = row.document?.name;
+    return typeof name === "string" ? [name.split("/").at(-1)] : [];
+  });
+}
+
+async function expectFunctionFailure(action, pattern, label) {
+  try {
+    await action();
+  } catch (error) {
+    if (pattern.test(error.message)) return;
+    throw new Error(`${label} failed with an unexpected error: ${error.message}`);
+  }
+  throw new Error(`${label} unexpectedly succeeded.`);
 }
 
 async function listInstalledSmokeProfiles(apiKey, idToken, appCheckToken) {
@@ -573,8 +662,17 @@ async function main() {
   const runId = crypto.randomUUID();
   const shortId = runId.slice(0, 8);
   const runRoot = path.join(isolatedRoot, runId);
-  const frontierRoot = fixtureRoot;
+  const frontierRoot = path.join(runRoot, "frontier");
+  const savesDirectory = path.join(
+    frontierRoot,
+    "Planet Coaster 2",
+    "76561198000000000",
+    "Saves",
+  );
+  const smokeSourceSave = path.join(savesDirectory, path.basename(sourceSave));
   fs.mkdirSync(runRoot, { recursive: true });
+  fs.mkdirSync(savesDirectory, { recursive: true });
+  fs.copyFileSync(sourceSave, smokeSourceSave);
 
   const password = `Pc!${crypto.randomBytes(24).toString("base64url")}`;
   const accounts = ["owner", "member"].map((kind) => ({
@@ -592,6 +690,8 @@ async function main() {
   let appCheckToken = null;
   let uploadId = null;
   let collaborationId = null;
+  let publishedCreationId = null;
+  let publishedDownloadUrl = null;
   let preparedPath = null;
   let debugRegistration = null;
   let staleSmokeProfiles = [];
@@ -641,11 +741,11 @@ async function main() {
     if (staleSmokeProfiles.length) {
       console.log(`INFO found ${staleSmokeProfiles.length} stale smoke profile artifact set(s)`);
     }
-    console.log("OK two isolated installed 1.0.27 device identities, two accounts and valid client App Check");
+    console.log("OK two isolated packaged-client identities, two accounts and valid client App Check");
 
     const prepared = await evaluate(clients[0].client, `(async () =>
       window.electronAPI.prepareBackupForUpload(
-        ${JSON.stringify(sourceSave)},
+        ${JSON.stringify(smokeSourceSave)},
         ${JSON.stringify(accounts[0].idToken)},
         ${JSON.stringify(appCheckToken)}
       ))()`);
@@ -793,6 +893,170 @@ async function main() {
     }
     console.log("OK role changes, member download, removal, leave and code regeneration");
 
+    await callFunction("sendCollaborationInvitation", {
+      collaborationId,
+      targetUserId: accounts[1].uid,
+      role: "editor",
+    }, accounts[0].idToken, appCheckToken);
+    await callFunction("respondToCollaborationInvitation", {
+      collaborationId,
+      accept: true,
+    }, accounts[1].idToken, appCheckToken);
+
+    for (const account of accounts) {
+      const consent = await callFunction("confirmCollaborationPublishConsent", {
+        collaborationId,
+      }, account.idToken, appCheckToken);
+      if (consent.agreed !== true) {
+        throw new Error(`Publication consent failed for ${account.kind}.`);
+      }
+    }
+    const completion = await callFunction("completeCollaboration", {
+      collaborationId,
+    }, accounts[0].idToken, appCheckToken);
+    if (!completion.completed) {
+      throw new Error("Collaboration completion was not confirmed.");
+    }
+    const publication = await callFunction("publishCollaboration", {
+      collaborationId,
+    }, accounts[0].idToken, appCheckToken);
+    publishedCreationId = publication.creationId;
+    if (!publication.published || !publishedCreationId) {
+      throw new Error("Collaboration publication returned no Creation ID.");
+    }
+
+    const creationDocument = await getFirestoreDocument(
+      apiKey,
+      `creations/${publishedCreationId}`,
+      accounts[1].idToken,
+      appCheckToken,
+    );
+    const contributorIds = creationDocument?.fields?.contributorIds
+      ?.arrayValue?.values?.map((value) => value.stringValue) || [];
+    if (!accounts.every((account) => contributorIds.includes(account.uid)) ||
+        creationDocument?.fields?.sourceCollaborationId?.stringValue !== collaborationId) {
+      throw new Error("Published Creation is missing permanent contributor/source metadata.");
+    }
+    for (const account of accounts) {
+      const creditedCreationIds = await queryContributorCreationIds(
+        apiKey,
+        account.uid,
+        account.idToken,
+        appCheckToken,
+      );
+      if (!creditedCreationIds.includes(publishedCreationId)) {
+        throw new Error(`Published Creation is missing from ${account.kind} contributor query.`);
+      }
+    }
+
+    const publishedDownload = await callFunction("getBackupDownloadUrl", {
+      creationId: publishedCreationId,
+    }, accounts[1].idToken, appCheckToken);
+    publishedDownloadUrl = publishedDownload.downloadUrl;
+    const publishedResponse = await fetch(publishedDownloadUrl);
+    if (!publishedResponse.ok) {
+      throw new Error(`Published Creation download failed: ${publishedResponse.status}`);
+    }
+    const publishedPackage = Buffer.from(await publishedResponse.arrayBuffer());
+    if (crypto.createHash("sha256").update(publishedPackage).digest("hex") !== packageHash) {
+      throw new Error("Published Creation package differs from the final signed Collaboration save.");
+    }
+    const directInstall = await evaluate(clients[1].client, `(async () =>
+      window.electronAPI.installQueuedCreation({
+        creationId: ${JSON.stringify(publishedCreationId)},
+        downloadUrl: ${JSON.stringify(publishedDownloadUrl)},
+        title: ${JSON.stringify(title)},
+        previewUrl: ''
+      }))()`);
+    if (!directInstall?.success || !directInstall?.targetPath ||
+        !path.resolve(directInstall.targetPath).startsWith(
+          `${path.resolve(frontierRoot)}${path.sep}`,
+        ) || !fs.existsSync(directInstall.targetPath) ||
+        crypto.createHash("sha256").update(fs.readFileSync(directInstall.targetPath)).digest("hex") !==
+          crypto.createHash("sha256").update(fs.readFileSync(smokeSourceSave)).digest("hex")) {
+      throw new Error(`Member direct install failed: ${directInstall?.message || "unsafe target"}`);
+    }
+
+    await evaluate(clients[1].client,
+      `window.location.hash = ${JSON.stringify(`/profile/${accounts[1].uid}`)}; true`);
+    await waitFor(async () => evaluate(clients[1].client,
+      "[...document.querySelectorAll('button')].some((button) => " +
+      "button.textContent.trim() === 'Collaborated on')"),
+    "member Collaborated on profile tab");
+    await clickButton(clients[1].client, "Collaborated on");
+    await waitFor(async () => evaluate(clients[1].client,
+      `[...document.querySelectorAll('a')].some((link) => ` +
+      `link.getAttribute('href') === ${JSON.stringify(`#/creation/${publishedCreationId}`)})`),
+    "published Creation in member profile UI");
+    await evaluate(clients[1].client,
+      `window.location.hash = ${JSON.stringify(`/creation/${publishedCreationId}`)}; true`);
+    await waitFor(async () => evaluate(clients[1].client,
+      `document.body.innerText.includes(${JSON.stringify(accounts[0].username)}) && ` +
+      `document.body.innerText.includes(${JSON.stringify(accounts[1].username)})`),
+    "permanent contributor credits in Creation UI");
+
+    await expectFunctionFailure(
+      () => callFunction("removeCreationBackup", {
+        creationId: publishedCreationId,
+      }, accounts[0].idToken, appCheckToken),
+      /immutable|published collaboration|failed-precondition/i,
+      "published package mutation guard",
+    );
+    await expectFunctionFailure(
+      () => callFunction("removeCollaborationMember", {
+        collaborationId,
+        targetUserId: accounts[1].uid,
+      }, accounts[0].idToken, appCheckToken),
+      /published|voluntarily|failed-precondition/i,
+      "published membership quorum guard",
+    );
+    console.log("OK completion, publication, permanent credits, member download/direct install and mutation guards");
+
+    const ownerVote = await callFunction("voteRevokeCollaborationPublish", {
+      collaborationId,
+    }, accounts[0].idToken, appCheckToken);
+    if (ownerVote.revoked || ownerVote.voteCount !== 1 || ownerVote.requiredCount !== 2) {
+      throw new Error("First publication revoke vote did not preserve the Creation.");
+    }
+    const stillPublished = await getFirestoreDocument(
+      apiKey,
+      `creations/${publishedCreationId}`,
+      accounts[1].idToken,
+      appCheckToken,
+    );
+    if (!stillPublished) {
+      throw new Error("Published Creation disappeared before the unanimous vote.");
+    }
+    const memberVote = await callFunction("voteRevokeCollaborationPublish", {
+      collaborationId,
+    }, accounts[1].idToken, appCheckToken);
+    if (!memberVote.revoked || memberVote.voteCount !== 2 || memberVote.requiredCount !== 2) {
+      throw new Error("Unanimous publication revoke was not confirmed.");
+    }
+    await waitFor(async () => !(await getFirestoreDocument(
+      apiKey,
+      `creations/${publishedCreationId}`,
+      accounts[1].idToken,
+      appCheckToken,
+    )), "published Creation deletion", 90_000);
+    await waitFor(async () => {
+      const deletedPublishedObject = await fetch(publishedDownloadUrl);
+      return deletedPublishedObject.status === 404;
+    }, "published Creation R2 cleanup", 90_000);
+    const revokedCollaboration = await getFirestoreDocument(
+      apiKey,
+      `collaborations/${collaborationId}`,
+      accounts[0].idToken,
+      appCheckToken,
+    );
+    if (revokedCollaboration?.fields?.status?.stringValue !== "completed" ||
+        revokedCollaboration?.fields?.publish?.mapValue?.fields?.state?.stringValue !== "revoked") {
+      throw new Error("Collaboration did not retain its revoked publication state.");
+    }
+    publishedCreationId = null;
+    publishedDownloadUrl = null;
+    console.log("OK unanimous revoke, Creation deletion and published R2 cleanup");
+
     const deletion = await callFunction("deleteCollaboration", { collaborationId },
       accounts[0].idToken, appCheckToken);
     collaborationId = null;
@@ -815,8 +1079,26 @@ async function main() {
   } finally {
     appCheckToken = appCheckToken ||
       clients[0].network.appCheckToken || clients[1].network.appCheckToken;
+    if (collaborationId && publishedCreationId && appCheckToken) {
+      for (const account of accounts) {
+        if (!account.idToken) continue;
+        await callFunctionWithRetry("voteRevokeCollaborationPublish", {
+          collaborationId,
+        }, account.idToken, appCheckToken).catch((error) =>
+          console.error(`Cleanup warning (revoke vote): ${error.message}`));
+      }
+      if (publishedDownloadUrl) {
+        await waitFor(async () => {
+          const response = await fetch(publishedDownloadUrl);
+          return response.status === 404;
+        }, "cleanup of published smoke object", 90_000).catch((error) =>
+          console.error(`Cleanup warning (published Creation): ${error.message}`));
+      }
+      publishedCreationId = null;
+      publishedDownloadUrl = null;
+    }
     if (collaborationId && accounts[0].idToken && appCheckToken) {
-      await callFunction("deleteCollaboration", { collaborationId },
+      await callFunctionWithRetry("deleteCollaboration", { collaborationId },
         accounts[0].idToken, appCheckToken).catch((error) =>
         console.error(`Cleanup warning (collaboration): ${error.message}`));
     } else if (uploadId && accounts[0].idToken && appCheckToken) {
@@ -840,7 +1122,7 @@ async function main() {
           }
         }
         if (!account.idToken) continue;
-        const deleted = appCheckToken ? await callFunction("deleteOwnAccount", {},
+        const deleted = appCheckToken ? await callFunctionWithRetry("deleteOwnAccount", {},
           account.idToken, appCheckToken).then(() => true).catch(() => false) : false;
         if (!deleted) await deleteAuthFallback(apiKey, account.idToken);
         account.idToken = null;

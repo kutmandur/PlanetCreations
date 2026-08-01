@@ -18,6 +18,7 @@ const {
     inspectCreationPackage,
     inspectMediaPackage,
 } = require('./BackupFormat');
+const { responseToBuffer } = require('./ResponseBuffer');
 
 const API_BASE_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
@@ -153,7 +154,7 @@ async function downloadWorkshopPreview(previewUrl, destinationBasePath) {
         const extensionByMime = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
         const extension = extensionByMime[mimeType];
         if (!extension) throw new Error('The workshop preview is not a supported image.');
-        const buffer = await response.buffer();
+        const buffer = await responseToBuffer(response);
         if (!buffer.length || buffer.length > 8 * 1024 * 1024) throw new Error('The workshop preview is empty or too large.');
         const signatureMatches =
             (mimeType === 'image/jpeg' && buffer[0] === 0xff && buffer[1] === 0xd8) ||

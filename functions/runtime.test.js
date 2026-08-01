@@ -40,6 +40,7 @@ test("limits archive processing concurrency and scale", () => {
   for (const name of archiveFunctions) {
     const endpoint = exportedFunctions[name].__endpoint;
     assert.equal(endpoint.availableMemoryMb, 1024);
+    assert.equal(endpoint.cpu, 1);
     assert.equal(endpoint.concurrency, 2);
     assert.equal(endpoint.maxInstances, 5);
     assert.equal(endpoint.minInstances, 0);
@@ -58,7 +59,8 @@ test("keeps background triggers on gen-1 CPU behavior initially", () => {
 test("keeps request functions inside the regional Cloud Run CPU quota", () => {
   const endpoint = exportedFunctions.getBackupDownloadUrl.__endpoint;
 
-  assert.equal(endpoint.concurrency, 40);
+  assert.equal(endpoint.cpu, "gcf_gen1");
+  assert.equal(endpoint.concurrency, 1);
   assert.equal(endpoint.maxInstances, 10);
   assert.equal(endpoint.minInstances, 0);
 });
