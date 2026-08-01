@@ -10,13 +10,16 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
     function isAdmin() {
-      return isLoggedIn() && request.auth.token.role == 'admin';
+      return isLoggedIn() && request.auth.token.get('role', '') == 'admin';
     }
     function isModerator() {
-      return isLoggedIn() && (request.auth.token.role == 'moderator' || request.auth.token.role == 'admin');
+      return isLoggedIn() && (
+        request.auth.token.get('role', '') == 'moderator' ||
+        request.auth.token.get('role', '') == 'admin'
+      );
     }
     function isInfluencer() {
-      return isLoggedIn() && request.auth.token.role == 'influencer';
+      return isLoggedIn() && request.auth.token.get('role', '') == 'influencer';
     }
     function communityMemberCan(communityId, permission) {
       let memberPath = /databases/$(database)/documents/communitys/$(communityId)/members/$(request.auth.uid);
@@ -559,8 +562,9 @@ service cloud.firestore {
       return isLoggedIn() && exists(memberPath);
     }
     function isCollaborationOwner(collaborationId) {
-      let memberPath = /databases/$(database)/documents/collaborations/$(collaborationId)/members/$(request.auth.uid);
-      return isLoggedIn() && exists(memberPath) && get(memberPath).data.role == 'owner';
+      let collaborationPath = /databases/$(database)/documents/collaborations/$(collaborationId);
+      return isLoggedIn() &&
+        get(collaborationPath).data.get('ownerId', '') == request.auth.uid;
     }
     // Collaboration owner OR site moderator/admin
     function isCollaborationOwnerOrMod(collaborationId) {
@@ -588,18 +592,23 @@ service cloud.firestore {
       // Nur über die createCollaboration Cloud Function (Admin-SDK umgeht Rules):
       // verhindert gefälschte ownerId/memberIds und ungeprüfte Docs.
       allow create: if false;
-      allow update: if isCollaborationOwnerOrMod(collaborationId) ||
-        // Mitglieder dürfen bei memberIds NUR sich selbst hinzufügen (Beitritt/Invite)
-        // oder entfernen (Verlassen) — nie andere Mitglieder ändern/entfernen.
-        (isLoggedIn() &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) && (
-           (request.auth.uid in request.resource.data.memberIds &&
-            !(request.auth.uid in resource.data.memberIds) &&
-            request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1) ||
-           (!(request.auth.uid in request.resource.data.memberIds) &&
-            request.auth.uid in resource.data.memberIds &&
-            request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1)
-         ));
+      // Settings, build locks and version pointers are written by callable
+      // Functions. Direct owner/mod updates remain limited to the two legacy
+      // client operations: member removal and invite-code rotation.
+      allow update: if (
+        isCollaborationOwnerOrMod(collaborationId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['memberIds', 'inviteCode', 'updatedAt'])
+      ) || (
+        // A non-owner member may only remove their own uid while leaving. New
+        // memberships are always created by a callable Function, otherwise an
+        // outsider could add themselves to memberIds and read the private doc.
+        isCollaborationMember(collaborationId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
+        !(request.auth.uid in request.resource.data.memberIds) &&
+        request.auth.uid in resource.data.memberIds &&
+        request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+      );
       // Deletion is server-only so R2 objects are removed before metadata.
       allow delete: if false;
 
@@ -610,9 +619,17 @@ service cloud.firestore {
         // Client-Create ist verboten — sonst könnte sich jeder Eingeloggte selbst
         // mit role:'owner' in eine beliebige Collaboration schreiben.
         allow create: if false;
-        allow update: if isCollaborationOwnerOrMod(collaborationId);
-        // Allow mods to delete members even if no owner exists (orphaned collaborations)
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isOwner(userId) || isModerator();
+        allow update: if isCollaborationOwnerOrMod(collaborationId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']) &&
+          request.resource.data.get('role', '') in ['editor', 'viewer'];
+        // Owners may remove other members, non-owner members may leave, and
+        // site moderators may also repair orphaned collaborations. The owner
+        // cannot delete their own membership and orphan the project.
+        allow delete: if isModerator() ||
+          (isCollaborationOwner(collaborationId) && request.auth.uid != userId) ||
+          (isOwner(userId) &&
+            get(/databases/$(database)/documents/collaborations/$(collaborationId))
+              .data.get('ownerId', '') != userId);
       }
 
       match /applications/{applicantId} {

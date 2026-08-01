@@ -92,8 +92,9 @@ No production audit currently reports a critical finding.
 
 1. Configure the `VITE_*` secrets described above.
 2. Run `npm ci`, `npm test`, and `npm run build` with Node 24.18.
-3. Run `npm ci`, `npm run lint`, and `npm test` in `functions` with Node 22.
-4. Run `npm ci` and `npm test` in `discord-bot` with Node 24.18.
-5. Complete the macOS certificate setup in `docs/MACOS_SIGNING.md`.
-6. Create a test tag and verify all three GitHub Actions matrix jobs before
+3. Run `npm run test:firestore-rules` with the Firebase CLI and Java 21.
+4. Run `npm ci`, `npm run lint`, and `npm test` in `functions` with Node 22.
+5. Run `npm ci` and `npm test` in `discord-bot` with Node 24.18.
+6. Complete the macOS certificate setup in `docs/MACOS_SIGNING.md`.
+7. Create a test tag and verify all three GitHub Actions matrix jobs before
    publishing the draft release.

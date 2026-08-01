@@ -34,7 +34,7 @@ file is the current hand-off source.
 
 | Phase | Status | Implemented | Still required |
 | --- | --- | --- | --- |
-| P0 secure base | Deployed in v1.0.26 | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; rules exercised against the local emulator | Add a dedicated Firestore Rules unit-test suite |
+| P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
 | P1 coordination | Released in v1.0.26; follow-up cleanup remains | Create/edit wizard, invite/password/application gates, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Replace the legacy invite subcollection with inbox items; finish membership/role cleanup; run installed-client post-release smoke tests |
 | P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Run installed-client two-account production smoke tests |
 | P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
@@ -276,15 +276,20 @@ Node.js 24. These should be migrated before their provider deadlines.
   signed download URL returned HTTP 404 after deletion, independently confirming that its R2 object
   was gone.
 
-- React/Jest: 20 suites, 111 tests passed, including the combined newest-first/starting gallery,
+- React/Vitest: 22 suites, 116 tests passed, including the combined newest-first/starting gallery,
   stale-save warning,
   later author-edit coverage, local draft persistence, end-session draft hand-off and game-start
   collaboration version-update selection/installation plus targeted availability refresh events.
-- Cloud Functions Node tests: 25 passed, including public-view allowlists, strict member-only
+- Cloud Functions Node tests: 35 passed, including public-view allowlists, strict member-only
   downloads, build-release notification fan-out policy, pending-save ownership, missing-save warnings
   and late-version promotion safeguards plus exact collaboration-prefix cleanup validation.
 - Electron module Node tests: 14 passed, including newest-save selection, two-minute staleness and the
   loopback-only isolated dev-server resolver.
+- Firestore Rules emulator tests: 10 passed. The suite proves member/outsider read boundaries,
+  server-only collaboration/file/version/upload metadata, blocked self-promotion and forged
+  membership, safe role changes, atomic member leave and owner-orphan protection. Building the suite
+  also closed direct outsider `memberIds` self-add, owner version-pointer writes and unrestricted
+  member role/consent updates.
 - Functions ESLint: passed.
 - Electron main/preload/module syntax checks: passed.
 - React production build: compiled successfully.
@@ -324,7 +329,8 @@ Node.js 24. These should be migrated before their provider deadlines.
     suggests the previous target and creates a pre-restore backup after confirmation.
 12. Repeat the already-green in-app inbox/background-refresh flow with real system push enabled and
     confirm one OS notification is delivered.
-13. Add Firestore Rules emulator tests for privilege escalation and server-only version metadata.
+13. Completed and deployed: Firestore Rules emulator tests cover privilege escalation and server-only
+    version metadata (10/10 passing); the accompanying hardened rules are live in production.
 14. Finish the P1 inbox/membership cleanup.
 15. Build P3 publish/profile-credit/revoke.
 
