@@ -35,7 +35,7 @@ file is the current hand-off source.
 | Phase | Status | Implemented | Still required |
 | --- | --- | --- | --- |
 | P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
-| P1 coordination | Released in v1.0.26; cleanup complete locally and pending deployment | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Deploy the invitation/membership cleanup; run installed-client post-release smoke tests |
+| P1 coordination | Released in v1.0.26; cleanup completed and deployed | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI | Run installed-client post-release smoke tests |
 | P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI | Run installed-client two-account production smoke tests |
 | P3 publish | Consent foundation only | Standing publish consent is recorded on membership | Complete/publish Functions, co-authored creation metadata, profile credit query/UI, unanimous revoke |
 | P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Monitor production and complete the remaining P1/P3 follow-ups |
@@ -222,6 +222,16 @@ The coordinated v1.0.26 release completed on 2026-07-28:
 The later v1.0.27 runtime/security modernization moved all Functions to second-generation Node.js 22,
 removed the legacy `functions.config()` dependency and updated the release workflow/runtime stack.
 
+The P1 invitation and membership cleanup was deployed on 2026-08-01:
+
+- Twelve collaboration invitation, membership and account-cleanup Functions were deployed in four
+  batches of three and verified `ACTIVE` on second-generation Node.js 22.
+- The 55-file production build was uploaded to the IONOS web root with the stored FileZilla SFTP
+  account after matching its Ed25519 host key. Every remote file passed SHA-256 verification and
+  `index.html` was uploaded last; cache-busted public index and main-bundle hashes also matched.
+- Firestore Rules were released, the two obsolete `collaborationInvites`/`invitations` compound
+  indexes were removed and the replaced `acceptCollaborationInvitation` Function was deleted.
+
 ## Verification completed
 
 ### Local multi-instance Firebase E2E (2026-07-27)
@@ -349,8 +359,9 @@ removed the legacy `functions.config()` dependency and updated the release workf
     confirm one OS notification is delivered.
 13. Completed and deployed: Firestore Rules emulator tests cover privilege escalation and server-only
     version metadata; the expanded suite is now 11/11 passing locally.
-14. Completed locally: P1 invitation inbox and membership/role cleanup. Deploy its Functions, rules,
-    index removals and web client together before testing the new invitation lifecycle in production.
+14. Completed and deployed: P1 invitation inbox and membership/role cleanup, including its Functions,
+    rules, index removals, IONOS web client and obsolete callable removal. Test the new invitation
+    lifecycle through two installed production clients.
 15. Build P3 publish/profile-credit/revoke.
 
 ## Working-tree note
