@@ -37,8 +37,8 @@ file is the current hand-off source.
 | P0 secure base | Completed and deployed | Privileged create/join writes moved to Functions; collaboration/member/file/version/upload writes hardened; exact storage-key validation; dedicated Firestore Rules emulator suite covers privilege escalation and server-only metadata | Keep the suite in the release gate |
 | P1 coordination | Released in v1.0.26; cleanup completed and deployed | Create/edit wizard, invite/password/application gates, server-authoritative invitation grants with standard inbox delivery, callable-only membership/role changes, join consent, build lock, transactional lock acquisition, PC2/PZ overlay controls, manual log-off, game-close auto-logoff, offline retry marker, responsive collaboration hub/detail/member/join UI; installed Windows production gate covers invitation and membership lifecycle | Manually repeat overlay/changelog/system-push scenarios through two signed-in installed clients and on macOS |
 | P2 versioned files | Released in v1.0.26 | Desktop file picker; signed package preparation/upload; transactional finalize; sequential versions; contributor retention 3/2; real R2 deletion; signed download URL; desktop save extraction; responsive version-history UI; installed Windows production gate covers a signed copied PC2 save, member download and deletion | Manually cover Planet Zoo plus multi-version/retention behavior through installed clients |
-| P3 publish | Locally complete; deployment pending | Standing/legacy consent, completion freeze, signed-save publication, permanent contributor metadata, Creation/Profile credit UI and unanimous current-member revoke are implemented and locally green | Deploy Functions/rules/web, then run the authenticated production publish/download/revoke cleanup gate |
-| P4 ship | Completed for v1.0.26 | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published | Deploy and production-test P3; continue the remaining manual P1 cross-platform checks |
+| P3 publish | Deployed; authenticated production smoke pending | Standing/legacy consent, completion freeze, signed-save publication, permanent contributor metadata, Creation/Profile credit UI and unanimous current-member revoke are live | Run the authenticated production publish/download/revoke cleanup gate |
+| P4 ship | Completed for v1.0.26; P3 web/backend deployed | Firebase Functions/rules/indexes deployed; IONOS UI live; Windows/macOS/Linux release published; P3 uses the existing client download/install path | Production-test P3; continue the remaining manual P1 cross-platform checks |
 
 ## Work completed in the current continuation
 
@@ -261,6 +261,19 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
   account-cleanup path still uses. Both were restored and deployed; a Functions regression test now
   prevents removing them while those queries exist.
 
+The P3 publication workflow was deployed on 2026-08-01:
+
+- Commit `d6d5c7c` was pushed to `origin/main`; Firestore Rules compiled and released successfully.
+- Eighteen affected/new Functions were deployed in six batches of three and verified `ACTIVE` on
+  second-generation Node.js 22, including the final completion, publication and unanimous revoke
+  callables.
+- The 55-file production build was uploaded through the stored FileZilla SFTP account after its
+  Ed25519 key matched IONOS' published fingerprint. Every remote file passed SHA-256 verification
+  and `index.html` was uploaded last.
+- Cache-busted public HTTPS requests returned byte-identical `index.html`, main JavaScript and main
+  CSS. The authenticated owner/member publish, download/direct-install and revoke cleanup gate is
+  intentionally still outstanding.
+
 ## Verification completed
 
 ### Installed Windows production smoke (2026-08-01)
@@ -422,10 +435,10 @@ The P1 invitation and membership cleanup was deployed on 2026-08-01:
     rules, corrected legacy account-cleanup indexes, IONOS web client and obsolete callable removal.
     The installed Windows production gate verified the invitation lifecycle and exact access cleanup;
     the manual signed-in UI/system-notification pass remains under items 1 and 12.
-15. P3 publish/profile-credit/revoke is implemented and locally green. Deploy its four callables,
-    Creation cleanup trigger, rules and web UI, then run one authenticated owner/member production flow:
-    consent, complete, publish, member download/direct install, both profile credits, unanimous revoke,
-    R2 Creation-package cleanup and final Collaboration deletion.
+15. P3 publish/profile-credit/revoke, its Creation cleanup trigger, rules and web UI are deployed.
+    Run one authenticated owner/member production flow: consent, complete, publish, member
+    download/direct install, both profile credits, unanimous revoke, R2 Creation-package cleanup and
+    final Collaboration deletion.
 
 ## Working-tree note
 
