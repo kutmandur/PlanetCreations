@@ -3,6 +3,7 @@
 
 # Environment variables - VERY IMPORTANT
 .env
+.env.stream-bots
 
 # Logs
 *.log

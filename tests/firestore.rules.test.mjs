@@ -552,6 +552,43 @@ describe("YouTube video index Firestore rules", { concurrency: false }, () => {
   });
 });
 
+describe("live stream session Firestore rules", { concurrency: false }, () => {
+  test("session state remains server-only even for its owner and admins", async () => {
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "liveSessions", OWNER_ID), {
+        uid: OWNER_ID,
+        sessionId: "server-session",
+        status: "active",
+        creationId: "owned-creation",
+      });
+      await setDoc(doc(context.firestore(), "liveChannelClaims", "channel-claim"), {
+        uid: OWNER_ID,
+        sessionId: "server-session",
+        platform: "twitch",
+      });
+    });
+
+    for (const clientDb of [
+      authenticatedFirestore(OWNER_ID),
+      authenticatedFirestore(ADMIN_ID, {role: "admin"}),
+    ]) {
+      await assertFails(getDoc(doc(clientDb, "liveSessions", OWNER_ID)));
+      await assertFails(setDoc(doc(clientDb, "liveSessions", OWNER_ID), {
+        uid: OWNER_ID,
+        sessionId: "forged-session",
+        status: "active",
+        creationId: "foreign-creation",
+      }));
+      await assertFails(getDoc(doc(clientDb, "liveChannelClaims", "channel-claim")));
+      await assertFails(setDoc(doc(clientDb, "liveChannelClaims", "channel-claim"), {
+        uid: OWNER_ID,
+        sessionId: "forged-session",
+        platform: "twitch",
+      }));
+    }
+  });
+});
+
 describe("scalable map-index Firestore rules", { concurrency: false }, () => {
   const publicCollections = [
     ["searchIndexState", "planet-coaster-2"],

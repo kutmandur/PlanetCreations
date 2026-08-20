@@ -1,5 +1,6 @@
 import {
     LIVE_STREAM_MAX_AGE_MS,
+    getActiveLiveStreams,
     isValidStreamUrl,
     isLiveStreamActive,
 } from './liveStream';
@@ -49,5 +50,17 @@ describe('isLiveStreamActive', () => {
 
     it('does not require url (search index entries carry none)', () => {
         expect(isLiveStreamActive({ platform: 'youtube', expiresAt: ts(NOW + 1000) }, NOW)).toBe(true);
+    });
+
+    it('keeps a simulcast creation live while either platform is active', () => {
+        const liveStream = {
+            platform: 'twitch',
+            streams: {
+                twitch: {url: 'https://twitch.tv/builder', expiresAt: ts(NOW - 1)},
+                youtube: {url: 'https://youtu.be/abcdefghijk', expiresAt: ts(NOW + 1000)},
+            },
+        };
+        expect(isLiveStreamActive(liveStream, NOW)).toBe(true);
+        expect(getActiveLiveStreams(liveStream, NOW).map((stream) => stream.platform)).toEqual(['youtube']);
     });
 });

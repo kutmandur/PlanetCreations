@@ -12,7 +12,7 @@ import CommunityInfoCard from '../cards/CommunityInfoCard';
 import CreationSharingQrCode from '../ui/CreationSharingQrCode';
 import GoLiveModal from '../modals/GoLiveModal';
 import { recordView, recordVote } from '../../utils/interestTracker';
-import { LIVE_PLATFORMS, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
+import { LIVE_PLATFORMS, getActiveLiveStreams, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
 
@@ -226,7 +226,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
                 const videoCount = creationData.videoUrls?.length || 0;
                 const imageCount = creationData.imageUrls?.length || 0;
-                const hasActiveLiveStream = isLiveStreamActive(creationData.liveStream) && creationData.liveStream?.url;
+                const hasActiveLiveStream = getActiveLiveStreams(creationData.liveStream)
+                    .some((stream) => stream.url);
                 // Galerie-Reihenfolge: Videos → Live → Bilder. Normal startet
                 // sie beim ersten Bild, während LIVE gezielt beim Stream startet.
                 const initialIndex = hasActiveLiveStream ? videoCount : (imageCount > 0 ? videoCount : 0);
@@ -418,14 +419,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const color = getGameColor(creation.game);
     const liveStream = creation.liveStream;
     const liveIsActive = isLiveStreamActive(liveStream);
-    const liveMedia = liveIsActive && liveStream?.url ? {
+    const activeLiveStreams = getActiveLiveStreams(liveStream).filter((stream) => stream.url);
+    const liveMedia = activeLiveStreams.map((stream) => ({
         type: 'live',
-        url: liveStream.url,
-        platform: liveStream.platform,
-    } : null;
+        url: stream.url,
+        platform: stream.platform,
+    }));
     const mediaItems = [
         ...(creation.videoUrls || []).map((url) => ({ type: 'video', url })),
-        ...(liveMedia ? [liveMedia] : []),
+        ...liveMedia,
         ...(creation.imageUrls || []).map((url) => ({ type: 'image', url })),
     ];
     const activeMedia = mediaItems[activeMediaIndex];
@@ -521,7 +523,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     };
 
     // --- Streamer Tools (Owner) + Live-Anzeige (alle Besucher) ---
-    const livePlatformLabel = LIVE_PLATFORMS[liveStream?.platform]?.label || 'stream';
+    const livePlatformLabel = activeLiveStreams
+        .map((stream) => LIVE_PLATFORMS[stream.platform]?.label)
+        .filter(Boolean)
+        .join(' & ') || 'stream';
     const qrActiveForThis = overlayQrEntry?.creationId === id;
     const obsConnected = Boolean(obsStatus?.connected);
     const obsStreaming = Boolean(obsStatus?.streaming);
@@ -613,14 +618,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         LIVE
                     </span>
                     <span className="text-sm sm:text-base">{displayUsername} is building this live on {livePlatformLabel}</span>
-                    {liveStream?.url && (
+                    {activeLiveStreams.map((stream) => (
                         <button
-                            onClick={() => setExternalLink(liveStream.url)}
+                            key={stream.platform}
+                            onClick={() => setExternalLink(stream.url)}
                             className="bg-white text-red-600 font-bold px-4 py-1.5 rounded-full hover:bg-red-50 transition-colors text-sm"
                         >
-                            Watch stream
+                            Watch on {LIVE_PLATFORMS[stream.platform]?.label || stream.platform}
                         </button>
-                    )}
+                    ))}
                 </div>
             )}
 
@@ -629,7 +635,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                         <div className="bg-black flex justify-center items-center aspect-video relative group">
                             {activeMedia?.type === 'live' && getLiveEmbedUrl(activeMedia) ? (
-                                <iframe src={getLiveEmbedUrl(activeMedia)} title={`${livePlatformLabel} live stream`} frameBorder="0" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className="w-full h-full"></iframe>
+                                <iframe src={getLiveEmbedUrl(activeMedia)} title={`${LIVE_PLATFORMS[activeMedia.platform]?.label || 'Stream'} live stream`} frameBorder="0" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className="w-full h-full"></iframe>
                             ) : activeMedia && isYoutube(activeMedia.url) ? (
                                 <iframe src={getYoutubeEmbedUrl(activeMedia.url)} title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="w-full h-full"></iframe>
                             ) : (
@@ -880,7 +886,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                         <div>
                                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 text-center">
                                                 {liveIsActive
-                                                    ? `Live on ${livePlatformLabel}${formatTime(liveStream.startedAt) ? ` since ${formatTime(liveStream.startedAt)}` : ''} — ends automatically with your stream.`
+                                                    ? `Live on ${livePlatformLabel}${formatTime(activeLiveStreams[0]?.startedAt) ? ` since ${formatTime(activeLiveStreams[0].startedAt)}` : ''} — ends automatically with your stream.`
                                                     : 'The last live session expired without being ended.'}
                                             </p>
                                             <button

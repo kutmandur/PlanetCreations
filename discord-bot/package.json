@@ -9,7 +9,11 @@
   "scripts": {
     "start": "node bot.js",
     "deploy": "node deploy-commands.js",
-    "test": "node --test syntax.test.js"
+    "setup:twitch-bot": "node setupTwitchBotOAuth.js",
+    "setup:youtube-bot": "node setupYouTubeBotOAuth.js",
+    "sync:stream-bot-credentials": "node syncStreamBotCredentials.js",
+    "test:twitch-chat": "node runTwitchChatTest.js",
+    "test": "node --test syntax.test.js tasks/streamChatBots.test.js"
   },
   "dependencies": {
     "discord.js": "^14.27.0",

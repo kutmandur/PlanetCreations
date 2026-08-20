@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clearAllNotifications, markAllRead } from '../../firebase/database';
+import GeneralOverlayNotificationSettings from './GeneralOverlayNotificationSettings';
 
-const NotificationDropdown = ({ user, notifications, close }) => {
+const NotificationDropdown = ({ user, notifications, close, isElectron = false }) => {
     const navigate = useNavigate();
 
     // Opening the dropdown marks everything read (1 write; skipped if already read).
@@ -32,14 +33,15 @@ const NotificationDropdown = ({ user, notifications, close }) => {
 
     if (notifications.length === 0) {
         return (
-            <div className="origin-top-right absolute right-0 mt-2 w-80 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-30 p-4">
-                <p className="text-center text-gray-500">You have no notifications.</p>
+            <div className="origin-top-right absolute right-0 mt-2 w-96 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 focus:outline-none z-30">
+                <p className="text-center text-gray-500 dark:text-gray-400 p-4">You have no notifications.</p>
+                {isElectron && <GeneralOverlayNotificationSettings compact />}
             </div>
         );
     }
 
     return (
-        <div className="origin-top-right absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-30">
+        <div className="origin-top-right absolute right-0 mt-2 w-96 max-h-[34rem] overflow-y-auto rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 focus:outline-none z-30">
             <div className="py-1">
                 <div className="px-4 py-2 flex justify-between items-center border-b">
                     <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
@@ -71,6 +73,7 @@ const NotificationDropdown = ({ user, notifications, close }) => {
                         </p>
                     </button>
                 ))}
+                {isElectron && <GeneralOverlayNotificationSettings compact />}
             </div>
         </div>
     );

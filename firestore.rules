@@ -534,6 +534,17 @@ service cloud.firestore {
     match /oauthStates/{stateHash} {
       allow read, write: if false;
     }
+    // Stream sessions contain server-verified platform state and drive atomic
+    // creation switches. Desktop devices receive a compact projection through
+    // their existing protected client queue; no client may forge session state.
+    match /liveSessions/{userId} {
+      allow read, write: if false;
+    }
+    // Atomic, server-owned channel locks prevent two accounts or modified
+    // clients from attaching PlanetCreations to the same live channel.
+    match /liveChannelClaims/{claimId} {
+      allow read, write: if false;
+    }
     match /privateOAuthCredentials/{userId} {
       allow read, write: if false;
     }

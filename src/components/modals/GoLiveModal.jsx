@@ -6,6 +6,7 @@ import { db } from '../../firebase/config';
 import { ICONS, getYoutubeId } from '../../utils/helpers';
 import { LIVE_PLATFORMS, isValidStreamUrl, setLiveSession } from '../../utils/liveStream';
 import { setOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
+import { setStreamSession } from '../../utils/streamSession';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 
@@ -30,9 +31,22 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
     );
     const [url, setUrl] = useState(userProfile?.[platform] || '');
     const [urlDirty, setUrlDirty] = useState(false);
+    const secondaryPlatform = platform === 'twitch' ? 'youtube' : 'twitch';
+    const [dualStream, setDualStream] = useState(false);
+    const [secondaryUrl, setSecondaryUrl] = useState(userProfile?.[secondaryPlatform] || '');
+    const [secondaryUrlDirty, setSecondaryUrlDirty] = useState(false);
     const [urlError, setUrlError] = useState('');
     const [alsoShowQr, setAlsoShowQr] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [clientId, setClientId] = useState(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        window.electronAPI?.getClientIdentity?.().then((identity) => {
+            if (!cancelled) setClientId(identity?.clientId || null);
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
 
     // Eigene Creations für den Picker (nur Query auf userId — braucht keinen
     // Composite-Index; Sortierung client-seitig nach letzter Änderung).
@@ -44,6 +58,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
             const snapshot = await getDocs(query(collection(db, 'creations'), where('userId', '==', user.uid)));
             return snapshot.docs
                 .map((d) => ({ id: d.id, ...d.data() }))
+                .filter((creation) => !creation.sourceCollaborationId)
                 .sort((a, b) => ((b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0)));
         },
     });
@@ -63,6 +78,8 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
         setPlatform(nextPlatform);
         setUrlError('');
         if (!urlDirty) setUrl(userProfile?.[nextPlatform] || '');
+        const nextSecondary = nextPlatform === 'twitch' ? 'youtube' : 'twitch';
+        if (!secondaryUrlDirty) setSecondaryUrl(userProfile?.[nextSecondary] || '');
     };
 
     const handleSubmit = async () => {
@@ -79,13 +96,41 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
             setUrlError('For YouTube, please paste the URL of your live video (watch?v=... or youtu.be/...), not just your channel.');
             return;
         }
+        const trimmedSecondaryUrl = secondaryUrl.trim();
+        if (dualStream && !isValidStreamUrl(secondaryPlatform, trimmedSecondaryUrl)) {
+            setUrlError(`Please enter a valid https ${LIVE_PLATFORMS[secondaryPlatform].label} URL for the second output.`);
+            return;
+        }
+        if (dualStream && secondaryPlatform === 'youtube' && !getYoutubeId(trimmedSecondaryUrl)) {
+            setUrlError('For the YouTube output, please paste the URL of the live video, not just the channel.');
+            return;
+        }
         setUrlError('');
         setIsSubmitting(true);
         try {
             const goLive = httpsCallable(getFunctions(), 'goLive');
-            await goLive({ creationId: selectedCreationId, platform, url: trimmedUrl });
+            const result = await goLive({
+                creationId: selectedCreationId,
+                platform,
+                url: trimmedUrl,
+                primaryPlatform: platform,
+                streams: [
+                    { platform, url: trimmedUrl },
+                    ...(dualStream ? [{ platform: secondaryPlatform, url: trimmedSecondaryUrl }] : []),
+                ],
+                clientId,
+                showQr: alsoShowQr,
+                experimentalAuto: false,
+                selectionMode: 'manual',
+            });
             const creation = creations.find((c) => c.id === selectedCreationId);
-            setLiveSession({ creationId: selectedCreationId, platform });
+            setLiveSession({
+                creationId: selectedCreationId,
+                platform,
+                platforms: Object.keys(result.data?.session?.streams || {[platform]: true}),
+                sessionId: result.data?.session?.sessionId || null,
+            });
+            setStreamSession(result.data?.session || null);
             if (isElectron && alsoShowQr) {
                 setOverlayQr({
                     creationId: selectedCreationId,
@@ -99,7 +144,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
             onClose();
         } catch (error) {
             if (error?.code === 'functions/failed-precondition') {
-                setUrlError("We couldn't find a live stream on this channel — start streaming first, then try again.");
+                setUrlError(error.message || "We couldn't find every selected live output — start streaming first, then try again.");
             } else {
                 setUrlError(`Going live failed: ${error.message}`);
             }
@@ -110,7 +155,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2 flex items-center gap-2">
                     <span className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
@@ -141,7 +186,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
                 )}
 
                 <label className="block text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">
-                    Platform{detectedPlatform ? ' (detected from OBS)' : ''}
+                    Primary platform{detectedPlatform ? ' (detected from OBS)' : ''}
                 </label>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                     {Object.entries(LIVE_PLATFORMS).map(([key, info]) => (
@@ -168,6 +213,32 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
                     className="w-full p-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-400"
                 />
                 {urlError && <p className="text-sm text-red-500 mt-1">{urlError}</p>}
+
+                <label className="flex items-start gap-3 mt-4 rounded-lg border dark:border-gray-600 p-3 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={dualStream}
+                        onChange={(e) => { setDualStream(e.target.checked); setUrlError(''); }}
+                        className="w-4 h-4 mt-0.5"
+                    />
+                    <span>
+                        <strong className="block">Dual stream</strong>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Link the same creation on Twitch and YouTube.</span>
+                    </span>
+                </label>
+
+                {dualStream && (
+                    <label className="block text-sm font-bold text-gray-600 dark:text-gray-300 mt-4">
+                        {LIVE_PLATFORMS[secondaryPlatform].label} stream URL
+                        <input
+                            type="url"
+                            value={secondaryUrl}
+                            onChange={(e) => { setSecondaryUrl(e.target.value); setSecondaryUrlDirty(true); setUrlError(''); }}
+                            placeholder={LIVE_PLATFORMS[secondaryPlatform].placeholder}
+                            className="mt-1 w-full p-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-400"
+                        />
+                    </label>
+                )}
 
                 {isElectron && (
                     <label className="flex items-center gap-2 mt-4 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
