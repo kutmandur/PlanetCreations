@@ -119,7 +119,7 @@ const StreamingSettings = ({ setModalMessage }) => {
         try {
             await window.electronAPI.setOverlayForced?.(value);
         } catch (error) {
-            setModalMessage(`Could not toggle the streaming overlay: ${error.message}`);
+            setModalMessage(`Could not toggle the In-Game Overlay: ${error.message}`);
         }
     };
 
@@ -313,10 +313,10 @@ const StreamingSettings = ({ setModalMessage }) => {
 
             <label className="flex items-start justify-between gap-6 cursor-pointer mt-6 pt-6 border-t">
                 <span>
-                    <span className="block text-lg font-semibold text-gray-800">Show streaming overlay</span>
+                    <span className="block text-lg font-semibold text-gray-800">Keep In-Game Overlay visible</span>
                     <span className="block text-gray-600 mt-1">
-                        Keeps the game overlay visible even when Planet Coaster 2 is not detected — useful for capturing
-                        the creation QR code in your streaming software, and the only way to show the overlay on macOS and Linux.
+                        Keeps your PlanetCreations gateway available even when Planet Coaster 2 is not detected. This also
+                        enables manual access on macOS and Linux and optional QR capture in streaming software.
                     </span>
                 </span>
                 <span className="flex items-center gap-3 shrink-0 mt-1">
@@ -326,7 +326,7 @@ const StreamingSettings = ({ setModalMessage }) => {
                         checked={overlayForced}
                         onChange={handleOverlayForcedChange}
                         className="h-5 w-5 accent-blue-600"
-                        aria-label="Show the streaming overlay regardless of game detection"
+                        aria-label="Keep the In-Game Overlay visible regardless of game detection"
                     />
                 </span>
             </label>

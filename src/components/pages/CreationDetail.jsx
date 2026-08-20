@@ -828,10 +828,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                                 : `text-white ${color.bg} ${color.hoverBg}`}`}
                                         >
                                             <Icon path={ICONS.share} className="w-5 h-5" />
-                                            {qrActiveForThis ? 'Stop showing QR in overlay' : 'Show QR in game overlay'}
+                                            {qrActiveForThis ? 'Stop showing QR in In-Game Overlay' : 'Show QR in In-Game Overlay'}
                                         </button>
                                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
-                                            Replaces the overlay logo with this creation's QR code so viewers can scan it on stream. Tip: hold and scroll on the overlay icon to enlarge it.
+                                            Replaces the In-Game Overlay logo with this Creation's QR code so viewers can scan it on stream. Tip: hold and scroll on the overlay icon to enlarge it.
                                         </p>
                                         {overlayQrEntry && !qrActiveForThis && (
                                             <p className="text-xs text-orange-500 mt-1 text-center">
@@ -876,7 +876,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                             </button>
                                         </div>
                                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
-                                            Sends this creation's QR to the game overlay of {compatibleClients.length > 1 ? 'the selected' : 'your'} desktop client.
+                                            Sends this Creation's QR to the In-Game Overlay of {compatibleClients.length > 1 ? 'the selected' : 'your'} desktop client.
                                         </p>
                                     </div>
                                 )}

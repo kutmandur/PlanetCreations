@@ -155,7 +155,7 @@ export const GameOverlayChrome = ({
         >
             <span className="flex items-center gap-2 font-semibold text-sm">
                 <img src="logo.png" alt="" className="w-6 h-6 rounded-full" draggable="false" />
-                In-game Overlay
+                In-Game Overlay
             </span>
             <CollaborationOverlayControls
                 user={user}

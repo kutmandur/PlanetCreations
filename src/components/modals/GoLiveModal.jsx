@@ -248,7 +248,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
                             onChange={(e) => setAlsoShowQr(e.target.checked)}
                             className="w-4 h-4"
                         />
-                        Also show this creation's QR code in the game overlay
+                        Also show this Creation's QR code in the In-Game Overlay
                     </label>
                 )}
 

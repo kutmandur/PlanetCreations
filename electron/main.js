@@ -183,7 +183,7 @@ function writeOverlaySettings(patch) {
     try {
         fs.writeFileSync(getOverlaySettingsPath(), JSON.stringify({ ...current, ...patch }, null, 2));
     } catch (error) {
-        log.warn('Could not save game overlay settings:', error);
+        log.warn('Could not save In-Game Overlay settings:', error);
     }
 }
 
@@ -606,7 +606,7 @@ function buildTrayMenu() {
         { type: 'separator' },
         { label: 'Open', click: showMainWindow },
         {
-            label: 'Show streaming overlay',
+            label: 'Keep In-Game Overlay visible',
             type: 'checkbox',
             checked: overlayForcedVisible,
             click: (item) => setOverlayForcedVisible(item.checked),

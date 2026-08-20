@@ -403,7 +403,7 @@ const StreamManagement = ({
                                     <span className="text-xs text-gray-600 dark:text-gray-300">Opt-in only. Uses the title, creation names, tags and type. Ambiguous matches stay in the picker.</span>
                                 </span>
                             </label>
-                            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showQr} onChange={(event) => setShowQr(event.target.checked)} /> Show the creation QR in the overlay</label>
+                            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showQr} onChange={(event) => setShowQr(event.target.checked)} /> Show the Creation QR in the In-Game Overlay</label>
                             <button type="button" disabled={working || !selectedCreationId} onClick={() => beginLive(selectedCreationId, 'manual')} className="w-full rounded-xl bg-red-600 py-3 font-bold text-white hover:bg-red-700 disabled:opacity-50">
                                 {working ? 'Linking…' : 'Go Live with selected creation'}
                             </button>

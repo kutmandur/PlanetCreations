@@ -712,7 +712,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                             </p>
                             <ul className="space-y-1">
                                 <li>• You get an invite code to share; joining is gated by your Access choice.</li>
-                                <li>• Only one person builds at a time — log on/off in the game overlay so nobody overwrites each other.</li>
+                                <li>• Only one person builds at a time — log on/off in the In-Game Overlay so nobody overwrites each other.</li>
                                 <li>• Everyone keeps their last 3 versions (2 once the group passes 10 members) as a merge safety net.</li>
                                 <li>• When it's done, publish it as one creation crediting everyone who worked on it.</li>
                             </ul>
