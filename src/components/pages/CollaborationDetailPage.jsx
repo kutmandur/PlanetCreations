@@ -473,7 +473,7 @@ const CollaborationDetailPage = ({
     const handleStartBuild = async (acknowledgeMissingSave = false) => {
         try {
             if (!isGameOverlay || !window.electronAPI?.getActiveGame) {
-                throw new Error('Start building from the in-game overlay while the matching game is open.');
+                throw new Error('Start building from the In-Game Overlay while the matching game is open.');
             }
             const activeGameId = await window.electronAPI.getActiveGame();
             if (!activeGameId || activeGameId !== collaboration.game) {
@@ -854,7 +854,7 @@ const CollaborationDetailPage = ({
     const buildStatus = !lockActive
         ? {
             title: 'Free to build',
-            detail: 'No active builder. Start your turn from the in-game overlay.',
+            detail: 'No active builder. Start your turn from the In-Game Overlay.',
             dot: 'bg-emerald-500',
             surface: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30',
             icon: ICONS.checkCircle,
@@ -1555,7 +1555,7 @@ const CollaborationDetailPage = ({
                         <h2 className="text-center font-bold text-gray-900 dark:text-gray-100">Safe hand-off</h2>
                         <ol className="mt-4 space-y-3 text-sm text-gray-600 dark:text-gray-300">
                             {[
-                                'Start your turn from the game overlay.',
+                                'Start your turn from the In-Game Overlay.',
                                 'Build and save in the game while the project is reserved.',
                                 'Log off to free the collaboration for the next contributor.',
                                 'Complete the changelog popover and upload the newest save.',

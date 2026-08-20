@@ -113,7 +113,7 @@ const InviteMemberModal = ({
                                 <div>
                                     <p className="font-bold">One save, one active builder</p>
                                     <p className="mt-1 text-blue-700 dark:text-blue-300">
-                                        Contributors join here, then use the in-game overlay to start and hand off build sessions safely.
+                                        Contributors join here, then use the In-Game Overlay to start and hand off build sessions safely.
                                     </p>
                                 </div>
                             </div>

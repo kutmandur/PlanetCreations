@@ -70,7 +70,14 @@ const DownloadCard = ({ title, subtitle, detail, icon, accent, href, loading, re
 );
 
 const ClientInfoPage = () => {
-    const [downloads, setDownloads] = useState({ loading: true, version: null, windows: null, mac: null, linux: null });
+    const [downloads, setDownloads] = useState({
+        loading: true,
+        version: null,
+        windows: null,
+        macArm64: null,
+        macIntel: null,
+        linux: null,
+    });
 
     useEffect(() => {
         let cancelled = false;
@@ -89,7 +96,8 @@ const ClientInfoPage = () => {
                     loading: false,
                     version: release.tag_name || null,
                     windows: findAsset((name) => /Setup-.*\.exe$/i.test(name)),
-                    mac: findAsset((name) => /\.dmg$/i.test(name)),
+                    macArm64: findAsset((name) => /-arm64\.dmg$/i.test(name)),
+                    macIntel: findAsset((name) => /\.dmg$/i.test(name) && !/-arm64\.dmg$/i.test(name)),
                     linux: findAsset((name) => /\.AppImage$/i.test(name)),
                 });
             })
@@ -114,9 +122,9 @@ const ClientInfoPage = () => {
                         <Icon path={ICONS.desktop} className="w-5 h-5" />
                         PlanetCreations Desktop Client
                     </div>
-                    <h1 className="client-hero-enter client-hero-title text-4xl md:text-6xl font-extrabold tracking-tight">Your creations, <span className="client-gradient-text">managed locally.</span></h1>
+                    <h1 className="client-hero-enter client-hero-title text-4xl md:text-6xl font-extrabold tracking-tight">PlanetCreations, <span className="client-gradient-text">right inside your game.</span></h1>
                     <p className="client-hero-enter client-hero-copy max-w-3xl mx-auto mt-6 text-lg md:text-xl leading-relaxed text-gray-200">
-                        Find your game files, create secure backups, install shared creations and connect PlanetCreations to OBS or Streamlabs while you build live.
+                        Open the PlanetCreations hub without leaving the game, keep your collaborations and notifications close, and create an immediate backup of a detected savegame whenever you need one.
                     </p>
                     <div className="client-hero-enter client-hero-actions mt-9 flex flex-col sm:flex-row justify-center gap-3">
                         <a href="#client-downloads" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
@@ -128,7 +136,7 @@ const ClientInfoPage = () => {
                             View Source Code
                         </a>
                     </div>
-                    <p className="mt-4 text-sm text-gray-400">Available for Windows, Apple Silicon Macs and Linux</p>
+                    <p className="mt-4 text-sm text-gray-400">Available for Windows, Apple Silicon and Intel Macs, and Linux</p>
                     <div className="client-app-preview relative mt-12 max-w-3xl mx-auto rounded-xl border border-white/20 bg-gray-950/80 p-2 shadow-2xl backdrop-blur-md text-left" aria-hidden="true">
                         <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
                             <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
@@ -137,7 +145,7 @@ const ClientInfoPage = () => {
                             <span className="ml-3 text-xs text-gray-400">PlanetCreations Client</span>
                         </div>
                         <div className="grid grid-cols-4 gap-2 p-3 text-xs">
-                            {['Backup', 'Restore', 'Workshop', 'Media Manager'].map((tab, index) => (
+                            {['PlanetCreations', 'Savegame Backup', 'Collaborations', 'Notifications'].map((tab, index) => (
                                 <div key={tab} className={`rounded-md px-2 py-2 text-center ${index === 0 ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}>{tab}</div>
                             ))}
                         </div>
@@ -150,8 +158,8 @@ const ClientInfoPage = () => {
                                 </div>
                             ))}
                         </div>
-                        <span className="client-floating-badge client-floating-badge-one"><Icon path={ICONS.shieldCheck} className="w-4 h-4" /> Verified backup</span>
-                        <span className="client-floating-badge client-floating-badge-two"><Icon path={ICONS.download} className="w-4 h-4" /> Direct Install</span>
+                        <span className="client-floating-badge client-floating-badge-one"><Icon path={ICONS.desktop} className="w-4 h-4" /> In-Game Overlay</span>
+                        <span className="client-floating-badge client-floating-badge-two"><Icon path={ICONS.shieldCheck} className="w-4 h-4" /> Savegame backed up</span>
                     </div>
                 </div>
             </section>
@@ -165,7 +173,7 @@ const ClientInfoPage = () => {
                             {downloads.version && <span className="block mt-1 font-semibold">Latest release: {downloads.version}</span>}
                         </p>
                     </div>
-                    <div className="grid md:grid-cols-3 gap-6">
+                    <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
                         <DownloadCard
                             title="Windows"
                             subtitle="Windows 10 & 11"
@@ -175,6 +183,7 @@ const ClientInfoPage = () => {
                             href={downloads.windows}
                             loading={downloads.loading}
                             recommended={recommendedPlatform === 'windows'}
+                            note="Currently unsigned: Windows SmartScreen may show a warning before the first installation."
                         />
                         <DownloadCard
                             title="macOS"
@@ -182,10 +191,19 @@ const ClientInfoPage = () => {
                             detail="For Macs with an M1, M2, M3, M4 or newer Apple chip (.dmg)."
                             icon={ICONS.desktop}
                             accent="bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
-                            href={downloads.mac}
+                            href={downloads.macArm64}
                             loading={downloads.loading}
-                            recommended={recommendedPlatform === 'mac'}
-                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch. Intel Macs are not supported yet."
+                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch."
+                        />
+                        <DownloadCard
+                            title="macOS"
+                            subtitle="Intel (x64)"
+                            detail="For Intel-based 64-bit Macs (.dmg)."
+                            icon={ICONS.desktop}
+                            accent="bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                            href={downloads.macIntel}
+                            loading={downloads.loading}
+                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch."
                         />
                         <DownloadCard
                             title="Linux"
@@ -198,7 +216,7 @@ const ClientInfoPage = () => {
                             recommended={recommendedPlatform === 'linux'}
                         />
                     </div>
-                    {!downloads.loading && !downloads.windows && !downloads.mac && !downloads.linux && (
+                    {!downloads.loading && !downloads.windows && !downloads.macArm64 && !downloads.macIntel && !downloads.linux && (
                         <p className="mt-5 text-center text-sm text-red-600 dark:text-red-400">
                             GitHub could not provide the download list. Try the{' '}
                             <a href="https://github.com/kutmandur/PlanetCreations/releases/latest" target="_blank" rel="noopener noreferrer" className="font-bold underline">release page</a>.
@@ -206,20 +224,55 @@ const ClientInfoPage = () => {
                     )}
                 </section>
 
-                <section>
+                <section id="ingame-overlay" className="scroll-mt-8">
                     <div className="text-center mb-10">
-                        <h2 className="text-3xl md:text-4xl font-bold">Everything in one client</h2>
+                        <h2 className="text-3xl md:text-4xl font-bold">PlanetCreations where you build</h2>
                         <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-                            The desktop client connects the PlanetCreations website with the files stored by your games.
+                            The client brings the PlanetCreations experience into your game and keeps your local savegames protected. These are its two central jobs.
                         </p>
+                    </div>
+                    <div className="grid lg:grid-cols-2 gap-6 mb-10">
+                        <article className="relative overflow-hidden rounded-2xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/50 dark:to-cyan-950/30 p-7 md:p-8 text-center shadow-md">
+                            <span className="inline-flex rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
+                            <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
+                                <Icon path={ICONS.desktop} className="w-7 h-7" />
+                            </div>
+                            <h3 className="mt-5 text-2xl font-bold">In-Game Overlay</h3>
+                            <p className="mt-3 leading-relaxed text-gray-700 dark:text-gray-200">
+                                Open the full PlanetCreations hub from a movable icon without leaving your game. Follow notifications, open Creations and manage active collaborations while you continue building.
+                            </p>
+                            <div className="mt-5 flex flex-wrap justify-center gap-2 text-sm font-semibold text-blue-800 dark:text-blue-200">
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Full hub in game</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Game-aware</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Collaboration controls</span>
+                            </div>
+                        </article>
+                        <article className="relative overflow-hidden rounded-2xl border border-green-200 dark:border-green-800 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/50 dark:to-emerald-950/30 p-7 md:p-8 text-center shadow-md">
+                            <span className="inline-flex rounded-full bg-green-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
+                            <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-green-600 text-white flex items-center justify-center shadow-md">
+                                <Icon path={ICONS.database} className="w-7 h-7" />
+                            </div>
+                            <h3 className="mt-5 text-2xl font-bold">Immediate savegame backups</h3>
+                            <p className="mt-3 leading-relaxed text-gray-700 dark:text-gray-200">
+                                The client finds supported savegames in your configured folders, so you can protect one save or an entire selection immediately. Keep multiple versions and restore the one you need later.
+                            </p>
+                            <div className="mt-5 flex flex-wrap justify-center gap-2 text-sm font-semibold text-green-800 dark:text-green-200">
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Individual or batch</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Version history</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Safe restore</span>
+                            </div>
+                        </article>
+                    </div>
+                    <div className="text-center mb-8">
+                        <h3 className="text-2xl font-bold">More tools around your Creations</h3>
                     </div>
                     <div className="client-feature-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                         <FeatureCard icon={ICONS.search} accent="blue" title="Automatic File Discovery" description="Scan configured game folders and browse parks, blueprints, autosaves, Workshop files and their available backups in one place." />
-                        <FeatureCard icon={ICONS.database} accent="green" title="Backup & Restore" description="Create individual or batch backups, add notes, keep multiple versions and restore a selected version to its game folder when needed." />
                         <FeatureCard icon={ICONS.shieldCheck} accent="purple" badge="Verified" title="Signed Packages" description="When signed in, backups can receive a digital signature. The client verifies package integrity before restoring or installing them." />
                         <FeatureCard icon={ICONS.image} accent="amber" title="Custom Media Manager" description="Collect the images, videos and audio used by a creation and preserve them as a dedicated media package for later restoration or sharing." />
                         <FeatureCard icon={ICONS.download} accent="cyan" badge="New" title="Direct Install" description="Install supported creations from their detail page. You can send an install to a connected PC even when you are browsing the website on another device." />
                         <FeatureCard icon={ICONS.refresh} accent="rose" badge="New" title="Background Queue" description="Queued installs are picked up by the desktop client. The system tray keeps notifications and background tasks available after the main window is closed." />
+                        <FeatureCard icon={ICONS.users} accent="green" badge="New" title="In-game collaboration" description="See build locks, install the newest shared version, open the build workspace and log your build turn directly through the In-Game Overlay." />
                     </div>
                 </section>
 
@@ -233,9 +286,9 @@ const ClientInfoPage = () => {
                     </div>
 
                     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 p-6 md:p-8">
-                        <h2 className="text-2xl font-bold text-center mb-8">Local backup workflow</h2>
+                        <h2 className="text-2xl font-bold text-center mb-8">Immediate backup workflow</h2>
                         <WorkflowStep number="1" title="Select your game folder" description="Configure the location once. The client scans supported files and organizes them by game and file type." />
-                        <WorkflowStep number="2" title="Create a backup" description="Select one or multiple creations, add an optional note and choose whether the package should be digitally signed." />
+                        <WorkflowStep number="2" title="Back up now" description="Select one savegame or several files, add an optional note and create the backup immediately. When signed in, you can also request a digital signature." />
                         <WorkflowStep number="3" title="Keep or share the package" description="Backups use the .PlanetCreations format and can be archived privately, attached to an online creation or shared directly." />
                         <WorkflowStep number="4" title="Restore safely" description="Open the backup in the client or use the Restore tab. Signed packages are verified before any game file is replaced." last />
                     </div>
@@ -262,48 +315,56 @@ const ClientInfoPage = () => {
                     </div>
                 </section>
 
-                <section>
-                    <div className="text-center mb-10">
+                <section className="relative overflow-hidden rounded-2xl border border-red-200 dark:border-red-900 bg-gradient-to-br from-red-50 via-white to-purple-50 dark:from-red-950/30 dark:via-gray-900 dark:to-purple-950/30 p-7 md:p-10 shadow-lg">
+                    <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-red-400/10 blur-3xl" aria-hidden="true" />
+                    <div className="relative text-center mb-10">
                         <div className="inline-flex items-center gap-2 rounded-full bg-red-100 dark:bg-red-900/40 px-4 py-2 text-sm font-bold text-red-700 dark:text-red-300 mb-4">
                             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                            Streaming & LIVE creations
+                            Optional streaming tools
                         </div>
-                        <h2 className="text-3xl md:text-4xl font-bold">Build with your community watching</h2>
+                        <h2 className="text-3xl md:text-4xl font-bold">Stream Management when you want it</h2>
                         <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-                            Connect your streaming software once. PlanetCreations can recognize when a stream starts, link it to the creation you are currently building and keep the website and overlay in sync.
+                            Streaming is an optional extension of the client, not the purpose of the In-Game Overlay. Connect OBS or Streamlabs to link a live broadcast to the Creation you are building and manage it from a dedicated window.
                         </p>
                     </div>
-                    <div className="grid md:grid-cols-3 gap-6">
+                    <div className="relative grid sm:grid-cols-2 gap-6">
                         <FeatureCard
                             icon={ICONS.wifi}
                             accent="purple"
                             badge="OBS & Streamlabs"
-                            title="Streaming bridge"
+                            title="Automatic stream detection"
                             description="Connect OBS Studio through its WebSocket server or Streamlabs Desktop through its local and Remote Control APIs. The settings page guides you to every required port, IP address, password or API token."
+                        />
+                        <FeatureCard
+                            icon={ICONS.search}
+                            accent="cyan"
+                            badge="Picker first"
+                            title="Creation picker"
+                            description="Choose your own Creation when a stream starts. Experimental Auto Mode is opt-in only and can suggest a likely match from your title, Creation names, types, categories and tags."
                         />
                         <FeatureCard
                             icon={ICONS.video}
                             accent="rose"
-                            badge="LIVE"
-                            title="Creation live mode"
-                            description="When your stream starts, choose the creation you are working on. Its cards and detail page receive a visible LIVE badge, and the session ends automatically when your stream stops."
+                            badge="Twitch + YouTube"
+                            title="One dual-platform session"
+                            description="Show Twitch and YouTube together on the active Creation. When OBS or Streamlabs ends the broadcast, PlanetCreations closes the complete dual-stream session."
                         />
                         <FeatureCard
-                            icon={ICONS.share}
-                            accent="cyan"
-                            badge="Interactive"
-                            title="QR & website overlay"
-                            description="Show the selected creation as a QR code and open PlanetCreations in an overlay while streaming. Drag the logo to position it, hold it and use the scroll wheel to resize it, or force it visible for OBS and Streamlabs capture."
+                            icon={ICONS.bell}
+                            accent="amber"
+                            badge="Synced"
+                            title="Dedicated Stream Management"
+                            description="Use the always-on-top picker, live status, stream notification history and mute settings on the streaming device. Linked clients stay synchronized for remote-streaming setups."
                         />
                     </div>
-                    <div className="mt-8 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 p-6">
+                    <div className="relative mt-8 rounded-xl border border-red-200 dark:border-red-900 bg-white/80 dark:bg-red-950/20 p-6">
                         <h3 className="text-xl font-bold text-center text-gray-900 dark:text-gray-100">How the live workflow works</h3>
                         <div className="mt-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-center">
                             {[
                                 ['1', 'Connect', 'Select OBS or Streamlabs in Desktop & Streaming settings.'],
-                                ['2', 'Start streaming', 'The client detects the stream start automatically.'],
-                                ['3', 'Choose a creation', 'Link the stream and optionally show its QR code in the overlay.'],
-                                ['4', 'Stop normally', 'The LIVE badge and linked session end with the stream.'],
+                                ['2', 'Start streaming', 'The client detects the stream start and opens Stream Management.'],
+                                ['3', 'Choose a Creation', 'Use the standard picker or opt in to Experimental Auto Mode.'],
+                                ['4', 'Stop normally', 'The LIVE state and all linked outputs end with the stream.'],
                             ].map(([number, title, description]) => (
                                 <div key={number} className="rounded-lg bg-white dark:bg-gray-800 p-4 shadow-sm">
                                     <span className="w-8 h-8 mx-auto rounded-full bg-red-600 text-white flex items-center justify-center font-bold">{number}</span>
@@ -321,7 +382,7 @@ const ClientInfoPage = () => {
                         <p className="mt-3 text-gray-600 dark:text-gray-300">Small conveniences that keep the client ready without getting in your way.</p>
                     </div>
                     <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <FeatureCard icon={ICONS.desktop} accent="cyan" badge="Updated" title="Game-aware Overlay" description="On Windows, the movable PlanetCreations logo appears automatically with Planet Coaster 2. On macOS and Linux it can be shown manually for streaming capture. Open the full website, drag to reposition, and hold while scrolling to resize." />
+                        <FeatureCard icon={ICONS.desktop} accent="cyan" badge="Updated" title="Game-aware In-Game Overlay" description="On Windows, the In-Game Overlay appears automatically with Planet Coaster 2. On macOS and Linux it can be shown manually. Open PlanetCreations from the movable icon, drag it to reposition, and hold while scrolling to resize." />
                         <FeatureCard icon={ICONS.cog} title="Start with Windows" description="Enable automatic startup in Settings so queued installs and background notifications are available after signing in to Windows." />
                         <FeatureCard icon={ICONS.bell} accent="purple" title="System Tray" description="Closing the window can keep the client running in the tray. Open it again or quit it completely from the tray menu." />
                         <FeatureCard icon={ICONS.refresh} accent="green" title="Automatic Updates" description="The client checks published releases and can download and install updates, keeping desktop features compatible with the website." />

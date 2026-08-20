@@ -26,7 +26,7 @@ const GeneralOverlayNotificationSettings = ({ compact = false }) => {
                 <div>
                     <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Client overlay notifications</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Bell notifications still remain in your inbox. These controls only affect popovers below the desktop overlay icon.
+                        Bell notifications still remain in your inbox. These controls only affect popovers below the In-Game Overlay icon.
                     </p>
                 </div>
                 <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">

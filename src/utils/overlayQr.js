@@ -1,4 +1,4 @@
-// Gemeinsamer State für den Overlay-QR (Feature "Show QR in game overlay").
+// Shared QR state for the PlanetCreations In-Game Overlay.
 // Hauptfenster und Spiel-Overlay laden dieselbe gehostete Origin und teilen sich
 // daher localStorage; der BroadcastChannel dient nur als Push-Benachrichtigung.
 // localStorage ist die Source of Truth — so übersteht der QR den täglichen
