@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [switch]$InspectOnly,
-    [string]$BuildDirectory = (Join-Path $PSScriptRoot '..\build'),
+    [string]$BuildDirectory,
     [string]$PublicOrigin = 'https://www.planetcreations.net'
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
+    $BuildDirectory = Join-Path $PSScriptRoot '..\build'
+}
 $expectedEd25519Fingerprint =
     'SHA256:1gx2w8Rtv3wCgi7Jh8myf/KVd72cRQbow03UP8P095Q'
 $openSshDirectory = 'C:\Windows\System32\OpenSSH'
