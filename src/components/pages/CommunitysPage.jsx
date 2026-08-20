@@ -19,8 +19,6 @@ import useGames from '../../hooks/useGames';
 import { useCommunities } from '../../hooks/useCommunities';
 
 const PARTNER_TAB = 'Partner Communitys';
-const PARTNER_COMMUNITIES_VISIBLE =
-    import.meta.env.VITE_ENABLE_PARTNER_COMMUNITIES === 'true';
 const KNOWN_TABS = [PARTNER_TAB, 'Browser', 'My Communitys', 'Invitations', 'All Events', 'Collaborations'];
 
 const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState, setModalMessage }) => {
@@ -28,8 +26,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     const [invitations, setInvitations] = useState([]);
     const { data: allCommunitys, isLoading: loading } = useCommunities();
     const partnerTabAvailable = useMemo(
-        () => PARTNER_COMMUNITIES_VISIBLE &&
-            (allCommunitys || []).some(community => community.isPartner === true),
+        () => (allCommunitys || []).some(community => community.isPartner === true),
         [allCommunitys]
     );
     const publicLandingTab = partnerTabAvailable ? PARTNER_TAB : 'Browser';
