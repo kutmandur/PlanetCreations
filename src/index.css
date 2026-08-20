@@ -249,6 +249,17 @@ html.game-overlay-window #root { background: transparent !important; }
   }
 }
 
+/* Responsive controls recalculate their geometry on every native window resize.
+   Let them follow the window immediately instead of queueing 300-500ms layout
+   transitions behind the resize cursor. Regular page motion resumes afterwards. */
+html.pc-window-resizing *,
+html.pc-window-resizing *::before,
+html.pc-window-resizing *::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  animation-play-state: paused !important;
+}
+
 /* Springy micro-interactions for pill selectors and floating navigation.
    The overshoot is intentionally subtle: it adds a tactile response without
    turning normal navigation into a continuous animation. */

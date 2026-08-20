@@ -3,8 +3,10 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { installDesktopE2EShim } from './e2e/installDesktopShim';
+import { installWindowResizeMotionGuard } from './utils/windowResizeMotion';
 
 installDesktopE2EShim();
+installWindowResizeMotionGuard();
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
