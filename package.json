@@ -45,7 +45,7 @@
     "test": "npm run test:frontend && npm run test:electron",
     "test:frontend": "vitest run",
     "test:electron": "node --test \"electron/modules/*.test.js\"",
-    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/firestore.rules.test.mjs\"",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/firestore.rules.test.mjs && node --test tests/scalable-map-index.emulator.test.cjs\"",
     "test:installed-production": "node scripts/installed-production-smoke.mjs",
     "test:watch": "vitest",
     "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",

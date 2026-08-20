@@ -15,7 +15,6 @@ const { initializeApp } = require("firebase-admin/app");
 const { getAppCheck } = require("firebase-admin/app-check");
 const { getAuth } = require("firebase-admin/auth");
 const {
-    FieldPath,
     FieldValue,
     getFirestore,
     Timestamp,
@@ -97,6 +96,31 @@ const {
     sanitizePublicUpload,
     sanitizePublicTodo,
 } = require("./collaborationPublicView");
+const {
+    extractYoutubeChannelId,
+    fetchYoutubeChannelFeed,
+    fetchYoutubeChannelVideos,
+} = require("./youtubeFeed");
+const {
+    backfillCommunityYoutubeVideos,
+    normalizeYoutubeVideos,
+    removeCommunityYoutubeVideos,
+    upsertCommunityYoutubeVideo,
+} = require("./youtubeVideoIndex");
+const {
+    deleteMapIndex,
+    readMapIndex,
+    removeMapIndexEntry,
+    replaceMapIndex,
+    upsertMapIndexEntry,
+} = require("./scalableMapIndex");
+const {
+    YOUTUBE_WEBSUB_HUB_URL,
+    buildWebSubSubscriptionBody,
+    extractTopicChannelId,
+    parseYoutubeWebSubNotification,
+    verifyWebSubSignature,
+} = require("./youtubeWebSub");
 initializeApp();
 const appCheck = getAppCheck();
 const auth = getAuth();
@@ -150,6 +174,8 @@ const r2SecretAccessKey = defineSecret("R2_SECRET_ACCESS_KEY");
 // Nicht-geheime Werte kommen aus functions/.env
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI;
+const YOUTUBE_WEBSUB_CALLBACK_URL = process.env.YOUTUBE_WEBSUB_CALLBACK_URL ||
+    "https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/youtubeWebSub";
 const app = express();
 app.use(cors({
     origin(origin, callback) {
@@ -1945,8 +1971,8 @@ exports.syncCommunityMembershipRoles = documentWritten(
         return null;
     });
 
-// Kompakter Eintrag fürs Nutzer-Such-Dokument (userSearchIndex/all). Kurze
-// Feldnamen halten das Doc klein und müssen zu src/firebase/userIndexService.js
+// Kompakter Eintrag für den skalierbaren Nutzer-Suchindex. Kurze Feldnamen
+// halten die Shards klein und müssen zu src/firebase/userIndexService.js
 // (entryToUser) passen. ul fällt auf username.toLowerCase() zurück, falls das
 // denormalisierte username_lowercase-Feld (noch) fehlt.
 // Recompute every member when rank definitions or permission toggles change.
@@ -2212,23 +2238,14 @@ exports.onProfileWrite = documentWritten("profiles/{userId}", async (change, con
         normalizedAfterData = { ...afterData, username_lowercase: usernameLowercase };
     }
 
-    // 2) Kompakten Nutzer-Suchindex (userSearchIndex/all) synchron halten. Analog
-    //    zu syncCreationToSearchIndex: 1 Doc mit entries-Map (uid -> Eintrag),
-    //    Client lädt es mit 1 Read und sucht lokal (Fuse.js).
-    const entryField = new FieldPath('entries', userId);
+    // 2) Kompakten, größenbasiert geshardeten Nutzer-Suchindex synchron halten.
+    //    Der Client vereinigt alle Shards und sucht lokal (Fuse.js).
     const beforeEntry = isUserIndexable(beforeData) ? buildUserIndexEntry(beforeData) : null;
     const afterEntry = isUserIndexable(normalizedAfterData) ? buildUserIndexEntry(normalizedAfterData) : null;
 
     // Profil gelöscht oder Username entfernt -> vorhandenen Eintrag entfernen.
     if (beforeEntry && !afterEntry) {
-        return db.doc('userSearchIndex/all')
-            .update(entryField, FieldValue.delete(),
-                'count', FieldValue.increment(-1))
-            .catch(error => {
-                // Vor dem initialen Backfill existiert das Index-Doc evtl. noch nicht.
-                if (error.code === 5 || error.code === 'not-found') return null;
-                throw error;
-            });
+        return removeMapIndexEntry(db, 'user', 'all', userId);
     }
     if (!afterEntry) return null;
 
@@ -2238,12 +2255,7 @@ exports.onProfileWrite = documentWritten("profiles/{userId}", async (change, con
         return null;
     }
 
-    const isNewEntry = !beforeEntry;
-    return db.doc('userSearchIndex/all').set({
-        entries: { [userId]: afterEntry },
-        ...(isNewEntry ? { count: FieldValue.increment(1) } : {}),
-        updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
+    return upsertMapIndexEntry(db, 'user', 'all', userId, afterEntry);
 });
 
 exports.setCustomClaims = documentWritten("users/{userId}", async (change, context) => {
@@ -2622,18 +2634,14 @@ exports.sweepLiveStreams = scheduled(
     });
 
 // --- Search Index Sync Functions ---
-// Kompakter Suchindex in Firestore: ein Dokument pro Spiel unter searchIndex/{game},
-// mit einer entries-Map (creationId -> kompakter Eintrag). Der Client lädt das Doc
-// mit 1 Read und sucht lokal (Fuse.js) — Ersatz für den gelöschten Algolia-Account.
-// Kapazität: ~700-1000 Bytes/Eintrag -> ~1000+ Einträge pro Doc unter dem 1-MiB-Limit.
-// Sollte ein Spiel dem Limit nahekommen (count als Frühwarnung beobachten), auf
-// Shards umstellen: searchIndex/{game}-0, -1, ... per hash(creationId) % shardCount.
+// Kompakter Suchindex in Firestore: State + größenbegrenzte Shards pro Spiel.
+// Der Client lädt alle Shards und vereinigt sie für Suche und Startseiten-Pool.
 
 // Welche Spiele indexiert werden, bestimmt jetzt die Games-Registry
 // (getRegistryGameIds, meta/games) — inkl. deaktivierter Spiele, da
 // Deaktivieren nur die UI ausblendet und keine Daten zerstört.
 
-// Kurze Feldnamen halten das Index-Dokument klein. Muss zu
+// Kurze Feldnamen halten die Index-Shards klein. Muss zu
 // src/firebase/searchIndexService.js (entryToCreation) passen.
 const buildIndexEntry = (data) => ({
     t: data.title || '',
@@ -2664,7 +2672,7 @@ const buildIndexEntry = (data) => ({
 });
 
 /**
- * Hält searchIndex/{game} synchron mit der creations-Collection.
+ * Hält den skalierbaren Spiel-Suchindex mit der creations-Collection synchron.
  * Bewusst eigener Trigger: leichtgewichtig und ohne R2-Kopplung oder das
  * 1GB/300s-Profil der expliziten ZIP-Finalisierung.
  */
@@ -2674,18 +2682,13 @@ exports.syncCreationToSearchIndex = documentWritten(
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
-        const entryField = new FieldPath('entries', creationId);
-
         const gameBefore = before?.game;
         const gameAfter = after?.game;
         const indexGames = await getRegistryGameIds();
 
         // Aus dem alten Index entfernen bei Löschung oder Spiel-Wechsel
         if (gameBefore && indexGames.includes(gameBefore) && gameBefore !== gameAfter) {
-            await db.doc(`searchIndex/${gameBefore}`)
-                .update(entryField, FieldValue.delete(),
-                    'count', FieldValue.increment(-1))
-                .catch(() => null); // Index-Doc existiert evtl. noch nicht
+            await removeMapIndexEntry(db, 'search', gameBefore, creationId);
         }
 
         if (!after) return null;
@@ -2702,22 +2705,18 @@ exports.syncCreationToSearchIndex = documentWritten(
             }
         }
 
-        const isNewEntry = !before || gameBefore !== gameAfter;
-
-        // set + merge: atomarer Upsert ohne Vorab-Read, legt das Doc bei Bedarf an
-        return db.doc(`searchIndex/${gameAfter}`).set({
-            entries: { [creationId]: buildIndexEntry(after) },
-            ...(isNewEntry ? { count: FieldValue.increment(1) } : {}),
-            updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
+        return upsertMapIndexEntry(
+            db,
+            'search',
+            gameAfter,
+            creationId,
+            buildIndexEntry(after),
+        );
     });
 
 // --- Community Search Index ---
-// Analog zum Spiel-Index: ein Dokument pro Community unter
-// communitySearchIndex/{communityId} mit einer entries-Map (creationId ->
-// kompakter Eintrag inkl. Link-Metadaten, Custom-Field-Daten und Creator-Rang).
-// Versorgt die Community-Seite (Suche/Filter), das Add-Creations-Popup und
-// die Showcase-Applications-Liste mit 1 Read.
+// Analog zum Spiel-Index: State + größenbegrenzte Shards pro Community mit
+// kompakten Einträgen inkl. Link-Metadaten, Custom Fields und Creator-Rang.
 
 const buildCommunityIndexEntry = (creationData, linkData, memberRoles) => ({
     ...buildIndexEntry(creationData),
@@ -2760,26 +2759,19 @@ const rebuildCommunityIndex = async (communityId, creationsById = null) => {
             creationData, linkData, rolesByUser.get(creationData.userId));
     }
 
-    await db.doc(`communitySearchIndex/${communityId}`).set({
-        entries,
-        count: Object.keys(entries).length,
-        updatedAt: FieldValue.serverTimestamp(),
-    });
+    await replaceMapIndex(db, 'community', communityId, entries);
     return Object.keys(entries).length;
 };
 
 // --- Showcase index ---
-// Self-contained doc per showcase (showcaseIndex/{showcaseId}) so a public
-// showcase page loads in one read. A showcase is identified by the durable
-// showcaseGroupId stamped on community link docs. Shape:
-// { communityId, name, videoUrl, entries: { creationId: <community entry> }, count, updatedAt }.
+// Public state + size-bounded shards per showcase. A showcase is identified by
+// the durable showcaseGroupId stamped on community link docs.
 const rebuildShowcaseIndex = async (communityId, showcaseId) => {
     if (!communityId || !showcaseId) return;
-    const showcaseRef = db.doc(`showcaseIndex/${showcaseId}`);
     const linksSnap = await db.collection(`communitys/${communityId}/creations`)
         .where('showcaseGroupId', '==', showcaseId).get();
     if (linksSnap.empty) {
-        await showcaseRef.delete().catch(() => null);
+        await deleteMapIndex(db, 'showcase', showcaseId);
         return;
     }
     const membersSnap = await db.collection(`communitys/${communityId}/members`).get();
@@ -2798,7 +2790,7 @@ const rebuildShowcaseIndex = async (communityId, showcaseId) => {
         entries[linkDoc.id] = buildCommunityIndexEntry(creationData, linkData, rolesByUser.get(creationData.userId));
     }
     if (Object.keys(entries).length === 0) {
-        await showcaseRef.delete().catch(() => null);
+        await deleteMapIndex(db, 'showcase', showcaseId);
         return;
     }
     // Pre-finalize the name lives on the community's showcaseGroups array entry.
@@ -2807,13 +2799,12 @@ const rebuildShowcaseIndex = async (communityId, showcaseId) => {
         const grp = (commSnap.exists ? (commSnap.data().showcaseGroups || []) : []).find(g => g.id === showcaseId);
         name = (grp && grp.name) || null;
     }
-    await showcaseRef.set({
-        communityId,
-        name: name || null,
-        videoUrl: videoUrl || null,
-        entries,
-        count: Object.keys(entries).length,
-        updatedAt: FieldValue.serverTimestamp(),
+    await replaceMapIndex(db, 'showcase', showcaseId, entries, {
+        metadata: {
+            communityId,
+            name: name || null,
+            videoUrl: videoUrl || null,
+        },
     });
 };
 
@@ -2829,7 +2820,7 @@ const rebuildCommunityShowcaseIndexes = async (communityId) => {
 };
 
 /**
- * Hält communitySearchIndex/{communityId} synchron mit den Link-Docs
+ * Hält den skalierbaren Community-Suchindex synchron mit den Link-Docs
  * communitys/{communityId}/creations/{creationId} (Quelle für Zuordnung,
  * pinned/showcase/application-Status).
  */
@@ -2837,14 +2828,15 @@ exports.syncCommunityLinkToIndex = documentWritten(
     'communitys/{communityId}/creations/{creationId}',
     async (change, context) => {
         const { communityId, creationId } = context.params;
-        const indexRef = db.doc(`communitySearchIndex/${communityId}`);
-        const entryField = new FieldPath('entries', creationId);
 
         // Link gelöscht → Eintrag entfernen
         if (!change.after.exists) {
-            return indexRef.update(entryField, FieldValue.delete(),
-                'count', FieldValue.increment(-1))
-                .catch(() => null);
+            return removeMapIndexEntry(
+                db,
+                'community',
+                communityId,
+                creationId,
+            );
         }
 
         const linkData = { ...change.after.data(), __communityId: communityId };
@@ -2859,15 +2851,17 @@ exports.syncCommunityLinkToIndex = documentWritten(
         const memberSnap = await db.doc(`communitys/${communityId}/members/${creationData.userId}`).get();
         const memberRoles = memberSnap.exists ? (memberSnap.data().roles || []) : [];
 
-        return indexRef.set({
-            entries: { [creationId]: buildCommunityIndexEntry(creationData, linkData, memberRoles) },
-            ...(change.before.exists ? {} : { count: FieldValue.increment(1) }),
-            updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
+        return upsertMapIndexEntry(
+            db,
+            'community',
+            communityId,
+            creationId,
+            buildCommunityIndexEntry(creationData, linkData, memberRoles),
+        );
     });
 
 /**
- * Baut showcaseIndex/{showcaseId} neu, wenn sich die Showcase-Zugehörigkeit eines
+ * Baut den skalierbaren Showcase-Index neu, wenn sich die Zugehörigkeit eines
  * Link-Docs ändert (assign/finalize/edit/remove). Läuft parallel zu
  * syncCommunityLinkToIndex auf demselben Pfad.
  */
@@ -2897,18 +2891,13 @@ exports.syncCreationToCommunityIndexes = documentWritten(
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
-        const entryField = new FieldPath('entries', creationId);
-
         const idsBefore = before?.communityIds || [];
         const idsAfter = after?.communityIds || [];
 
         // Aus Indexen entfernen, wo die Creation nicht mehr verlinkt ist
         const removed = idsBefore.filter(id => !idsAfter.includes(id));
         await Promise.all(removed.map(cid =>
-            db.doc(`communitySearchIndex/${cid}`)
-                .update(entryField, FieldValue.delete(),
-                    'count', FieldValue.increment(-1))
-                .catch(() => null)
+            removeMapIndexEntry(db, 'community', cid, creationId)
         ));
 
         if (!after || idsAfter.length === 0) return null;
@@ -2933,10 +2922,14 @@ exports.syncCreationToCommunityIndexes = documentWritten(
         });
 
         await Promise.all(idsAfter.map(cid =>
-            db.doc(`communitySearchIndex/${cid}`).set({
-                entries: { [creationId]: creationFields(cid) },
-                updatedAt: FieldValue.serverTimestamp(),
-            }, { merge: true })
+            upsertMapIndexEntry(
+                db,
+                'community',
+                cid,
+                creationId,
+                creationFields(cid),
+                {mergeEntry: true},
+            )
         ));
         return null;
     });
@@ -2953,19 +2946,24 @@ exports.syncMemberRolesToCommunityIndex = documentUpdated(
         const rolesAfter = change.after.data().roles || [];
         if (JSON.stringify(rolesBefore) === JSON.stringify(rolesAfter)) return null;
 
-        const indexRef = db.doc(`communitySearchIndex/${communityId}`);
-        const indexSnap = await indexRef.get();
-        if (!indexSnap.exists) return null;
-
-        const entries = indexSnap.data().entries || {};
+        const index = await readMapIndex(db, 'community', communityId);
+        if (!index) return null;
         const updates = [];
-        for (const [creationId, entry] of Object.entries(entries)) {
+        for (const [creationId, entry] of Object.entries(index.entries)) {
             if (entry.u === userId) {
-                updates.push(new FieldPath('entries', creationId, 'rk'), rolesAfter);
+                updates.push(upsertMapIndexEntry(
+                    db,
+                    'community',
+                    communityId,
+                    creationId,
+                    {rk: rolesAfter},
+                    {mergeEntry: true},
+                ));
             }
         }
         if (updates.length === 0) return null;
-        return indexRef.update(updates[0], updates[1], ...updates.slice(2));
+        await Promise.all(updates);
+        return null;
     });
 
 /**
@@ -6497,11 +6495,12 @@ exports.onCommunityDelete = documentDeleted(
         } catch (e) { console.error('community link cleanup failed:', e.message); }
 
         // 2) Community-Suchindex + zugehörige Showcase-Indexe löschen
-        await db.doc(`communitySearchIndex/${communityId}`).delete().catch(() => {});
+        await deleteMapIndex(db, 'community', communityId).catch(() => {});
         try {
-            const showcaseSnap = await db.collection('showcaseIndex')
-                .where('communityId', '==', communityId).get();
-            await Promise.all(showcaseSnap.docs.map(d => d.ref.delete().catch(() => {})));
+            const showcaseStateSnap = await db.collection('showcaseIndexState')
+                .where('m.communityId', '==', communityId).get();
+            await Promise.all(showcaseStateSnap.docs.map(showcaseDoc =>
+                deleteMapIndex(db, 'showcase', showcaseDoc.id).catch(() => {})));
         } catch (e) { console.error('showcaseIndex cleanup failed:', e.message); }
 
         // 3) Events der Community (inkl. voters-Subcollection) löschen
@@ -6552,33 +6551,317 @@ app.get("/bugReports", authenticate, verifyAppCheckWhenEnabled, async (req, res)
 });
 
 // --- YouTube Channel Feed Proxy ---
-// Der RSS-Feed eines Kanals (youtube.com/feeds/videos.xml) ist öffentlich,
-// aber im Browser CORS-blockiert — daher dieser kleine Proxy. Kein API-Key nötig.
+// RSS-Feed und öffentliche Videoseite eines Kanals werden im Browser durch CORS
+// blockiert — daher dieser kleine Proxy mit Kanalseiten-Fallback. Kein API-Key nötig.
 // Instanz-lokaler Cache reduziert Anfragen an YouTube.
 const ytFeedCache = new Map(); // url -> { data, ts }
 const YT_FEED_TTL_MS = 15 * 60 * 1000;
 
-const extractChannelId = async (inputUrl) => {
-    const parsed = new URL(inputUrl);
-    const host = parsed.hostname.replace(/^www\./, '');
-    // SSRF-Guard: nur YouTube-Hosts abrufen
-    if (host !== 'youtube.com' && host !== 'm.youtube.com' && host !== 'youtu.be') {
-        throw new Error('Only YouTube URLs are allowed.');
-    }
-    const channelMatch = parsed.pathname.match(/\/channel\/(UC[\w-]{22})/);
-    if (channelMatch) return channelMatch[1];
+const YOUTUBE_SUBSCRIPTIONS_COLLECTION = "youtubeChannelSubscriptions";
+const YOUTUBE_COMMUNITY_CHANNELS_COLLECTION = "youtubeCommunityChannels";
 
-    // @handle- oder /c/-URLs: Kanalseite laden und channelId extrahieren
-    const pageResponse = await fetch(parsed.href, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (PlanetCreations feed fetcher)' },
-    });
-    if (!pageResponse.ok) throw new Error(`Could not load channel page (HTTP ${pageResponse.status}).`);
-    const html = await pageResponse.text();
-    const idMatch = html.match(/"channelId":"(UC[\w-]{22})"/) ||
-        html.match(/channel_id=(UC[\w-]{22})/);
-    if (!idMatch) throw new Error('Could not determine the channel ID from this URL.');
-    return idMatch[1];
+const getCommunityYoutubeUrl = (communityData) => String(
+    communityData?.socialLinks?.youtube || "",
+).trim();
+
+const getYoutubeCallbackUrl = (callbackToken) => {
+    const callback = new URL(YOUTUBE_WEBSUB_CALLBACK_URL);
+    callback.searchParams.set("token", callbackToken);
+    return callback.toString();
 };
+
+const sendYoutubeWebSubRequest = async ({
+    callbackToken,
+    channelId,
+    mode,
+    secret,
+}) => {
+    const response = await fetch(YOUTUBE_WEBSUB_HUB_URL, {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: buildWebSubSubscriptionBody({
+            callbackUrl: getYoutubeCallbackUrl(callbackToken),
+            channelId,
+            mode,
+            secret,
+        }),
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+        throw new Error(`YouTube WebSub ${mode} failed (HTTP ${response.status}).`);
+    }
+};
+
+const addCommunityYoutubeSubscription = async (communityId, channelId) => {
+    const subscriptionRef = db.doc(
+        `${YOUTUBE_SUBSCRIPTIONS_COLLECTION}/${channelId}`,
+    );
+    const subscription = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(subscriptionRef);
+        const current = snapshot.exists ? snapshot.data() : {};
+        const communityIds = [...new Set([
+            ...(Array.isArray(current.communityIds) ? current.communityIds : []),
+            communityId,
+        ])];
+        const next = {
+            callbackToken: current.callbackToken ||
+                crypto.randomBytes(24).toString("base64url"),
+            channelId,
+            communityIds,
+            pendingMode: "subscribe",
+            secret: current.secret || crypto.randomBytes(32).toString("base64url"),
+            updatedAt: Timestamp.now(),
+        };
+        transaction.set(subscriptionRef, next, {merge: true});
+        return next;
+    });
+    await sendYoutubeWebSubRequest({...subscription, mode: "subscribe"});
+};
+
+const removeCommunityYoutubeSubscription = async (communityId, channelId) => {
+    if (!channelId) return;
+    const subscriptionRef = db.doc(
+        `${YOUTUBE_SUBSCRIPTIONS_COLLECTION}/${channelId}`,
+    );
+    const result = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(subscriptionRef);
+        if (!snapshot.exists) return null;
+        const current = snapshot.data();
+        const communityIds = (current.communityIds || [])
+            .filter((id) => id !== communityId);
+        const pendingMode = communityIds.length > 0 ?
+            current.pendingMode || "subscribe" : "unsubscribe";
+        transaction.set(subscriptionRef, {
+            communityIds,
+            pendingMode,
+            updatedAt: Timestamp.now(),
+        }, {merge: true});
+        return communityIds.length === 0 ? {
+            ...current,
+            channelId,
+            mode: "unsubscribe",
+        } : null;
+    });
+    if (result) await sendYoutubeWebSubRequest(result);
+};
+
+const syncCommunityYoutubeChannel = async (communityId, communityData) => {
+    const youtubeUrl = getCommunityYoutubeUrl(communityData);
+    const mappingRef = db.doc(
+        `${YOUTUBE_COMMUNITY_CHANNELS_COLLECTION}/${communityId}`,
+    );
+    const mappingSnap = await mappingRef.get();
+    const previousChannelId = mappingSnap.exists ?
+        mappingSnap.data().channelId : null;
+
+    if (!youtubeUrl) {
+        await removeCommunityYoutubeVideos(db, communityId);
+        await mappingRef.delete().catch((error) => {
+            if (error.code !== 5 && error.code !== "not-found") throw error;
+        });
+        await removeCommunityYoutubeSubscription(communityId, previousChannelId);
+        return {channelId: null, videos: 0};
+    }
+
+    const channelId = await extractYoutubeChannelId(youtubeUrl);
+    const channelFeed = await fetchYoutubeChannelVideos(channelId, 20);
+
+    await removeCommunityYoutubeVideos(db, communityId);
+    const indexedVideos = await backfillCommunityYoutubeVideos(
+        db,
+        communityId,
+        channelId,
+        channelFeed.videos.slice(0, 20),
+    );
+    await mappingRef.set({
+        backfilledAt: Timestamp.now(),
+        channelId,
+        channelTitle: channelFeed.channelTitle || "",
+        communityId,
+        indexedVideos,
+        youtubeUrl,
+    });
+
+    if (previousChannelId && previousChannelId !== channelId) {
+        await removeCommunityYoutubeSubscription(communityId, previousChannelId);
+    }
+    await addCommunityYoutubeSubscription(communityId, channelId);
+    return {channelId, videos: indexedVideos};
+};
+
+exports.syncCommunityYoutubeIndex = documentWritten(
+    "communitys/{communityId}",
+    async (change, context) => {
+        const beforeUrl = change.before.exists ?
+            getCommunityYoutubeUrl(change.before.data()) : "";
+        const afterUrl = change.after.exists ?
+            getCommunityYoutubeUrl(change.after.data()) : "";
+        if (beforeUrl === afterUrl) return null;
+
+        try {
+            const result = await syncCommunityYoutubeChannel(
+                context.params.communityId,
+                change.after.exists ? change.after.data() : null,
+            );
+            console.log("Community YouTube index synchronized.", {
+                communityId: context.params.communityId,
+                ...result,
+            });
+        } catch (error) {
+            console.error("Community YouTube index sync failed.", {
+                communityId: context.params.communityId,
+                error: error.message,
+            });
+            throw error;
+        }
+        return null;
+    },
+);
+
+app.get("/youtubeWebSub", async (req, res) => {
+    const mode = String(req.query["hub.mode"] || "");
+    const topic = String(req.query["hub.topic"] || "");
+    const challenge = String(req.query["hub.challenge"] || "");
+    const channelId = extractTopicChannelId(topic);
+    if (!channelId || !challenge || !["subscribe", "unsubscribe"].includes(mode)) {
+        return res.status(400).send("Invalid WebSub verification request.");
+    }
+
+    const subscriptionRef = db.doc(
+        `${YOUTUBE_SUBSCRIPTIONS_COLLECTION}/${channelId}`,
+    );
+    const subscriptionSnap = await subscriptionRef.get();
+    const subscription = subscriptionSnap.exists ? subscriptionSnap.data() : null;
+    if (!subscription || subscription.callbackToken !== req.query.token ||
+        subscription.pendingMode !== mode) {
+        return res.status(404).send("Subscription not found.");
+    }
+
+    const leaseSeconds = Math.max(0, Number(req.query["hub.lease_seconds"]) || 0);
+    await subscriptionRef.set({
+        active: mode === "subscribe",
+        leaseExpiresAt: mode === "subscribe" && leaseSeconds > 0 ?
+            Timestamp.fromMillis(Date.now() + (leaseSeconds * 1000)) : null,
+        pendingMode: null,
+        verifiedAt: Timestamp.now(),
+    }, {merge: true});
+    return res.type("text/plain").send(challenge);
+});
+
+app.post("/youtubeWebSub", async (req, res) => {
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody :
+        Buffer.from(typeof req.body === "string" ? req.body : "");
+    const notification = parseYoutubeWebSubNotification(rawBody.toString("utf8"));
+    if (!notification.channelId || notification.videos.length === 0) {
+        return res.status(400).send("Invalid YouTube WebSub payload.");
+    }
+
+    const subscriptionSnap = await db.doc(
+        `${YOUTUBE_SUBSCRIPTIONS_COLLECTION}/${notification.channelId}`,
+    ).get();
+    const subscription = subscriptionSnap.exists ? subscriptionSnap.data() : null;
+    if (!subscription || subscription.callbackToken !== req.query.token ||
+        !verifyWebSubSignature(
+            rawBody,
+            req.header("X-Hub-Signature"),
+            subscription.secret,
+        )) {
+        return res.status(401).send("Invalid WebSub signature.");
+    }
+
+    const videos = normalizeYoutubeVideos(notification.videos);
+    for (const communityId of subscription.communityIds || []) {
+        for (const video of videos) {
+            await upsertCommunityYoutubeVideo(
+                db,
+                communityId,
+                notification.channelId,
+                video,
+            );
+        }
+    }
+    return res.status(204).send();
+});
+
+app.post(
+    "/backfillCommunityYoutubeIndexes",
+    authenticate,
+    verifyAppCheckWhenEnabled,
+    async (req, res) => {
+        const userDoc = await db.collection("users").doc(req.user.uid).get();
+        if (!userDoc.exists || userDoc.data().role !== "admin") {
+            return res.status(403).json({error: "Only admins can run this backfill."});
+        }
+
+        const communitiesSnap = await db.collection("communitys").get();
+        const results = [];
+        for (const communityDoc of communitiesSnap.docs) {
+            if (!getCommunityYoutubeUrl(communityDoc.data())) continue;
+            try {
+                results.push({
+                    communityId: communityDoc.id,
+                    ok: true,
+                    ...await syncCommunityYoutubeChannel(
+                        communityDoc.id,
+                        communityDoc.data(),
+                    ),
+                });
+            } catch (error) {
+                results.push({
+                    communityId: communityDoc.id,
+                    error: error.message,
+                    ok: false,
+                });
+            }
+        }
+        return res.json({
+            failed: results.filter((result) => !result.ok).length,
+            results,
+            success: results.every((result) => result.ok),
+        });
+    },
+);
+
+exports.renewYoutubeWebSubSubscriptions = scheduled(
+    {
+        schedule: "15 4 * * *",
+        timeZone: "Europe/Berlin",
+    },
+    async () => {
+        const subscriptionsSnap = await db.collection(
+            YOUTUBE_SUBSCRIPTIONS_COLLECTION,
+        ).get();
+        const renewBeforeMs = Date.now() + (48 * 60 * 60 * 1000);
+        let renewed = 0;
+        for (const subscriptionDoc of subscriptionsSnap.docs) {
+            const subscription = subscriptionDoc.data();
+            const expiresAtMs = subscription.leaseExpiresAt?.toMillis?.() || 0;
+            if (!Array.isArray(subscription.communityIds) ||
+                subscription.communityIds.length === 0 ||
+                (subscription.active && expiresAtMs > renewBeforeMs)) continue;
+
+            await subscriptionDoc.ref.set({
+                pendingMode: "subscribe",
+                updatedAt: Timestamp.now(),
+            }, {merge: true});
+            try {
+                await sendYoutubeWebSubRequest({
+                    ...subscription,
+                    channelId: subscriptionDoc.id,
+                    mode: "subscribe",
+                });
+                renewed += 1;
+            } catch (error) {
+                console.error("YouTube WebSub renewal failed.", {
+                    channelId: subscriptionDoc.id,
+                    error: error.message,
+                });
+            }
+        }
+        console.log(`Renewed ${renewed} YouTube WebSub subscriptions.`);
+        return null;
+    },
+);
 
 app.get("/youtubeChannelFeed", async (req, res) => {
     const inputUrl = req.query.url;
@@ -6590,24 +6873,8 @@ app.get("/youtubeChannelFeed", async (req, res) => {
     }
 
     try {
-        const channelId = await extractChannelId(inputUrl);
-        const feedResponse = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`);
-        if (!feedResponse.ok) throw new Error(`Feed request failed (HTTP ${feedResponse.status}).`);
-        const xml = await feedResponse.text();
-
-        const channelTitle = (xml.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
-        const videos = [];
-        const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-        let entry;
-        while ((entry = entryRegex.exec(xml)) !== null) {
-            const block = entry[1];
-            const id = (block.match(/<yt:videoId>([\w-]{11})<\/yt:videoId>/) || [])[1];
-            const title = (block.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
-            const published = (block.match(/<published>([^<]*)<\/published>/) || [])[1] || null;
-            if (id) videos.push({ id, title, published });
-        }
-
-        const data = { channelId, channelTitle, videos };
+        const channelId = await extractYoutubeChannelId(inputUrl);
+        const data = await fetchYoutubeChannelFeed(channelId);
         ytFeedCache.set(inputUrl, { data, ts: Date.now() });
         res.set('Cache-Control', 'public, max-age=900');
         res.json(data);
@@ -6661,24 +6928,19 @@ app.get("/rebuildSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (r
             }
         });
 
-        // Bewusst ohne merge: kompletter Rebuild entfernt verwaiste Einträge
-        const batch = db.batch();
+        // Generationssicherer Rebuild: neue Shards werden vollständig geschrieben,
+        // bevor das kleine State-Dokument auf sie umgeschaltet wird.
         for (const [game, entries] of Object.entries(perGame)) {
-            batch.set(db.doc(`searchIndex/${game}`), {
-                entries,
-                count: Object.keys(entries).length,
-                updatedAt: FieldValue.serverTimestamp(),
-            });
+            await replaceMapIndex(db, 'search', game, entries);
         }
-        // Verwaiste Index-Docs entfernter Spiele abräumen
-        const existingIndexes = await db.collection('searchIndex').get();
-        existingIndexes.docs.forEach(indexDoc => {
-            if (!registryGameIds.includes(indexDoc.id)) {
-                console.log(`Deleting orphaned search index for removed game: ${indexDoc.id}`);
-                batch.delete(indexDoc.ref);
+        // Verwaiste State-/Shard-Generationen entfernter Spiele abräumen.
+        const existingStates = await db.collection('searchIndexState').get();
+        for (const stateDoc of existingStates.docs) {
+            if (!registryGameIds.includes(stateDoc.id)) {
+                console.log(`Deleting orphaned search index for removed game: ${stateDoc.id}`);
+                await deleteMapIndex(db, 'search', stateDoc.id);
             }
-        });
-        await batch.commit();
+        }
 
         const counts = Object.fromEntries(
             Object.entries(perGame).map(([game, entries]) => [game, Object.keys(entries).length])
@@ -6707,7 +6969,7 @@ app.get("/rebuildSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (r
 });
 
 /**
- * Kompletter Neuaufbau des Nutzer-Suchindex (userSearchIndex/all) aus der
+ * Kompletter Neuaufbau des skalierbaren Nutzer-Suchindexes aus der
  * profiles-Collection. Einmalig nach dem Deploy aufrufen (Backfill) oder zur
  * Reparatur. Danach hält onProfileWrite den Index inkrementell aktuell.
  * Example: https://us-central1-YOUR-PROJECT.cloudfunctions.net/api/rebuildUserSearchIndex
@@ -6729,12 +6991,7 @@ app.get("/rebuildUserSearchIndex", authenticate, verifyAppCheckWhenEnabled, asyn
             entries[doc.id] = buildUserIndexEntry(data);
         });
 
-        // Bewusst ohne merge: kompletter Rebuild entfernt verwaiste Einträge
-        await db.doc('userSearchIndex/all').set({
-            entries,
-            count: Object.keys(entries).length,
-            updatedAt: FieldValue.serverTimestamp(),
-        });
+        await replaceMapIndex(db, 'user', 'all', entries);
 
         console.log(`User search index rebuilt: ${Object.keys(entries).length} entries`);
         return res.json({ success: true, count: Object.keys(entries).length });

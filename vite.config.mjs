@@ -12,6 +12,20 @@ export default defineConfig({
         host: '127.0.0.1',
         port: 3000,
         strictPort: true,
+        proxy: {
+            '/api': {
+                target: 'https://us-central1-planetcreationsdotnet.cloudfunctions.net',
+                changeOrigin: true,
+                configure(proxy) {
+                    // Browser-Requests von localhost bleiben same-origin. Der
+                    // Dev-Proxy ruft die Function serverseitig ohne Browser-Origin
+                    // auf, sodass die produktive CORS-Allowlist strikt bleiben kann.
+                    proxy.on('proxyReq', proxyRequest => {
+                        proxyRequest.removeHeader('origin');
+                    });
+                },
+            },
+        },
     },
     build: {
         emptyOutDir: true,

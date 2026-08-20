@@ -1,8 +1,7 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './config';
+import { fetchScalableMapIndex } from './scalableIndexService';
 
-// Kompakter Suchindex: ein Firestore-Dokument pro Spiel (searchIndex/{game}),
-// gepflegt vom Cloud-Function-Trigger syncCreationToSearchIndex.
+// Größenbasierter Suchindex: ein State-Dokument und beliebig viele Shards pro
+// Spiel, gepflegt vom Cloud-Function-Trigger syncCreationToSearchIndex.
 // Die kurzen Feldnamen müssen zu buildIndexEntry in functions/index.js passen.
 
 /**
@@ -39,12 +38,15 @@ export function entryToCreation(id, e) {
 }
 
 /**
- * Lädt den Suchindex eines Spiels (genau 1 Firestore-Read) und liefert
- * die Einträge als Array im Creation-Format.
+ * Lädt alle Shards eines Spiels und liefert den gemeinsamen Startseiten-Pool
+ * als Array im Creation-Format.
  */
 export async function fetchSearchIndex(game) {
-    const snap = await getDoc(doc(db, 'searchIndex', game));
-    if (!snap.exists()) return [];
-    const entries = snap.data().entries || {};
+    const scalableIndex = await fetchScalableMapIndex({
+        scopeId: game,
+        shardCollection: 'searchIndexShards',
+        stateCollection: 'searchIndexState',
+    });
+    const entries = scalableIndex?.entries || {};
     return Object.entries(entries).map(([id, entry]) => entryToCreation(id, entry));
 }

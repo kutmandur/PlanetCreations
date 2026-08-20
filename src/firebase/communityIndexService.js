@@ -1,10 +1,8 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './config';
 import { entryToCreation } from './searchIndexService';
+import { fetchScalableMapIndex } from './scalableIndexService';
 
-// Community-Suchindex: ein Firestore-Dokument pro Community
-// (communitySearchIndex/{communityId}), gepflegt von den Cloud-Function-
-// Triggern syncCommunityLinkToIndex / syncCreationToCommunityIndexes.
+// Größenbasierter Community-Suchindex: State + Shards pro Community, gepflegt
+// von syncCommunityLinkToIndex / syncCreationToCommunityIndexes.
 // Die kurzen Feldnamen müssen zu buildCommunityIndexEntry in
 // functions/index.js passen.
 
@@ -34,11 +32,14 @@ export function communityEntryToCreation(id, e, communityId) {
 }
 
 /**
- * Lädt den Suchindex einer Community (genau 1 Firestore-Read).
+ * Lädt alle Shards des Suchindexes einer Community.
  */
 export async function fetchCommunityIndex(communityId) {
-    const snap = await getDoc(doc(db, 'communitySearchIndex', communityId));
-    if (!snap.exists()) return [];
-    const entries = snap.data().entries || {};
+    const scalableIndex = await fetchScalableMapIndex({
+        scopeId: communityId,
+        shardCollection: 'communitySearchIndexShards',
+        stateCollection: 'communitySearchIndexState',
+    });
+    const entries = scalableIndex?.entries || {};
     return Object.entries(entries).map(([id, entry]) => communityEntryToCreation(id, entry, communityId));
 }

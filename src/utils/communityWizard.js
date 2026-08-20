@@ -64,6 +64,22 @@ export const isOptionalHttpUrl = (value, httpsOnly = false) => {
   }
 };
 
+export const isYoutubeChannelUrl = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return true;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.replace(/^www\./, '');
+    return parsed.protocol === 'https:' &&
+      ['youtube.com', 'm.youtube.com'].includes(host) &&
+      /^\/(?:@[^/]+|channel\/UC[\w-]{22}|c\/[^/]+|user\/[^/]+)\/?$/.test(
+        parsed.pathname
+      );
+  } catch {
+    return false;
+  }
+};
+
 export const cleanCommunitySocialLinks = (socialLinks = {}) =>
   Object.fromEntries(COMMUNITY_SOCIAL_FIELDS
     .map(platform => [platform.id, String(socialLinks[platform.id] || '').trim()])
@@ -137,7 +153,7 @@ export const getCommunityWizardStepError = (
         return 'Banner Image URL must be a valid http(s) URL.';
       }
       if (!isOptionalHttpUrl(state.profileImageUrl)) {
-        return 'Profile Image URL must be a valid http(s) URL.';
+        return 'Logo URL must be a valid http(s) URL.';
       }
       return null;
     case 'games':
@@ -162,6 +178,9 @@ export const getCommunityWizardStepError = (
         !isOptionalHttpUrl(state.socialLinks?.[platform.id], true));
       if (invalidPlatform) {
         return `${invalidPlatform.label} link must be a valid https:// URL.`;
+      }
+      if (!isYoutubeChannelUrl(state.socialLinks?.youtube)) {
+        return 'YouTube Channel must link to a YouTube channel, not a video.';
       }
       const serverId = String(state.discordServerId || '').trim();
       if (serverId && !/^\d{17,20}$/.test(serverId)) {

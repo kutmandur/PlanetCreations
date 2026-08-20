@@ -1,6 +1,5 @@
 import Fuse from 'fuse.js';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './config';
+import { fetchScalableMapIndex } from './scalableIndexService';
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
 
@@ -20,17 +19,21 @@ export function entryToUser(id, entry) {
 }
 
 /**
- * Loads the compact global user index with one Firestore document read.
+ * Loads every shard of the compact global user index.
  * A small module cache also protects non-React callers such as invite modals
- * from re-reading the document on every debounced keystroke.
+ * from re-reading the shards on every debounced keystroke.
  */
 export async function fetchUserSearchIndex() {
     if (cachedUsers && Date.now() < cacheExpiresAt) return cachedUsers;
     if (pendingFetch) return pendingFetch;
 
-    pendingFetch = getDoc(doc(db, 'userSearchIndex', 'all'))
-        .then(snapshot => {
-            const entries = snapshot.exists() ? snapshot.data().entries || {} : {};
+    pendingFetch = fetchScalableMapIndex({
+        scopeId: 'all',
+        shardCollection: 'userSearchIndexShards',
+        stateCollection: 'userSearchIndexState',
+    })
+        .then(scalableIndex => {
+            const entries = scalableIndex?.entries || {};
             cachedUsers = Object.entries(entries).map(([id, entry]) => entryToUser(id, entry));
             cacheExpiresAt = Date.now() + CACHE_TTL_MS;
             return cachedUsers;

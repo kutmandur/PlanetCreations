@@ -8,7 +8,7 @@ const exportedFunctions = require("./index");
 test("exports every function as a second-generation endpoint", () => {
   const endpoints = Object.entries(exportedFunctions);
 
-  assert.equal(endpoints.length, 81);
+  assert.equal(endpoints.length, 83);
   for (const [name, fn] of endpoints) {
     assert.equal(
       fn.__endpoint?.platform,

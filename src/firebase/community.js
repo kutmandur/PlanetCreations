@@ -1,4 +1,4 @@
-import { doc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove, setDoc, deleteDoc } from "firebase/firestore";
+import { doc, serverTimestamp, getDoc, writeBatch, collection, getDocs, query, where, arrayRemove, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./config";
 
@@ -263,4 +263,14 @@ export const deleteCommunityAsAdmin = async (communityId) => {
         });
         await updateCreationsBatch.commit();
     }
+};
+
+/**
+ * [ADMIN ONLY] Adds or removes a community from the partner list.
+ * Firestore rules enforce the admin custom claim independently of the UI.
+ */
+export const setCommunityPartnerStatus = async (communityId, isPartner) => {
+    await updateDoc(doc(db, 'communitys', communityId), {
+        isPartner: isPartner === true,
+    });
 };

@@ -5,6 +5,7 @@ import { SOCIAL_PLATFORMS } from '../../../utils/helpers';
 import Icon from '../../ui/Icon';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
 import { scheduleDataRefresh } from '../../../utils/appRefresh';
+import { isYoutubeChannelUrl } from '../../../utils/communityWizard';
 
 // Clickable social icons shown on the community banner.
 const SocialSection = ({ community, setModalMessage }) => {
@@ -24,6 +25,10 @@ const SocialSection = ({ community, setModalMessage }) => {
       if (!value) continue;
       if (!/^https:\/\//i.test(value)) {
         setModalMessage(`The ${platform.label} link must start with https://`);
+        return;
+      }
+      if (platform.id === 'youtube' && !isYoutubeChannelUrl(value)) {
+        setModalMessage('The YouTube link must point to a channel, not a video.');
         return;
       }
       cleanedLinks[platform.id] = value;

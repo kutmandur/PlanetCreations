@@ -3,7 +3,7 @@
   "description": "Cloud Functions for Firebase",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test backupFormat.test.js collaborationAccess.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationPublish.test.js collaborationVersioning.test.js communityMembership.test.js firestoreIndexes.test.js runtime.test.js security.test.js",
+    "test": "node --test backupFormat.test.js collaborationAccess.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationPublish.test.js collaborationVersioning.test.js communityMembership.test.js firestoreIndexes.test.js runtime.test.js scalableMapIndex.test.js security.test.js youtubeFeed.test.js youtubeVideoIndex.test.js youtubeWebSub.test.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",

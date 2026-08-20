@@ -54,6 +54,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [indexSubTab, setIndexSubTab] = useState('General');
     const [gameIndexes, setGameIndexes] = useState([]);
     const [communityIndexes, setCommunityIndexes] = useState([]);
+    const [otherIndexes, setOtherIndexes] = useState([]);
     const [loadingIndexes, setLoadingIndexes] = useState(false);
 
     // Bug-Reports-Tab
@@ -335,27 +336,39 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         }
     };
 
-    // Übersicht der Suchindexe laden (Spiel- und Community-Indexe + Metadaten)
+    // Übersicht aller skalierbaren Inhaltsindexe und des Migrationsstatus laden.
     const loadIndexOverview = React.useCallback(async () => {
         setLoadingIndexes(true);
         try {
-            const [gameSnap, communitySnap, communityIndexSnap] = await Promise.all([
-                getDocs(collection(db, 'searchIndex')),
+            const [
+                gameSnap,
+                communitySnap,
+                communityIndexSnap,
+                userIndexSnap,
+                showcaseIndexSnap,
+                youtubeIndexSnap,
+            ] = await Promise.all([
+                getDocs(collection(db, 'searchIndexState')),
                 getDocs(collection(db, 'communitys')),
-                getDocs(collection(db, 'communitySearchIndex')),
+                getDocs(collection(db, 'communitySearchIndexState')),
+                getDocs(collection(db, 'userSearchIndexState')),
+                getDocs(collection(db, 'showcaseIndexState')),
+                getDoc(doc(db, 'youtubeVideoIndexState', 'current')),
             ]);
             setGameIndexes(gameSnap.docs.map(d => {
                 const data = d.data();
                 return {
                     id: d.id,
-                    count: data.count ?? Object.keys(data.entries || {}).length,
+                    count: data.count ?? 0,
+                    shardCount: data.shardIds?.length || 0,
                     updatedAt: data.updatedAt || null,
                 };
             }));
             const idxMap = new Map(communityIndexSnap.docs.map(d => {
                 const data = d.data();
                 return [d.id, {
-                    count: data.count ?? Object.keys(data.entries || {}).length,
+                    count: data.count ?? 0,
+                    shardCount: data.shardIds?.length || 0,
                     updatedAt: data.updatedAt || null,
                 }];
             }));
@@ -369,9 +382,37 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                     themeColor: c.themeColor || '#A855F7',
                     memberCount: c.memberCount || 0,
                     count: idx ? idx.count : null,
+                    shardCount: idx ? idx.shardCount : 0,
                     updatedAt: idx ? idx.updatedAt : null,
                 };
             }));
+            const userState = userIndexSnap.docs.find(d => d.id === 'all')?.data();
+            const showcaseStates = showcaseIndexSnap.docs.map(d => d.data());
+            const youtubeState = youtubeIndexSnap.exists() ? youtubeIndexSnap.data() : null;
+            setOtherIndexes([
+                {
+                    id: 'users',
+                    label: 'User search',
+                    count: userState?.count ?? null,
+                    scopeCount: userState ? 1 : 0,
+                    shardCount: userState?.shardIds?.length || 0,
+                },
+                {
+                    id: 'showcases',
+                    label: 'Showcases',
+                    count: showcaseStates.reduce((sum, state) => sum + (state.count || 0), 0),
+                    scopeCount: showcaseStates.length,
+                    shardCount: showcaseStates.reduce((sum, state) =>
+                        sum + (state.shardIds?.length || 0), 0),
+                },
+                {
+                    id: 'youtube',
+                    label: 'YouTube videos',
+                    count: null,
+                    scopeCount: youtubeState ? 1 : 0,
+                    shardCount: youtubeState?.headNumber || 0,
+                },
+            ]);
         } catch (error) {
             setModalMessage(`Error loading index overview: ${error.message}`);
         } finally {
@@ -733,7 +774,25 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                             <h4 className="font-bold text-gray-800 capitalize">{idx.id.replace(/-/g, ' ')}</h4>
                                             <p className="text-3xl font-bold text-blue-500 my-2">{idx.count}</p>
                                             <p className="text-xs text-gray-500">entries</p>
+                                            <p className="text-xs text-gray-500">{idx.shardCount} shard{idx.shardCount === 1 ? '' : 's'}</p>
                                             <p className="text-xs text-gray-400 mt-2">Updated: {formatUpdatedAt(idx.updatedAt)}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                                <h3 className="mb-3 mt-8 text-center text-lg font-bold text-gray-800">Other scalable indexes</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    {otherIndexes.map(idx => (
+                                        <div key={idx.id} className="bg-white p-4 rounded-lg shadow border text-center">
+                                            <h4 className="font-bold text-gray-800">{idx.label}</h4>
+                                            <p className="text-3xl font-bold text-purple-500 my-2">
+                                                {idx.count === null ? '—' : idx.count}
+                                            </p>
+                                            <p className="text-xs text-gray-500">
+                                                {idx.scopeCount} scope{idx.scopeCount === 1 ? '' : 's'}
+                                            </p>
+                                            <p className="text-xs text-gray-500">
+                                                {idx.shardCount} shard{idx.shardCount === 1 ? '' : 's'}
+                                            </p>
                                         </div>
                                     ))}
                                 </div>
@@ -757,6 +816,9 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                                 <p className="text-sm text-gray-600 mt-2">
                                                     Index: {c.count === null ? <span className="text-orange-500 font-semibold">not built yet</span> : <span className="font-semibold">{c.count} entries</span>}
                                                 </p>
+                                                {c.count !== null && (
+                                                    <p className="text-xs text-gray-500">{c.shardCount} shard{c.shardCount === 1 ? '' : 's'}</p>
+                                                )}
                                                 <p className="text-xs text-gray-400">Updated: {formatUpdatedAt(c.updatedAt)}</p>
                                                 <button
                                                     onClick={() => handleRebuildSearchIndex('community', c.id)}

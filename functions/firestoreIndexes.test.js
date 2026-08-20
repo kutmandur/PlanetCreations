@@ -17,6 +17,13 @@ function hasCollectionGroupAscendingIndex(collectionGroup, fieldPath) {
         index.queryScope === "COLLECTION_GROUP"));
 }
 
+function hasDisabledFieldIndex(collectionGroup, fieldPath) {
+    const override = indexConfiguration.fieldOverrides.find((candidate) =>
+        candidate.collectionGroup === collectionGroup &&
+        candidate.fieldPath === fieldPath);
+    return Array.isArray(override?.indexes) && override.indexes.length === 0;
+}
+
 test("account cleanup legacy invitation queries retain their indexes", () => {
     assert.equal(
         hasCollectionGroupAscendingIndex("invitations", "targetUserId"),
@@ -26,4 +33,26 @@ test("account cleanup legacy invitation queries retain their indexes", () => {
         hasCollectionGroupAscendingIndex("invitations", "senderId"),
         true,
     );
+});
+
+test("large YouTube shard maps are excluded from automatic indexing", () => {
+    assert.equal(
+        hasDisabledFieldIndex("youtubeVideoIndexShards", "c"),
+        true,
+    );
+});
+
+test("all scalable map-index shard payloads skip automatic field indexing", () => {
+    for (const collectionGroup of [
+        "searchIndexShards",
+        "communitySearchIndexShards",
+        "userSearchIndexShards",
+        "showcaseIndexShards",
+    ]) {
+        assert.equal(
+            hasDisabledFieldIndex(collectionGroup, "e"),
+            true,
+            `${collectionGroup}.e must not create per-entry indexes`,
+        );
+    }
 });

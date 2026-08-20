@@ -142,8 +142,8 @@ const GamesManager = ({ setModalMessage }) => {
         if (nextGames.length === 0) { setModalMessage('At least one game must remain.'); return; }
         const nextDefault = getDefaultGameId() === g.id ? null : getDefaultGameId();
         if (await persist(nextGames, nextDefault)) {
-            // Zugehörige Konfig-Docs mit abräumen (searchIndex/{id} räumt der
-            // "Rebuild General Index"-Button ab — Clients dürfen dort nicht schreiben).
+            // Zugehörige Konfig-Docs abräumen. State/Shards des Suchindexes räumt
+            // der serverseitige Rebuild ab; Clients dürfen dort nicht schreiben.
             try {
                 await Promise.all([
                     deleteDoc(doc(db, 'categories', g.id)),

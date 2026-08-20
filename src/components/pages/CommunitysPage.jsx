@@ -5,6 +5,7 @@ import { collection, collectionGroup, query, onSnapshot, where, getDocs } from '
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Spinner from '../ui/Spinner';
 import CommunityCard from '../cards/CommunityCard';
+import PartnerCommunityCard from '../cards/PartnerCommunityCard';
 import InviteCommunityCard from '../cards/InviteCommunityCard';
 import FloatingActionButtonCommunity from '../ui/FloatingActionButtonCommunity';
 import FloatingActionButtonManage from '../ui/FloatingActionButtonManage';
@@ -17,22 +18,41 @@ import { getEnabledGameIds } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import { useCommunities } from '../../hooks/useCommunities';
 
+const PARTNER_TAB = 'Partner Communitys';
+const PARTNER_COMMUNITIES_VISIBLE =
+    import.meta.env.VITE_ENABLE_PARTNER_COMMUNITIES === 'true';
+const KNOWN_TABS = [PARTNER_TAB, 'Browser', 'My Communitys', 'Invitations', 'All Events', 'Collaborations'];
+
 const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState, setModalMessage }) => {
     const location = useLocation();
     const [invitations, setInvitations] = useState([]);
+    const { data: allCommunitys, isLoading: loading } = useCommunities();
+    const partnerTabAvailable = useMemo(
+        () => PARTNER_COMMUNITIES_VISIBLE &&
+            (allCommunitys || []).some(community => community.isPartner === true),
+        [allCommunitys]
+    );
+    const publicLandingTab = partnerTabAvailable ? PARTNER_TAB : 'Browser';
     const TABS = useMemo(() => [
+        ...(partnerTabAvailable ? [PARTNER_TAB] : []),
         'Browser',
         'My Communitys',
         ...(invitations.length > 0 ? ['Invitations'] : []),
         'All Events',
         'Collaborations',
-    ], [invitations.length]);
+    ], [invitations.length, partnerTabAvailable]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
+    const initialTabResolvedRef = useRef(false);
+    const initialTabAudienceRef = useRef(null);
+    const requestedTab = useMemo(
+        () => new URLSearchParams(location.search).get('tab'),
+        [location.search]
+    );
+    const hasValidRequestedTab = KNOWN_TABS.includes(requestedTab) &&
+        (requestedTab !== PARTNER_TAB || partnerTabAvailable);
     
     const [isPending, startTransition] = useTransition();
-
-    const { data: allCommunitys, isLoading: loading } = useCommunities();
 
     const [myCommunityIds, setMyCommunityIds] = useState([]);
     const [userHasCommunity, setUserHasCommunity] = useState(false);
@@ -136,17 +156,54 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     }, [communitysState.activeGameFilter, communitysState.activeTab, GAME_TABS]);
 
     useEffect(() => {
+        if (loading) return undefined;
+        const audience = user?.uid || 'signed-out';
+        if (initialTabAudienceRef.current !== audience) {
+            initialTabAudienceRef.current = audience;
+            initialTabResolvedRef.current = false;
+        }
+
         if (user && user.uid) {
             const membershipsRef = collection(db, 'profiles', user.uid, 'communityMemberships');
             const unsubscribe = onSnapshot(membershipsRef, (snapshot) => {
                 const ids = snapshot.docs.map(doc => doc.id);
                 setMyCommunityIds(ids);
+
+                if (!initialTabResolvedRef.current && !hasValidRequestedTab) {
+                    setCommunitysState(prev => ({
+                        ...prev,
+                        activeTab: ids.length > 0 ? 'My Communitys' : publicLandingTab,
+                    }));
+                    initialTabResolvedRef.current = true;
+                }
             });
             return () => unsubscribe();
         } else {
             setMyCommunityIds([]);
+            if (!initialTabResolvedRef.current && !hasValidRequestedTab) {
+                setCommunitysState(prev => ({ ...prev, activeTab: publicLandingTab }));
+                initialTabResolvedRef.current = true;
+            }
         }
-    }, [user]);
+    }, [
+        user,
+        hasValidRequestedTab,
+        loading,
+        publicLandingTab,
+        setCommunitysState,
+    ]);
+
+    useEffect(() => {
+        if (!loading && !partnerTabAvailable &&
+            communitysState.activeTab === PARTNER_TAB) {
+            setCommunitysState(prev => ({...prev, activeTab: 'Browser'}));
+        }
+    }, [
+        communitysState.activeTab,
+        loading,
+        partnerTabAvailable,
+        setCommunitysState,
+    ]);
 
     useEffect(() => {
         if (!user?.uid) {
@@ -169,17 +226,26 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
     }, [user, setModalMessage]);
 
     useEffect(() => {
-        const requestedTab = new URLSearchParams(location.search).get('tab');
         if (requestedTab && TABS.includes(requestedTab)) {
             setCommunitysState(prev => ({ ...prev, activeTab: requestedTab }));
+            initialTabResolvedRef.current = true;
         }
-    }, [location.search, setCommunitysState, TABS]);
+    }, [requestedTab, setCommunitysState, TABS]);
 
     useEffect(() => {
         if (communitysState.activeTab === 'Invitations' && invitations.length === 0) {
-            setCommunitysState(prev => ({ ...prev, activeTab: 'My Communitys' }));
+            setCommunitysState(prev => ({
+                ...prev,
+                activeTab: myCommunityIds.length > 0 ? 'My Communitys' : publicLandingTab,
+            }));
         }
-    }, [communitysState.activeTab, invitations.length, setCommunitysState]);
+    }, [
+        communitysState.activeTab,
+        invitations.length,
+        myCommunityIds.length,
+        publicLandingTab,
+        setCommunitysState,
+    ]);
 
     useEffect(() => {
         const canCreateRoles = ['influencer', 'moderator', 'admin'];
@@ -206,7 +272,9 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
         let communitys;
         const sourceCommunities = allCommunitys || [];
 
-        if (communitysState.activeTab === 'My Communitys') {
+        if (communitysState.activeTab === PARTNER_TAB) {
+            communitys = sourceCommunities.filter(c => c.isPartner === true);
+        } else if (communitysState.activeTab === 'My Communitys') {
             if (!user) return [];
             communitys = sourceCommunities.filter(c => myCommunityIds.includes(c.id));
         } else {
@@ -257,7 +325,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                 setPage(prevPage => prevPage + 1);
             }
         };
-        if (communitysState.activeTab === 'Browser') {
+        if ([PARTNER_TAB, 'Browser', 'My Communitys'].includes(communitysState.activeTab)) {
             window.addEventListener('scroll', handleScroll);
         }
         return () => window.removeEventListener('scroll', handleScroll);
@@ -273,6 +341,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
         }
 
         switch (communitysState.activeTab) {
+            case PARTNER_TAB:
             case 'Browser':
             case 'My Communitys':
                 return (
@@ -296,18 +365,26 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                                 />
                             </div>
                         )}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        <div className={communitysState.activeTab === PARTNER_TAB
+                            ? 'grid grid-cols-1 gap-8 lg:grid-cols-2'
+                            : 'grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}>
                             {visibleCommunities.map(community => (
-                                <CommunityCard key={community.id} community={community} />
+                                communitysState.activeTab === PARTNER_TAB
+                                    ? <PartnerCommunityCard key={community.id} community={community} />
+                                    : <CommunityCard key={community.id} community={community} />
                             ))}
                         </div>
-                        {hasMore && communitysState.activeTab === 'Browser' && <div className="text-center col-span-full p-8"><Spinner /></div>}
+                        {hasMore && <div className="text-center col-span-full p-8"><Spinner /></div>}
                         {!hasMore && communitysState.activeTab === 'Browser' && visibleCommunities.length > 0 && (
                             <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>
                         )}
                         {visibleCommunities.length === 0 && (
                             <p className="text-center text-gray-500 mt-10 text-xl">
-                                {communitysState.activeTab === 'My Communitys' ? "You haven't joined any communities yet." : "No communities found for this filter."}
+                                {communitysState.activeTab === 'My Communitys'
+                                    ? "You haven't joined any communities yet."
+                                    : communitysState.activeTab === PARTNER_TAB
+                                        ? 'No partner communities are available yet.'
+                                        : 'No communities found for this filter.'}
                             </p>
                         )}
                     </>
@@ -346,7 +423,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
         }
     };
 
-    const isBrowsingCommunities = communitysState.activeTab === 'Browser' || communitysState.activeTab === 'My Communitys';
+    const isBrowsingCommunities = [PARTNER_TAB, 'Browser', 'My Communitys'].includes(communitysState.activeTab);
 
     return (
         <div className="container mx-auto p-4 sm:p-8" style={activeGameColor.style}>

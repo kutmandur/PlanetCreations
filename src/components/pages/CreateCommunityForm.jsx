@@ -662,7 +662,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
       </div>
       <div>
         <label className="mb-2 block font-bold text-gray-700">
-          Profile Image URL (Square)
+          Logo URL (Square)
         </label>
         <input
           type="url"
@@ -675,7 +675,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         {profileImageUrl && (
           <img
             src={profileImageUrl}
-            alt="Profile preview"
+            alt="Logo preview"
             className="mt-3 h-24 w-24 rounded-full border-4 object-cover"
             style={{ borderColor: themeColor }}
           />
