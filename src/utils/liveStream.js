@@ -47,7 +47,7 @@ const toMillis = (ts) => {
 // latenz-kompensierte eigene Snapshot direkt nach goLive (serverTimestamp noch
 // nicht aufgelöst) und zählt als aktiv, damit der Badge nicht flackert.
 // url ist bewusst NICHT Pflicht: Suchindex-Einträge tragen nur platform + expiry.
-export function isLiveStreamActive(liveStream, now = Date.now()) {
+function isLiveEntryActive(liveStream, now = Date.now()) {
     if (!liveStream || !liveStream.platform) return false;
     const expiresAt = toMillis(liveStream.expiresAt);
     if (expiresAt !== null) return expiresAt > now;
@@ -55,6 +55,20 @@ export function isLiveStreamActive(liveStream, now = Date.now()) {
     if (liveStream.startedAt === null) return true;
     const startedAt = toMillis(liveStream.startedAt);
     return startedAt !== null && startedAt + LIVE_STREAM_MAX_AGE_MS > now;
+}
+
+export function getActiveLiveStreams(liveStream, now = Date.now()) {
+    if (!liveStream) return [];
+    const streams = liveStream.streams && typeof liveStream.streams === 'object' ?
+        Object.entries(liveStream.streams).map(([platform, stream]) => ({
+            ...stream,
+            platform,
+        })) : [liveStream];
+    return streams.filter((stream) => isLiveEntryActive(stream, now));
+}
+
+export function isLiveStreamActive(liveStream, now = Date.now()) {
+    return getActiveLiveStreams(liveStream, now).length > 0;
 }
 
 // Merkt lokal, welche Creation DIESER Client live geschaltet hat, damit das

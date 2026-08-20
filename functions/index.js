@@ -24,6 +24,23 @@ const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 const {
+    getMatchDecision,
+    normalizeText: normalizeLiveMatchText,
+} = require("./liveStreamMatcher");
+const {
+    claimBelongsToSession,
+    getLiveChannelClaimId,
+    getLiveChannelIdentity,
+    isClaimHeldByAnotherUser,
+} = require("./liveChannelClaims");
+const {
+    creationLiveStreamFromSession,
+    getPrimaryPlatform,
+    getSessionStreams,
+    withPrimaryStreamFields,
+} = require("./liveStreamPlatforms");
+const {isValidEventSubSignature} = require("./twitchEventSub");
+const {
     S3Client,
     PutObjectCommand,
     GetObjectCommand,
@@ -686,6 +703,24 @@ exports.registerDesktopClient = onCall(async (data, context) => {
         };
         tx.update(userRef, {clients});
     });
+    const activeSessionSnap = await db.doc(`liveSessions/${uid}`).get();
+    if (activeSessionSnap.exists && activeSessionSnap.data().status === "active") {
+        const activeSession = activeSessionSnap.data();
+        const queueUpdate = {
+            uid,
+            clientId,
+            streamSession: liveSessionForClient(activeSession),
+            updatedAt: Timestamp.now(),
+        };
+        if (activeSession.showQr && activeSession.creationId) {
+            queueUpdate.overlayQr = {
+                creationId: activeSession.creationId,
+                title: String(activeSession.creationTitle || "").slice(0, 200),
+                setAt: Timestamp.now(),
+            };
+        }
+        await getClientQueueRef(uid, clientId).set(queueUpdate, {merge: true});
+    }
     return {success: true, clientId};
 });
 
@@ -2348,10 +2383,16 @@ exports.onProfileUpdate = documentUpdated('profiles/{userId}', async (change, co
 
 const twitchClientId = defineSecret("TWITCH_CLIENT_ID");
 const twitchClientSecret = defineSecret("TWITCH_CLIENT_SECRET");
+const twitchEventSubSecret = defineSecret("TWITCH_EVENTSUB_SECRET");
 const youtubeApiKey = defineSecret("YOUTUBE_API_KEY");
-const LIVE_SECRETS = {secrets: [twitchClientId, twitchClientSecret, youtubeApiKey]};
+const LIVE_SECRETS = {
+    secrets: [twitchClientId, twitchClientSecret, twitchEventSubSecret, youtubeApiKey],
+};
 
 const LIVE_STREAM_TTL_MS = 12 * 60 * 60 * 1000;
+const LIVE_CATEGORY_GRACE_MS = 2 * 60 * 1000;
+const LIVE_AUTO_SWITCH_COOLDOWN_MS = 2 * 60 * 1000;
+const LIVE_NOTIFICATION_CAP = 30;
 const LIVE_PLATFORM_HOSTS = {
     twitch: ["twitch.tv", "www.twitch.tv", "m.twitch.tv"],
     youtube: ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"],
@@ -2410,7 +2451,7 @@ async function getTwitchAppToken() {
     return twitchTokenCache.token;
 }
 
-async function verifyStreamIsLive(platform, parsed) {
+async function fetchStreamMetadata(platform, parsed) {
     if (platform === "twitch") {
         const token = await getTwitchAppToken();
         const response = await fetch(
@@ -2419,7 +2460,17 @@ async function verifyStreamIsLive(platform, parsed) {
         );
         if (!response.ok) throw new Error(`Twitch API request failed (${response.status}).`);
         const body = await response.json();
-        return Array.isArray(body.data) && body.data.length > 0;
+        const stream = Array.isArray(body.data) ? body.data[0] : null;
+        return stream ? {
+            isLive: true,
+            streamId: stream.id || null,
+            broadcasterId: stream.user_id || null,
+            broadcasterLogin: parsed.twitchLogin,
+            title: String(stream.title || "").slice(0, 300),
+            tags: Array.isArray(stream.tags) ? stream.tags.slice(0, 20) : [],
+            categoryId: stream.game_id || null,
+            categoryName: String(stream.game_name || "").slice(0, 100),
+        } : {isLive: false};
     }
     if (platform === "youtube") {
         const response = await fetch(
@@ -2428,25 +2479,275 @@ async function verifyStreamIsLive(platform, parsed) {
         );
         if (!response.ok) throw new Error(`YouTube API request failed (${response.status}).`);
         const body = await response.json();
-        return body.items?.[0]?.snippet?.liveBroadcastContent === "live";
+        const video = body.items?.[0] || null;
+        const snippet = video?.snippet || {};
+        return {
+            isLive: snippet.liveBroadcastContent === "live",
+            streamId: parsed.youtubeVideoId,
+            broadcasterId: snippet.channelId || null,
+            broadcasterLogin: null,
+            title: String(snippet.title || "").slice(0, 300),
+            tags: Array.isArray(snippet.tags) ? snippet.tags.slice(0, 20) : [],
+            categoryId: snippet.categoryId || null,
+            categoryName: "",
+        };
     }
-    return false;
+    return {isLive: false};
+}
+
+async function verifyStreamIsLive(platform, parsed) {
+    return (await fetchStreamMetadata(platform, parsed)).isLive;
+}
+
+function liveTitleHash(metadata) {
+    return crypto.createHash("sha256").update([
+        normalizeLiveMatchText(metadata?.title),
+        normalizeLiveMatchText(metadata?.categoryName),
+        String(metadata?.categoryId || ""),
+    ].join("|")).digest("hex").slice(0, 24);
+}
+
+function makeStreamNotification(type, data = {}) {
+    return {
+        id: crypto.randomUUID(),
+        type,
+        title: String(data.title || "Stream update").slice(0, 120),
+        message: String(data.message || "").slice(0, 500),
+        createdAt: Timestamp.now(),
+        titleHash: data.titleHash || null,
+        proposalCreationId: data.proposalCreationId || null,
+        proposalCreationTitle: data.proposalCreationTitle || null,
+        dismissed: false,
+    };
+}
+
+function appendStreamNotification(items, notification) {
+    const existing = Array.isArray(items) ? items : [];
+    const duplicate = existing.some((item) => (
+        !item.dismissed && item.type === notification.type &&
+        item.titleHash === notification.titleHash &&
+        item.proposalCreationId === notification.proposalCreationId
+    ));
+    if (duplicate) return existing;
+    return [notification, ...existing].slice(0, LIVE_NOTIFICATION_CAP);
+}
+
+async function resolveLiveGameId(metadata, requestedGameId = null) {
+    if (requestedGameId) {
+        const validGameIds = await getRegistryGameIds();
+        return validGameIds.includes(requestedGameId) ? requestedGameId : null;
+    }
+    const categoryName = normalizeLiveMatchText(metadata?.categoryName);
+    if (!categoryName) return null;
+    const registrySnap = await db.doc("meta/games").get();
+    const games = registrySnap.data()?.games || [
+        {id: "planet-coaster", name: "Planet Coaster"},
+        {id: "planet-coaster-2", name: "Planet Coaster 2"},
+        {id: "planet-zoo", name: "Planet Zoo"},
+    ];
+    return games.find((game) => normalizeLiveMatchText(game.name) === categoryName)?.id || null;
+}
+
+async function getOwnLiveCreations(uid, gameId = null) {
+    const snapshot = await db.collection("creations").where("userId", "==", uid).get();
+    return snapshot.docs.map((docSnap) => ({id: docSnap.id, ...docSnap.data()}))
+        .filter((creation) => !creation.sourceCollaborationId && (!gameId || creation.game === gameId));
+}
+
+function publicLiveSuggestions(decision) {
+    return (decision?.ranked || []).slice(0, 20).map((item) => ({
+        creationId: item.creationId,
+        title: item.title,
+        game: item.game,
+        category: item.category,
+        imageUrl: item.imageUrl,
+        confidence: item.confidence,
+        reasons: item.reasons,
+    }));
+}
+
+async function getLiveMatchForUser(uid, metadata, gameId, currentCreationId = null) {
+    if (!gameId) return {ranked: [], best: null, current: null, margin: 0, confident: false};
+    const creations = await getOwnLiveCreations(uid, gameId);
+    return getMatchDecision({
+        title: metadata.title,
+        tags: metadata.tags,
+        category: metadata.categoryName,
+    }, creations, currentCreationId);
+}
+
+function liveSessionForClient(session) {
+    if (!session) return null;
+    const streams = Object.fromEntries(Object.entries(getSessionStreams(session)).map(
+        ([platform, stream]) => [platform, {
+            platform,
+            url: stream.url,
+            streamTitle: stream.streamTitle || "",
+            categoryName: stream.categoryName || "",
+            startedAt: stream.startedAt || session.startedAt || null,
+            verifiedAt: stream.verifiedAt || null,
+        }],
+    ));
+    return {
+        sessionId: session.sessionId,
+        status: session.status || "active",
+        creationId: session.creationId,
+        creationTitle: session.creationTitle || "",
+        creationGame: session.creationGame || "",
+        platform: session.platform,
+        primaryPlatform: getPrimaryPlatform(session),
+        url: session.url,
+        streams,
+        streamTitle: session.streamTitle || "",
+        categoryName: session.categoryName || "",
+        streamingClientId: session.streamingClientId || null,
+        selectionRevision: session.selectionRevision || 1,
+        manualSelectionLocked: session.manualSelectionLocked === true,
+        experimentalAuto: session.experimentalAuto === true,
+        showQr: session.showQr !== false,
+        suggestions: Array.isArray(session.suggestions) ? session.suggestions.slice(0, 10) : [],
+        notifications: Array.isArray(session.notifications) ? session.notifications.slice(0, LIVE_NOTIFICATION_CAP) : [],
+        streamNotificationPrefs: session.streamNotificationPrefs || {},
+        startedAt: session.startedAt || null,
+        updatedAt: session.updatedAt || null,
+    };
+}
+
+async function syncLiveStateToClients(uid, session, creation, {
+    clearCreationIds = [],
+    preserveQr = false,
+} = {}) {
+    const clients = await db.collection(`clientInstallQueues/${uid}/clients`).get();
+    if (clients.empty) return;
+    const now = Timestamp.now();
+    const batch = db.batch();
+    clients.docs.forEach((clientDoc) => {
+        const update = {
+            streamSession: session ? liveSessionForClient(session) : FieldValue.delete(),
+            updatedAt: now,
+        };
+        if (!preserveQr) update.overlayQr = creation ? {
+            creationId: creation.id,
+            title: String(creation.title || "").slice(0, 200),
+            setAt: now,
+        } : FieldValue.delete();
+        if (clearCreationIds.length) update.overlayQrClear = {
+            creationIds: clearCreationIds,
+            setAt: now,
+        };
+        batch.set(clientDoc.ref, update, {merge: true});
+    });
+    await batch.commit();
+}
+
+function twitchEventSubCallbackUrl() {
+    return process.env.TWITCH_EVENTSUB_CALLBACK_URL ||
+        "https://us-central1-planetcreationsdotnet.cloudfunctions.net/twitchEventSub";
+}
+
+async function ensureTwitchChannelUpdateSubscription(broadcasterId) {
+    if (!broadcasterId || !twitchEventSubSecret.value()) return;
+    const token = await getTwitchAppToken();
+    for (const subscription of [
+        {type: "channel.update", version: "2"},
+        {type: "stream.offline", version: "1"},
+    ]) {
+        const response = await fetch("https://api.twitch.tv/helix/eventsub/subscriptions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Client-ID": twitchClientId.value(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ...subscription,
+                condition: {broadcaster_user_id: broadcasterId},
+                transport: {
+                    method: "webhook",
+                    callback: twitchEventSubCallbackUrl(),
+                    secret: twitchEventSubSecret.value(),
+                },
+            }),
+        });
+        // 409 means an equivalent active/pending subscription already exists.
+        if (!response.ok && response.status !== 409) {
+            const body = await response.text();
+            throw new Error(`Twitch EventSub subscription failed (${response.status}): ${body.slice(0, 200)}`);
+        }
+    }
+}
+
+exports.getLiveCreationSuggestions = onCallWith(LIVE_SECRETS, async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const platform = data?.platform;
+    if (!LIVE_PLATFORM_HOSTS[platform]) {
+        throw new functions.https.HttpsError("invalid-argument", "Unsupported streaming platform.");
+    }
+    const parsed = parseStreamUrl(platform, data?.url);
+    if (!parsed) throw new functions.https.HttpsError("invalid-argument", "A valid stream URL is required.");
+    let metadata;
+    try {
+        metadata = await fetchStreamMetadata(platform, parsed);
+    } catch (error) {
+        console.error("Live metadata preview failed:", error);
+        throw new functions.https.HttpsError("unavailable", "Stream metadata is temporarily unavailable.");
+    }
+    if (!metadata.isLive) {
+        throw new functions.https.HttpsError("failed-precondition", "No live stream was found on this channel.");
+    }
+    const gameId = await resolveLiveGameId(metadata, data?.game || null);
+    const decision = await getLiveMatchForUser(uid, metadata, gameId);
+    return {
+        streamTitle: metadata.title || "",
+        categoryName: metadata.categoryName || "",
+        gameId,
+        confident: decision.confident,
+        bestCreationId: decision.best?.creationId || null,
+        suggestions: publicLiveSuggestions(decision),
+    };
+});
+
+function parseRequestedLiveStreams(data) {
+    const rawStreams = Array.isArray(data?.streams) ? data.streams :
+        [{platform: data?.platform, url: data?.url}];
+    if (rawStreams.length < 1 || rawStreams.length > 2) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "One or two stream platforms are required.",
+        );
+    }
+    const requested = [];
+    const seenPlatforms = new Set();
+    for (const raw of rawStreams) {
+        const platform = raw?.platform;
+        if (!LIVE_PLATFORM_HOSTS[platform] || seenPlatforms.has(platform)) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Each of Twitch and YouTube can only be linked once.",
+            );
+        }
+        const parsed = parseStreamUrl(platform, raw?.url);
+        if (!parsed) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                platform === "youtube" ?
+                    "A valid https YouTube video/stream URL is required (watch?v=... or youtu.be/...)." :
+                    "A valid https Twitch channel URL is required.",
+            );
+        }
+        seenPlatforms.add(platform);
+        requested.push({platform, parsed});
+    }
+    const preferredPrimary = data?.primaryPlatform || data?.platform;
+    const primaryPlatform = seenPlatforms.has(preferredPrimary) ?
+        preferredPrimary : requested[0].platform;
+    return {requested, primaryPlatform};
 }
 
 exports.goLive = onCallWith(LIVE_SECRETS, async (data, context) => {
     const uid = requireAuthenticated(context);
     const creationId = requireCreationId(data && data.creationId);
-    const platform = data?.platform;
-    if (!LIVE_PLATFORM_HOSTS[platform]) {
-        throw new functions.https.HttpsError("invalid-argument", "Platform must be 'twitch' or 'youtube'.");
-    }
-    const parsed = parseStreamUrl(platform, data?.url);
-    if (!parsed) {
-        throw new functions.https.HttpsError("invalid-argument",
-            platform === "youtube" ?
-                "A valid https YouTube video/stream URL is required (watch?v=... or youtu.be/...)." :
-                "A valid https Twitch channel URL is required.");
-    }
+    const {requested, primaryPlatform} = parseRequestedLiveStreams(data);
 
     const creationRef = db.doc(`creations/${creationId}`);
     const creationSnap = await creationRef.get();
@@ -2456,32 +2757,129 @@ exports.goLive = onCallWith(LIVE_SECRETS, async (data, context) => {
     if (creationSnap.data().userId !== uid) {
         throw new functions.https.HttpsError("permission-denied", "You can only go live with your own creations.");
     }
+    if (creationSnap.data().sourceCollaborationId) {
+        throw new functions.https.HttpsError("failed-precondition", "Collaborations cannot be linked to live streams.");
+    }
 
-    let isLive;
+    let verifiedStreams;
     try {
-        isLive = await verifyStreamIsLive(platform, parsed);
+        verifiedStreams = await Promise.all(requested.map(async ({platform, parsed}) => ({
+            platform,
+            parsed,
+            metadata: await fetchStreamMetadata(platform, parsed),
+        })));
     } catch (error) {
         console.error("Live verification failed:", error);
         throw new functions.https.HttpsError("unavailable", "Stream verification is temporarily unavailable. Please try again.");
     }
-    if (!isLive) {
-        throw new functions.https.HttpsError("failed-precondition", "No live stream was found on this channel.");
+    const offlinePlatform = verifiedStreams.find((stream) => !stream.metadata.isLive)?.platform;
+    if (offlinePlatform) {
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            `No live ${offlinePlatform === "youtube" ? "YouTube" : "Twitch"} stream was found.`,
+        );
+    }
+
+    const primaryVerified = verifiedStreams.find((stream) => stream.platform === primaryPlatform);
+    const metadata = primaryVerified.metadata;
+    const selectionMode = data?.selectionMode === "auto" ? "auto" : "manual";
+    const decision = await getLiveMatchForUser(uid, metadata, creationSnap.data().game, creationId);
+    if (selectionMode === "auto" && (!decision.confident || decision.best?.creationId !== creationId)) {
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            "The experimental matcher did not find a sufficiently confident creation.",
+        );
+    }
+
+    const liveUserData = (await db.doc(`users/${uid}`).get()).data() || {};
+    let streamingClientId = null;
+    if (data?.clientId) {
+        streamingClientId = requireClientId(data.clientId);
+        if (!liveUserData.clients?.[streamingClientId]?.remoteInstall) {
+            throw new functions.https.HttpsError("not-found", "The streaming desktop client is not registered.");
+        }
     }
 
     const now = Timestamp.now();
-    const liveStream = {
-        platform,
-        url: parsed.url,
+    const sessionId = crypto.randomUUID();
+    const expiresAt = Timestamp.fromMillis(Date.now() + LIVE_STREAM_TTL_MS);
+    const sessionRef = db.doc(`liveSessions/${uid}`);
+    const platformStreams = {};
+    for (const {platform, parsed, metadata: streamMetadata} of verifiedStreams) {
+        const channelClaimId = getLiveChannelClaimId(platform, streamMetadata);
+        if (!channelClaimId) {
+            throw new functions.https.HttpsError(
+                "unavailable",
+                "The streaming platform did not provide a stable channel identity.",
+            );
+        }
+        platformStreams[platform] = {
+            platform,
+            url: parsed.url,
+            platformStreamId: streamMetadata.streamId || null,
+            broadcasterId: streamMetadata.broadcasterId || null,
+            broadcasterLogin: streamMetadata.broadcasterLogin || null,
+            channelClaimId,
+            streamTitle: streamMetadata.title || "",
+            streamTags: streamMetadata.tags || [],
+            categoryId: streamMetadata.categoryId || null,
+            categoryName: streamMetadata.categoryName || "",
+            initialCategoryId: streamMetadata.categoryId || null,
+            titleHash: liveTitleHash(streamMetadata),
+            categoryMismatchSince: null,
+            startedAt: now,
+            updatedAt: now,
+            verifiedAt: now,
+            expiresAt,
+        };
+    }
+    const creationData = creationSnap.data();
+    const session = withPrimaryStreamFields({
+        sessionId,
+        uid,
+        status: "active",
+        creationId,
+        creationTitle: String(creationData.title || "").slice(0, 200),
+        creationGame: creationData.game || "",
+        streamingClientId,
+        selectionRevision: 1,
+        selectionMode,
+        manualSelectionLocked: selectionMode !== "auto",
+        experimentalAuto: data?.experimentalAuto === true,
+        showQr: data?.showQr !== false,
+        suggestions: publicLiveSuggestions(decision),
+        notifications: [],
+        streamNotificationPrefs: liveUserData.streamNotificationDefaults?.muted ?
+            {mode: "permanent", mutedUntil: null} : {mode: "off", mutedUntil: null},
+        lastAutomaticSwitchAt: selectionMode === "auto" ? now : null,
         startedAt: now,
-        expiresAt: Timestamp.fromMillis(Date.now() + LIVE_STREAM_TTL_MS),
+        updatedAt: now,
         verifiedAt: now,
-    };
+        expiresAt,
+    }, platformStreams, primaryPlatform);
+    const liveStream = creationLiveStreamFromSession(session);
+    const newClaimIds = new Set(Object.values(platformStreams).map((stream) => stream.channelClaimId));
 
-    // Max. 1 Live-Creation pro User: die alte Session (Pointer auf users/{uid})
-    // wird in derselben Transaktion beendet.
+    // Max. 1 Live-Creation pro User und max. 1 User pro Plattformkanal. Das
+    // serverseitige Claim-Dokument macht auch zwei gleichzeitig manipulierte
+    // Clients race-sicher; Twitch- und YouTube-Kanäle haben getrennte IDs.
     const userRef = db.doc(`users/${uid}`);
     await db.runTransaction(async (tx) => {
         const userSnap = await tx.get(userRef);
+        const previousSessionSnap = await tx.get(sessionRef);
+        const newClaimSnaps = new Map();
+        for (const stream of Object.values(platformStreams)) {
+            const ref = db.doc(`liveChannelClaims/${stream.channelClaimId}`);
+            const snap = await tx.get(ref);
+            newClaimSnaps.set(stream.channelClaimId, {ref, snap, stream});
+            if (snap.exists && isClaimHeldByAnotherUser(snap.data(), uid)) {
+                throw new functions.https.HttpsError(
+                    "already-exists",
+                    `This ${stream.platform} channel already has an active PlanetCreations session.`,
+                );
+            }
+        }
+
         const previousId = userSnap.data()?.liveCreationId;
         let previousRef = null;
         if (previousId && previousId !== creationId) {
@@ -2489,25 +2887,275 @@ exports.goLive = onCallWith(LIVE_SECRETS, async (data, context) => {
             const previousSnap = await tx.get(previousRef);
             if (!previousSnap.exists) previousRef = null;
         }
+
+        const previousSession = previousSessionSnap.exists ? previousSessionSnap.data() : null;
+        const previousClaims = [];
+        for (const stream of Object.values(getSessionStreams(previousSession || {}))) {
+            const claimId = stream.channelClaimId ||
+                getLiveChannelClaimId(stream.platform, stream);
+            if (!claimId || newClaimIds.has(claimId)) continue;
+            const ref = db.doc(`liveChannelClaims/${claimId}`);
+            previousClaims.push({ref, snap: await tx.get(ref)});
+        }
+
         if (previousRef) tx.update(previousRef, {liveStream: FieldValue.delete()});
+        for (const previousClaim of previousClaims) {
+            if (previousClaim.snap.exists && claimBelongsToSession(
+                previousClaim.snap.data(), uid, previousSession?.sessionId,
+            )) {
+                tx.delete(previousClaim.ref);
+            }
+        }
         tx.update(creationRef, {liveStream});
-        tx.set(userRef, {liveCreationId: creationId}, {merge: true});
+        tx.set(sessionRef, session);
+        for (const {ref, stream} of newClaimSnaps.values()) {
+            tx.set(ref, {
+                uid,
+                sessionId,
+                platform: stream.platform,
+                channelIdentity: getLiveChannelIdentity(stream.platform, stream),
+                broadcasterId: stream.broadcasterId || null,
+                broadcasterLogin: stream.broadcasterLogin || null,
+                expiresAt,
+                updatedAt: now,
+            });
+        }
+        tx.set(userRef, {liveCreationId: creationId, liveSessionId: sessionId}, {merge: true});
     });
-    return {success: true, expiresAt: liveStream.expiresAt.toMillis()};
+
+    await syncLiveStateToClients(
+        uid,
+        session,
+        session.showQr ? {id: creationId, title: creationData.title || ""} : null,
+        {preserveQr: !session.showQr},
+    );
+    if (platformStreams.twitch?.broadcasterId) {
+        ensureTwitchChannelUpdateSubscription(platformStreams.twitch.broadcasterId)
+            .catch((error) => console.warn("Could not ensure Twitch title subscription:", error.message));
+    }
+    return {
+        success: true,
+        expiresAt: expiresAt.toMillis(),
+        session: liveSessionForClient(session),
+    };
 });
 
-// Beendet die Live-Session des Aufrufers (idempotent). Räumt sowohl das
-// Pointer-Ziel als auch eine optional explizit genannte eigene Creation ab —
-// so lassen sich auch abgelaufene Altlasten ohne gültigen Pointer entfernen.
-exports.endLive = onCall(async (data, context) => {
+async function switchLiveCreationInternal({
+    uid,
+    sessionId,
+    expectedRevision,
+    creationId,
+    selectionMode,
+}) {
+    const sessionRef = db.doc(`liveSessions/${uid}`);
+    const nextCreationRef = db.doc(`creations/${creationId}`);
+    let updatedSession;
+    let nextCreation;
+    let previousCreationId = null;
+
+    await db.runTransaction(async (tx) => {
+        const sessionSnap = await tx.get(sessionRef);
+        const nextCreationSnap = await tx.get(nextCreationRef);
+        if (!sessionSnap.exists || sessionSnap.data().status !== "active" ||
+            sessionSnap.data().sessionId !== sessionId) {
+            throw new functions.https.HttpsError("failed-precondition", "The live session is no longer active.");
+        }
+        const current = sessionSnap.data();
+        if (Number.isInteger(expectedRevision) && current.selectionRevision !== expectedRevision) {
+            throw new functions.https.HttpsError("aborted", "The live creation changed on another device. Refresh and try again.");
+        }
+        if (!nextCreationSnap.exists || nextCreationSnap.data().userId !== uid ||
+            nextCreationSnap.data().sourceCollaborationId) {
+            throw new functions.https.HttpsError("permission-denied", "Only your own regular creations can be streamed.");
+        }
+        if (nextCreationSnap.data().game !== current.creationGame) {
+            throw new functions.https.HttpsError("failed-precondition", "The creation must belong to the active stream game.");
+        }
+
+        previousCreationId = current.creationId;
+        let previousCreationRef = null;
+        if (previousCreationId && previousCreationId !== creationId) {
+            previousCreationRef = db.doc(`creations/${previousCreationId}`);
+            const previousCreationSnap = await tx.get(previousCreationRef);
+            if (!previousCreationSnap.exists) previousCreationRef = null;
+        }
+
+        const now = Timestamp.now();
+        const liveStream = creationLiveStreamFromSession(current);
+        let notifications = (current.notifications || []).filter((item) => (
+            item.proposalCreationId !== creationId
+        ));
+        if (selectionMode === "auto" && previousCreationId !== creationId) {
+            notifications = appendStreamNotification(notifications, makeStreamNotification(
+                "creationAutoSwitched",
+                {
+                    title: "Creation updated automatically",
+                    message: `The changed stream title now matches “${String(nextCreationSnap.data().title || "Untitled").slice(0, 200)}” best.`,
+                    titleHash: current.titleHash || null,
+                    proposalCreationId: creationId,
+                    proposalCreationTitle: String(nextCreationSnap.data().title || "").slice(0, 200),
+                },
+            ));
+        }
+        updatedSession = {
+            ...current,
+            creationId,
+            creationTitle: String(nextCreationSnap.data().title || "").slice(0, 200),
+            selectionRevision: (current.selectionRevision || 0) + 1,
+            selectionMode,
+            manualSelectionLocked: selectionMode === "manual" ? true : current.manualSelectionLocked === true,
+            lastAutomaticSwitchAt: selectionMode === "auto" ? now : current.lastAutomaticSwitchAt || null,
+            pendingAutoCreationId: null,
+            notifications,
+            updatedAt: now,
+        };
+        nextCreation = {id: creationId, ...nextCreationSnap.data()};
+
+        if (previousCreationRef) tx.update(previousCreationRef, {liveStream: FieldValue.delete()});
+        tx.update(nextCreationRef, {liveStream});
+        tx.set(sessionRef, updatedSession);
+        tx.set(db.doc(`users/${uid}`), {
+            liveCreationId: creationId,
+            liveSessionId: current.sessionId,
+        }, {merge: true});
+    });
+
+    await syncLiveStateToClients(
+        uid,
+        updatedSession,
+        updatedSession.showQr ? nextCreation : null,
+        {
+            clearCreationIds: updatedSession.showQr && previousCreationId && previousCreationId !== creationId ?
+                [previousCreationId] : [],
+            preserveQr: !updatedSession.showQr,
+        },
+    );
+    return updatedSession;
+}
+
+exports.switchLiveCreation = onCall(async (data, context) => {
     const uid = requireAuthenticated(context);
-    const requestedId = data?.creationId ? requireCreationId(data.creationId) : null;
+    const creationId = requireCreationId(data?.creationId);
+    const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
+    const expectedRevision = Number(data?.expectedRevision);
+    if (!sessionId || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
+        throw new functions.https.HttpsError("invalid-argument", "Session ID and selection revision are required.");
+    }
+    const session = await switchLiveCreationInternal({
+        uid,
+        sessionId,
+        expectedRevision,
+        creationId,
+        selectionMode: "manual",
+    });
+    return {success: true, session: liveSessionForClient(session)};
+});
+
+exports.dismissStreamNotification = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
+    const notificationId = typeof data?.notificationId === "string" ? data.notificationId : "";
+    if (!sessionId || !notificationId) {
+        throw new functions.https.HttpsError("invalid-argument", "Session and notification are required.");
+    }
+    const sessionRef = db.doc(`liveSessions/${uid}`);
+    let updatedSession;
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(sessionRef);
+        if (!snap.exists || snap.data().sessionId !== sessionId || snap.data().status !== "active") {
+            throw new functions.https.HttpsError("failed-precondition", "The live session is no longer active.");
+        }
+        updatedSession = {
+            ...snap.data(),
+            notifications: (snap.data().notifications || []).filter((item) => item.id !== notificationId),
+            updatedAt: Timestamp.now(),
+        };
+        tx.set(sessionRef, updatedSession);
+    });
+    await syncLiveStateToClients(uid, updatedSession, null, {preserveQr: true});
+    return {success: true, session: liveSessionForClient(updatedSession)};
+});
+
+exports.updateLiveSessionPreferences = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
+    const muteMode = ["off", "minutes", "session", "permanent"].includes(data?.muteMode) ?
+        data.muteMode : null;
+    const minutes = Math.max(1, Math.min(1440, Number(data?.minutes) || 0));
+    if (!sessionId || (!muteMode && typeof data?.experimentalAuto !== "boolean")) {
+        throw new functions.https.HttpsError("invalid-argument", "A valid stream preference is required.");
+    }
+    const sessionRef = db.doc(`liveSessions/${uid}`);
     const userRef = db.doc(`users/${uid}`);
+    let updatedSession;
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(sessionRef);
+        if (!snap.exists || snap.data().sessionId !== sessionId || snap.data().status !== "active") {
+            throw new functions.https.HttpsError("failed-precondition", "The live session is no longer active.");
+        }
+        const current = snap.data();
+        if (typeof data?.experimentalAuto === "boolean") {
+            const clientId = data?.clientId ? requireClientId(data.clientId) : null;
+            if (current.streamingClientId && clientId !== current.streamingClientId) {
+                throw new functions.https.HttpsError(
+                    "permission-denied",
+                    "Experimental Auto Mode can only be changed on the streaming device.",
+                );
+            }
+        }
+        const prefs = {...(current.streamNotificationPrefs || {})};
+        if (muteMode === "off") {
+            prefs.mode = "off";
+            prefs.mutedUntil = null;
+        } else if (muteMode === "minutes") {
+            prefs.mode = "minutes";
+            prefs.mutedUntil = Timestamp.fromMillis(Date.now() + minutes * 60 * 1000);
+        } else if (muteMode === "session" || muteMode === "permanent") {
+            prefs.mode = muteMode;
+            prefs.mutedUntil = null;
+        }
+        updatedSession = {
+            ...current,
+            experimentalAuto: typeof data?.experimentalAuto === "boolean" ?
+                data.experimentalAuto : current.experimentalAuto === true,
+            streamNotificationPrefs: prefs,
+            updatedAt: Timestamp.now(),
+        };
+        tx.set(sessionRef, updatedSession);
+        if (muteMode === "permanent" || muteMode === "off") {
+            tx.set(userRef, {
+                streamNotificationDefaults: {muted: muteMode === "permanent"},
+            }, {merge: true});
+        }
+    });
+    await syncLiveStateToClients(uid, updatedSession, null, {preserveQr: true});
+    return {success: true, session: liveSessionForClient(updatedSession)};
+});
+
+async function clearLiveSessionInternal(uid, requestedIds = [], expectedSessionId = null) {
+    const userRef = db.doc(`users/${uid}`);
+    const sessionRef = db.doc(`liveSessions/${uid}`);
     let endedCreationIds = [];
+    let hadSession = false;
     await db.runTransaction(async (tx) => {
         const userSnap = await tx.get(userRef);
+        const sessionSnap = await tx.get(sessionRef);
+        const session = sessionSnap.exists ? sessionSnap.data() : null;
+        if (expectedSessionId && session?.sessionId !== expectedSessionId) return;
+        hadSession = sessionSnap.exists;
+        const channelClaims = [];
+        const seenClaimIds = new Set();
+        for (const stream of Object.values(getSessionStreams(session || {}))) {
+            const claimId = stream.channelClaimId ||
+                getLiveChannelClaimId(stream.platform, stream);
+            if (!claimId || seenClaimIds.has(claimId)) continue;
+            seenClaimIds.add(claimId);
+            const ref = db.doc(`liveChannelClaims/${claimId}`);
+            channelClaims.push({ref, snap: await tx.get(ref)});
+        }
         const pointerId = userSnap.data()?.liveCreationId || null;
-        const targetIds = [...new Set([pointerId, requestedId].filter(Boolean))];
+        const sessionCreationId = session?.creationId || null;
+        const targetIds = [...new Set([pointerId, sessionCreationId, ...requestedIds].filter(Boolean))];
         endedCreationIds = targetIds;
         const clearRefs = [];
         for (const targetId of targetIds) {
@@ -2516,28 +3164,94 @@ exports.endLive = onCall(async (data, context) => {
             if (snap.exists && snap.data().userId === uid && snap.data().liveStream) clearRefs.push(ref);
         }
         for (const ref of clearRefs) tx.update(ref, {liveStream: FieldValue.delete()});
-        if (pointerId) tx.set(userRef, {liveCreationId: FieldValue.delete()}, {merge: true});
+        if (pointerId || sessionSnap.exists) tx.set(userRef, {
+            liveCreationId: FieldValue.delete(),
+            liveSessionId: FieldValue.delete(),
+        }, {merge: true});
+        for (const claim of channelClaims) {
+            if (claim.snap.exists && claimBelongsToSession(
+                claim.snap.data(), uid, session?.sessionId,
+            )) {
+                tx.delete(claim.ref);
+            }
+        }
+        if (sessionSnap.exists) tx.delete(sessionRef);
+    });
+    if (endedCreationIds.length > 0 || hadSession) {
+        await syncLiveStateToClients(uid, null, null, {clearCreationIds: endedCreationIds});
+    }
+    return endedCreationIds;
+}
+
+// Beendet die Live-Session des Aufrufers (idempotent). Räumt sowohl das
+// Pointer-Ziel als auch eine optional explizit genannte eigene Creation ab —
+// so lassen sich auch abgelaufene Altlasten ohne gültigen Pointer entfernen.
+async function removeLivePlatformInternal(uid, platform, expectedSessionId) {
+    const sessionRef = db.doc(`liveSessions/${uid}`);
+    const initialSnap = await sessionRef.get();
+    if (!initialSnap.exists || initialSnap.data().sessionId !== expectedSessionId) return null;
+    const initialStreams = getSessionStreams(initialSnap.data());
+    if (!initialStreams[platform]) return initialSnap.data();
+    if (Object.keys(initialStreams).length <= 1) {
+        await clearLiveSessionInternal(uid, [initialSnap.data().creationId], expectedSessionId);
+        return null;
+    }
+
+    let updatedSession = null;
+    let shouldClearAll = false;
+    await db.runTransaction(async (tx) => {
+        const sessionSnap = await tx.get(sessionRef);
+        if (!sessionSnap.exists || sessionSnap.data().sessionId !== expectedSessionId ||
+            sessionSnap.data().status !== "active") return;
+        const current = sessionSnap.data();
+        const streams = getSessionStreams(current);
+        const removedStream = streams[platform];
+        if (!removedStream) {
+            updatedSession = current;
+            return;
+        }
+        if (Object.keys(streams).length <= 1) {
+            shouldClearAll = true;
+            return;
+        }
+
+        const claimId = removedStream.channelClaimId ||
+            getLiveChannelClaimId(platform, removedStream);
+        const claimRef = claimId ? db.doc(`liveChannelClaims/${claimId}`) : null;
+        const claimSnap = claimRef ? await tx.get(claimRef) : null;
+        const creationRef = db.doc(`creations/${current.creationId}`);
+        const creationSnap = await tx.get(creationRef);
+
+        delete streams[platform];
+        updatedSession = withPrimaryStreamFields({
+            ...current,
+            updatedAt: Timestamp.now(),
+        }, streams, current.primaryPlatform === platform ? null : current.primaryPlatform);
+        if (creationSnap.exists) {
+            tx.update(creationRef, {liveStream: creationLiveStreamFromSession(updatedSession)});
+        }
+        if (claimSnap?.exists && claimBelongsToSession(
+            claimSnap.data(), uid, expectedSessionId,
+        )) {
+            tx.delete(claimRef);
+        }
+        tx.set(sessionRef, updatedSession);
     });
 
-    // Benachrichtigt auch Desktop-Clients, auf denen der QR remote oder manuell
-    // aktiviert wurde. Der Queue-Listener existiert ohnehin für Direct Installs,
-    // daher entstehen auf den Clients keine zusätzlichen Listener/Reads.
-    if (endedCreationIds.length > 0) {
-        const clientQueuesSnap = await db.collection(`clientInstallQueues/${uid}/clients`).get();
-        if (!clientQueuesSnap.empty) {
-            const batch = db.batch();
-            const clearCommand = {
-                creationIds: endedCreationIds,
-                setAt: Timestamp.now(),
-            };
-            clientQueuesSnap.docs.forEach((clientDoc) => batch.set(clientDoc.ref, {
-                overlayQr: FieldValue.delete(),
-                overlayQrClear: clearCommand,
-                updatedAt: Timestamp.now(),
-            }, {merge: true}));
-            await batch.commit();
-        }
+    if (shouldClearAll) {
+        await clearLiveSessionInternal(uid, [initialSnap.data().creationId], expectedSessionId);
+        return null;
     }
+    if (updatedSession) {
+        await syncLiveStateToClients(uid, updatedSession, null, {preserveQr: true});
+    }
+    return updatedSession;
+}
+
+exports.endLive = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const requestedId = data?.creationId ? requireCreationId(data.creationId) : null;
+    await clearLiveSessionInternal(uid, requestedId ? [requestedId] : []);
     return {success: true};
 });
 
@@ -2577,15 +3291,188 @@ exports.setClientOverlayQr = onCall(async (data, context) => {
     return {success: true};
 });
 
-// Re-verifiziert alle 15 Min ausschließlich die aktuell geflaggten Creations
-// (meist 0–2) und beendet Sessions, deren Stream offline ging — begrenzt auch
-// unterschlagene OBS-Enden (modifizierter Client) auf max. ~15 Minuten.
+async function processLiveMetadataUpdate(uid, platform, metadata) {
+    const sessionRef = db.doc(`liveSessions/${uid}`);
+    const initialSnap = await sessionRef.get();
+    if (!initialSnap.exists || initialSnap.data().status !== "active") return {active: false};
+    const initial = initialSnap.data();
+    const initialStream = getSessionStreams(initial)[platform];
+    if (!initialStream) return {active: false};
+    const now = Timestamp.now();
+    const categoryChanged = Boolean(
+        initialStream.initialCategoryId && metadata.categoryId &&
+        initialStream.initialCategoryId !== metadata.categoryId,
+    );
+
+    if (categoryChanged && initialStream.categoryMismatchSince?.toMillis?.() &&
+        Date.now() - initialStream.categoryMismatchSince.toMillis() >= LIVE_CATEGORY_GRACE_MS) {
+        const remaining = await removeLivePlatformInternal(uid, platform, initial.sessionId);
+        return {active: Boolean(remaining), ended: "category-changed", platform};
+    }
+
+    const nextTitleHash = liveTitleHash(metadata);
+    const titleChanged = nextTitleHash !== initialStream.titleHash;
+    const decision = !categoryChanged && (titleChanged || initial.pendingAutoCreationId || !Array.isArray(initial.suggestions)) ?
+        await getLiveMatchForUser(uid, metadata, initial.creationGame, initial.creationId) : null;
+    let updatedSession;
+
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(sessionRef);
+        if (!snap.exists || snap.data().sessionId !== initial.sessionId || snap.data().status !== "active") return;
+        const current = snap.data();
+        const streams = getSessionStreams(current);
+        const currentStream = streams[platform];
+        if (!currentStream) return;
+        let notifications = (current.notifications || []).filter((item) => (
+            (item.type !== "creationSuggestion" || item.titleHash === nextTitleHash) &&
+            (item.type !== "categoryMismatch" || categoryChanged)
+        ));
+
+        if (categoryChanged && !currentStream.categoryMismatchSince) {
+            notifications = appendStreamNotification(notifications, makeStreamNotification(
+                "categoryMismatch",
+                {
+                    title: `${platform === "youtube" ? "YouTube" : "Twitch"} stream game changed`,
+                    message: `PlanetCreations will remove this platform if the category stays on “${metadata.categoryName || "another game"}”.`,
+                    titleHash: nextTitleHash,
+                },
+            ));
+        }
+
+        if (titleChanged && decision?.confident && decision.best?.creationId &&
+            decision.best.creationId !== current.creationId &&
+            (current.manualSelectionLocked || !current.experimentalAuto)) {
+            notifications = appendStreamNotification(notifications, makeStreamNotification(
+                "creationSuggestion",
+                {
+                    title: "A better creation match was found",
+                    message: `The new stream title matches “${decision.best.title}” better.`,
+                    titleHash: nextTitleHash,
+                    proposalCreationId: decision.best.creationId,
+                    proposalCreationTitle: decision.best.title,
+                },
+            ));
+        }
+
+        streams[platform] = {
+            ...currentStream,
+            streamTitle: metadata.title || currentStream.streamTitle || "",
+            streamTags: metadata.tags || currentStream.streamTags || [],
+            categoryId: metadata.categoryId || currentStream.categoryId || null,
+            categoryName: metadata.categoryName || currentStream.categoryName || "",
+            categoryMismatchSince: categoryChanged ?
+                (currentStream.categoryMismatchSince || now) : null,
+            titleHash: nextTitleHash,
+            verifiedAt: now,
+            updatedAt: now,
+        };
+        updatedSession = withPrimaryStreamFields({
+            ...current,
+            suggestions: decision ? publicLiveSuggestions(decision) : current.suggestions || [],
+            pendingAutoCreationId: decision?.confident && decision.best?.creationId !== current.creationId &&
+                current.experimentalAuto && !current.manualSelectionLocked ? decision.best.creationId : null,
+            notifications,
+            verifiedAt: now,
+            updatedAt: now,
+        }, streams, current.primaryPlatform);
+        tx.set(sessionRef, updatedSession);
+    });
+
+    if (!updatedSession) return {active: false};
+    await syncLiveStateToClients(uid, updatedSession, null, {preserveQr: true});
+
+    const lastAutoAt = updatedSession.lastAutomaticSwitchAt?.toMillis?.() || 0;
+    const canAutoSwitch = !categoryChanged && (titleChanged || updatedSession.pendingAutoCreationId) &&
+        decision?.confident && decision.best?.creationId &&
+        decision.best.creationId !== updatedSession.creationId &&
+        updatedSession.experimentalAuto && !updatedSession.manualSelectionLocked &&
+        Date.now() - lastAutoAt >= LIVE_AUTO_SWITCH_COOLDOWN_MS;
+    if (canAutoSwitch) {
+        try {
+            updatedSession = await switchLiveCreationInternal({
+                uid,
+                sessionId: updatedSession.sessionId,
+                expectedRevision: updatedSession.selectionRevision,
+                creationId: decision.best.creationId,
+                selectionMode: "auto",
+            });
+            return {active: true, switched: true, session: updatedSession};
+        } catch (error) {
+            if (error?.code !== "aborted") throw error;
+        }
+    }
+    return {active: true, switched: false, session: updatedSession};
+}
+
+function isValidTwitchEventSubRequest(request) {
+    return isValidEventSubSignature({
+        secret: twitchEventSubSecret.value(),
+        messageId: request.get("Twitch-Eventsub-Message-Id") || "",
+        timestamp: request.get("Twitch-Eventsub-Message-Timestamp") || "",
+        signature: request.get("Twitch-Eventsub-Message-Signature") || "",
+        rawBody: request.rawBody,
+    });
+}
+
+exports.twitchEventSub = httpWith(
+    {secrets: [twitchEventSubSecret]},
+    async (request, response) => {
+        if (request.method !== "POST" || !isValidTwitchEventSubRequest(request)) {
+            response.status(403).send("Forbidden");
+            return;
+        }
+        const messageType = request.get("Twitch-Eventsub-Message-Type") || "";
+        if (messageType === "webhook_callback_verification") {
+            response.status(200).type("text/plain").send(request.body?.challenge || "");
+            return;
+        }
+        response.status(204).send();
+        if (messageType !== "notification") return;
+
+        const type = request.body?.subscription?.type;
+        const event = request.body?.event || {};
+        const broadcasterId = event.broadcaster_user_id || event.user_id || null;
+        if (!broadcasterId) return;
+        const [legacySessions, simulcastSessions] = await Promise.all([
+            db.collection("liveSessions").where("broadcasterId", "==", broadcasterId).get(),
+            db.collection("liveSessions").where("streams.twitch.broadcasterId", "==", broadcasterId).get(),
+        ]);
+        const sessions = new Map([...legacySessions.docs, ...simulcastSessions.docs]
+            .map((sessionDoc) => [sessionDoc.id, sessionDoc]));
+        for (const sessionDoc of sessions.values()) {
+            if (sessionDoc.data().status !== "active") continue;
+            if (type === "stream.offline") {
+                await removeLivePlatformInternal(
+                    sessionDoc.id,
+                    "twitch",
+                    sessionDoc.data().sessionId,
+                );
+            } else if (type === "channel.update") {
+                const twitchStream = getSessionStreams(sessionDoc.data()).twitch;
+                await processLiveMetadataUpdate(sessionDoc.id, "twitch", {
+                    isLive: true,
+                    broadcasterId,
+                    title: String(event.title || "").slice(0, 300),
+                    tags: twitchStream?.streamTags || [],
+                    categoryId: event.category_id || null,
+                    categoryName: String(event.category_name || "").slice(0, 100),
+                });
+            }
+        }
+    },
+);
+
+// Re-verifiziert aktive Sessions alle fünf Minuten. Twitch-Titeländerungen
+// kommen zusätzlich sofort über EventSub; der Sweep ist dessen Ausfallnetz und
+// die sparsame Titel-Nachprüfung für aktive YouTube-Streams.
+// Sie beendet Sessions, deren Stream offline ging, und begrenzt damit auch
+// unterschlagene OBS-Enden eines modifizierten Clients auf ungefähr fünf Minuten.
 // Räumt zusätzlich abgelaufene liveStream-Felder ab, damit keine Altlasten
 // in den Dokumenten (und im Suchindex) liegen bleiben.
 exports.sweepLiveStreams = scheduled(
     {
         ...LIVE_SECRETS,
-        schedule: "every 15 minutes",
+        schedule: "every 5 minutes",
     },
     async () => {
         const now = Timestamp.now();
@@ -2598,15 +3485,54 @@ exports.sweepLiveStreams = scheduled(
                 const userRef = db.doc(`users/${userId}`);
                 const userSnap = await userRef.get();
                 if (userSnap.data()?.liveCreationId === docSnap.id) {
-                    batch.set(userRef, {liveCreationId: FieldValue.delete()}, {merge: true});
+                    batch.set(userRef, {
+                        liveCreationId: FieldValue.delete(),
+                        liveSessionId: FieldValue.delete(),
+                    }, {merge: true});
                 }
             }
             await batch.commit();
         };
 
+        const handledCreationIds = new Set();
+        const sessions = await db.collection("liveSessions").get();
+        for (const sessionDoc of sessions.docs) {
+            const session = sessionDoc.data();
+            if (session.status !== "active") continue;
+            handledCreationIds.add(session.creationId);
+            if (session.expiresAt?.toMillis?.() <= Date.now()) {
+                await clearLiveSessionInternal(
+                    sessionDoc.id,
+                    [session.creationId],
+                    session.sessionId,
+                );
+                continue;
+            }
+            for (const [platform, stream] of Object.entries(getSessionStreams(session))) {
+                const parsed = parseStreamUrl(platform, stream.url);
+                let metadata;
+                try {
+                    metadata = parsed ? await fetchStreamMetadata(platform, parsed) : {isLive: false};
+                } catch (error) {
+                    console.warn(
+                        `Live re-verification failed for ${platform} session ${session.sessionId}, keeping:`,
+                        error.message,
+                    );
+                    continue;
+                }
+                if (!metadata.isLive) {
+                    await removeLivePlatformInternal(sessionDoc.id, platform, session.sessionId);
+                    console.log(`Ended ${platform} output for live session ${session.sessionId} (stream offline).`);
+                    continue;
+                }
+                await processLiveMetadataUpdate(sessionDoc.id, platform, metadata);
+            }
+        }
+
         // Abgelaufene Sessions (Client-Expiry längst erreicht): direkt aufräumen.
         const expired = await db.collection("creations").where("liveStream.expiresAt", "<=", now).get();
         for (const docSnap of expired.docs) {
+            if (handledCreationIds.has(docSnap.id)) continue;
             await clearLive(docSnap);
             console.log(`Cleared expired live session on creation ${docSnap.id}.`);
         }
@@ -2614,6 +3540,7 @@ exports.sweepLiveStreams = scheduled(
         // Aktive Sessions: gegen die Plattform-API re-verifizieren.
         const active = await db.collection("creations").where("liveStream.expiresAt", ">", now).get();
         for (const docSnap of active.docs) {
+            if (handledCreationIds.has(docSnap.id) || docSnap.data().liveStream?.sessionId) continue;
             const liveStream = docSnap.data().liveStream || {};
             const parsed = parseStreamUrl(liveStream.platform, liveStream.url);
             let stillLive;

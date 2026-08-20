@@ -110,7 +110,7 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                                         <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">{unreadCount}</span>
                                     )}
                                 </button>
-                                {isNotificationsOpen && <NotificationDropdown user={user} notifications={notifications} close={() => setIsNotificationsOpen(false)} />}
+                                {isNotificationsOpen && <NotificationDropdown user={user} notifications={notifications} isElectron={isElectron} close={() => setIsNotificationsOpen(false)} />}
                             </div>
                             <div className="relative" ref={profileMenuRef}>
                                 <button onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)} className="flex items-center space-x-2">

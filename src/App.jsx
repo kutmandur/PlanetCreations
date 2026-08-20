@@ -28,6 +28,8 @@ import StrikeModal from './components/ui/StrikeModal';
 import PopoverModal from './components/ui/PopoverModal';
 import RickRollModal from './components/modals/RickRollModal';
 import { GameOverlayWidget, GameOverlayChrome } from './components/ui/GameOverlay';
+import StreamManagement from './components/streaming/StreamManagement';
+import OverlayNotificationPopover from './components/streaming/OverlayNotificationPopover';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import PrivacyPrompt from './components/modals/PrivacyPrompt';
@@ -35,6 +37,13 @@ import BugReportModal from './components/modals/BugReportModal';
 import GoLiveModal from './components/modals/GoLiveModal';
 import { readLiveSession, setLiveSession } from './utils/liveStream';
 import { readOverlayQr, setOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
+import {
+    generalOverlayNotificationsMuted,
+    readGeneralOverlayNotificationPrefs,
+    readStreamSession,
+    setStreamSession,
+    subscribeStreamSession,
+} from './utils/streamSession';
 import {
     endBuildSession,
     fetchUserCollaborationsForGame,
@@ -99,8 +108,14 @@ const AppContent = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const isGameOverlay = Boolean(window.electronAPI?.isGameOverlay);
+    const isStreamManagement = Boolean(window.electronAPI?.isStreamManagement);
+    const isAuxiliaryWindow = isGameOverlay || isStreamManagement;
     const [isOverlayExpanded, setIsOverlayExpanded] = useState(false);
     const [activeGameId, setActiveGameId] = useState(null);
+    const [streamSessionMirror, setStreamSessionMirror] = useState(() => readStreamSession());
+    const streamSessionMirrorRef = useRef(readStreamSession());
+    const [streamStartContext, setStreamStartContext] = useState(null);
+    const [localClientIdentity, setLocalClientIdentity] = useState(null);
     const isOfflineMode = location.pathname.startsWith('/client');
     const [user, setUser] = useState(null);
     const [userProfile, setUserProfile] = useState(null);
@@ -149,21 +164,46 @@ const AppContent = () => {
     const [goLivePrompt, setGoLivePrompt] = useState(null);
     const [showVerificationBanner, setShowVerificationBanner] = useState(false);
 
+    useEffect(() => subscribeStreamSession((session) => {
+        streamSessionMirrorRef.current = session;
+        setStreamSessionMirror(session);
+    }), []);
+
+    useEffect(() => {
+        if (!isStreamManagement) return undefined;
+        let cancelled = false;
+        Promise.all([
+            window.electronAPI?.getStreamStartContext?.(),
+            window.electronAPI?.getClientIdentity?.(),
+        ]).then(([context, identity]) => {
+            if (cancelled) return;
+            setStreamStartContext(context || null);
+            setLocalClientIdentity(identity || null);
+        }).catch(() => {});
+        const unsubscribe = window.electronAPI?.onStreamManagementContextChanged?.((context) => {
+            setStreamStartContext(context || null);
+        });
+        return () => {
+            cancelled = true;
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, [isStreamManagement]);
+
     const [updateInfo, setUpdateInfo] = useState(null);
     const [updateDownloaded, setUpdateDownloaded] = useState(false);
 
     useEffect(() => {
-        if (!isGameOverlay) return undefined;
-        document.documentElement.classList.add('game-overlay-window');
+        if (!isAuxiliaryWindow) return undefined;
+        document.documentElement.classList.add(isGameOverlay ? 'game-overlay-window' : 'stream-management-window');
         const unsubscribe = window.electronAPI?.onOverlayModeChanged?.(setIsOverlayExpanded);
         return () => {
-            document.documentElement.classList.remove('game-overlay-window');
+            document.documentElement.classList.remove('game-overlay-window', 'stream-management-window');
             if (typeof unsubscribe === 'function') unsubscribe();
         };
-    }, [isGameOverlay]);
+    }, [isAuxiliaryWindow, isGameOverlay]);
 
     useEffect(() => {
-        if (!isGameOverlay || !window.electronAPI?.getActiveGame) return undefined;
+        if (!isAuxiliaryWindow || !window.electronAPI?.getActiveGame) return undefined;
         let cancelled = false;
         window.electronAPI.getActiveGame()
             .then((gameId) => { if (!cancelled) setActiveGameId(gameId || null); })
@@ -175,7 +215,7 @@ const AppContent = () => {
             cancelled = true;
             if (typeof unsubscribe === 'function') unsubscribe();
         };
-    }, [isGameOverlay]);
+    }, [isAuxiliaryWindow]);
 
     useEffect(() => {
         if (!isGameOverlay || !user?.uid || !activeGameId ||
@@ -363,7 +403,7 @@ const AppContent = () => {
                                 ))
                                 : [];
 
-                        if (!isGameOverlay && notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
+                        if (!isAuxiliaryWindow && notificationInboxInitializedRef.current && window.electronAPI?.showSystemNotification) {
                             incomingNotifications
                                 .filter(item => !item.isRead)
                                 .slice(0, 5)
@@ -374,6 +414,15 @@ const AppContent = () => {
                                         body: item.message || '',
                                         link: item.link || (item.creationId ? `/creation/${item.creationId}` : '/'),
                                     }).catch(error => console.warn('Could not show system notification:', error));
+                                    const overlayPrefs = readGeneralOverlayNotificationPrefs();
+                                    if (!generalOverlayNotificationsMuted(overlayPrefs, Date.now(), streamSessionMirrorRef.current?.sessionId || null)) {
+                                        window.electronAPI.showOverlayNotification?.({
+                                            id: item.id,
+                                            title: item.title || 'PlanetCreations',
+                                            message: item.message || '',
+                                            link: item.link || (item.creationId ? `/creation/${item.creationId}` : '/'),
+                                        }).catch(() => {});
+                                    }
                                 });
                         }
                         incomingNotifications.forEach(
@@ -417,7 +466,7 @@ const AppContent = () => {
         preloadCriticalComponents();
 
         return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
-    }, [isGameOverlay]);
+    }, [isAuxiliaryWindow]);
 
     useEffect(() => {
         const unsubscribe = window.electronAPI?.onNavigateToRoute?.((route) => navigate(route));
@@ -425,7 +474,7 @@ const AppContent = () => {
     }, [navigate]);
 
     useEffect(() => {
-        if (isGameOverlay || !user || !window.electronAPI?.getClientIdentity || !window.electronAPI?.installQueuedCreation) return;
+        if (isAuxiliaryWindow || !user || !window.electronAPI?.getClientIdentity || !window.electronAPI?.installQueuedCreation) return;
         let cancelled = false;
         let queueUnsubscribe = () => {};
         const functions = getFunctions();
@@ -520,6 +569,14 @@ const AppContent = () => {
                 queueUnsubscribe = onSnapshot(queueRef, (snapshot) => {
                     const data = snapshot.data() || {};
 
+                    // Stream management piggybacks on the existing protected
+                    // per-device queue used for QR synchronization. The local
+                    // mirror/BroadcastChannel fans the compact state out to the
+                    // overlay and manager windows without another Firestore listener.
+                    const nextStreamSession = data.streamSession || null;
+                    setStreamSession(nextStreamSession);
+                    window.electronAPI?.syncStreamManagementSession?.(nextStreamSession).catch(() => {});
+
                     // Remote-Overlay-QR (setClientOverlayQr): das Feld auf dem
                     // Queue-Doc ist das Zustellmedium — 0 Extra-Reads, weil dieser
                     // Listener sowieso läuft. Angewendet wird nur bei Änderung,
@@ -578,15 +635,16 @@ const AppContent = () => {
             }
             clientQueueProcessingRef.current = false;
         };
-    }, [user, setModalMessage, isGameOverlay]);
+    }, [user, setModalMessage, isAuxiliaryWindow]);
 
     // OBS-Integration (Desktop-Client ab 1.0.23): Stream-Start öffnet das
     // Go-Live-Popup, Stream-Ende beendet die Live-Session server-seitig.
     // Ohne Bridge (alter Client / Browser) ist dieser Effekt ein No-op.
     useEffect(() => {
-        if (isGameOverlay || !user || !window.electronAPI?.onObsStreamStarted) return undefined;
+        if (isAuxiliaryWindow || !user || !window.electronAPI?.onObsStreamStarted) return undefined;
         const unsubStart = window.electronAPI.onObsStreamStarted((payload) => {
             if (readLiveSession()) return; // bereits mit einer Creation live
+            if (payload?.openInStreamManagement) return;
             setGoLivePrompt({ service: payload?.service || null });
         });
         const unsubStop = window.electronAPI.onObsStreamStopped?.(async () => {
@@ -594,6 +652,7 @@ const AppContent = () => {
             const session = readLiveSession();
             if (!session) return;
             setLiveSession(null);
+            setStreamSession(null);
             if (readOverlayQr()?.creationId === session.creationId) setOverlayQr(null);
             try {
                 await httpsCallable(getFunctions(), 'endLive')({ creationId: session.creationId });
@@ -606,7 +665,7 @@ const AppContent = () => {
             if (typeof unsubStart === 'function') unsubStart();
             if (typeof unsubStop === 'function') unsubStop();
         };
-    }, [isGameOverlay, user]);
+    }, [isAuxiliaryWindow, user]);
 
     // Installed PWA: ask for notification permission automatically on first open.
     // If dismissed, the user can re-enable from Settings or the install dialog.
@@ -653,8 +712,34 @@ const AppContent = () => {
     };
     
     if (loadingAuth) {
-        if (isGameOverlay) return <div className="h-screen w-screen bg-transparent" />;
+        if (isAuxiliaryWindow) return <div className="h-screen w-screen bg-transparent" />;
         return <div className="h-screen flex justify-center items-center bg-gray-100"><Spinner /></div>;
+    }
+
+    if (isStreamManagement) {
+        if (!user) {
+            return (
+                <div className="h-screen bg-gray-950 p-4 text-white flex items-center justify-center">
+                    <div className="rounded-xl bg-gray-900 border border-gray-700 p-6 text-center">
+                        <p className="font-bold">Sign in to manage your stream.</p>
+                        <button type="button" onClick={() => window.electronAPI?.closeStreamManagement?.()} className="mt-4 rounded-lg bg-gray-700 px-4 py-2">Close</button>
+                    </div>
+                </div>
+            );
+        }
+        if (!localClientIdentity) {
+            return <div className="h-screen bg-transparent flex items-center justify-center"><Spinner /></div>;
+        }
+        return (
+            <StreamManagement
+                user={user}
+                userProfile={userProfile}
+                startContext={streamStartContext}
+                activeGameId={activeGameId}
+                localClientId={localClientIdentity?.clientId || null}
+                onClose={() => window.electronAPI?.closeStreamManagement?.()}
+            />
+        );
     }
 
     if (isGameOverlay && !isOverlayExpanded) {
@@ -662,6 +747,8 @@ const AppContent = () => {
             <GameOverlayWidget
                 unreadCount={notifications.filter(notification => !notification.isRead).length}
                 activeGameId={activeGameId}
+                notifications={notifications}
+                streamSession={streamSessionMirror}
             />
         );
     }
@@ -689,6 +776,7 @@ const AppContent = () => {
                 user={user}
                 activeGameId={activeGameId}
                 currentPath={location.pathname}
+                streamSession={streamSessionMirror}
                 onOpenCollaboration={(collaborationId, state = null) => navigate(
                     `/collaboration/${collaborationId}`,
                     { state },
@@ -849,6 +937,7 @@ const AppContent = () => {
 };
 
 export default function App() {
+    if (window.electronAPI?.isOverlayNotification) return <OverlayNotificationPopover />;
     if (!isConfigured) {
         return (
             <div className="h-screen flex items-center justify-center bg-red-100 text-red-900">

@@ -29,6 +29,11 @@ const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Bluep
 let mainWindow;
 let tray;
 let gameOverlayWindow;
+let streamManagementWindow;
+let overlayNotificationWindow;
+let pendingStreamStartContext = null;
+let pendingOverlayNotification = null;
+let lastStreamNotificationIds = new Set();
 let gameProcessTimer;
 let activeGameId = null;
 let gameProcessCheckInFlight = false;
@@ -222,7 +227,22 @@ function writeStreamingSettings(next) {
 function createStreamingIntegration() {
     const common = {
         log,
-        onEvent: (name, payload) => broadcastToAppWindows(`obs-${name}`, payload),
+        onEvent: (name, payload) => {
+            if (name === 'stream-started') {
+                pendingStreamStartContext = { ...payload, startedAt: Date.now() };
+                const openInStreamManagement = Boolean(
+                    gameOverlayWindow && !gameOverlayWindow.isDestroyed() && gameOverlayWindow.isVisible(),
+                );
+                if (openInStreamManagement) openStreamManagementWindow({ focus: true });
+                broadcastToAppWindows(`obs-${name}`, { ...payload, openInStreamManagement });
+                return;
+            }
+            broadcastToAppWindows(`obs-${name}`, payload);
+            if (name === 'stream-stopped') {
+                pendingStreamStartContext = null;
+                if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
+            }
+        },
     };
     if (readStreamingSettings().provider === 'streamlabs') {
         return new StreamlabsIntegration({
@@ -340,10 +360,134 @@ function createGameOverlayWindow() {
     return gameOverlayWindow;
 }
 
+function getStreamManagementBounds() {
+    const anchor = gameOverlayWindow && !gameOverlayWindow.isDestroyed() ?
+        gameOverlayWindow.getBounds() : screen.getPrimaryDisplay().workArea;
+    const area = screen.getDisplayMatching(anchor).workArea;
+    const width = Math.min(520, area.width - 32);
+    const height = Math.min(760, area.height - 32);
+    return keepBoundsOnScreen({
+        x: Math.round(anchor.x + anchor.width / 2 - width / 2),
+        y: Math.round(anchor.y + Math.min(anchor.height, 120) + 12 + (
+            overlayNotificationWindow && !overlayNotificationWindow.isDestroyed() && overlayNotificationWindow.isVisible() ?
+                overlayNotificationWindow.getBounds().height + 8 : 0
+        )),
+        width,
+        height,
+    });
+}
+
+function getOverlayNotificationBounds() {
+    const anchor = gameOverlayWindow.getBounds();
+    const area = screen.getDisplayMatching(anchor).workArea;
+    const width = Math.min(380, area.width - 24);
+    const height = 190;
+    return keepBoundsOnScreen({
+        x: Math.round(anchor.x + anchor.width / 2 - width / 2),
+        y: Math.round(anchor.y + anchor.height + 8),
+        width,
+        height,
+    });
+}
+
+function createOverlayNotificationWindow() {
+    if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) return overlayNotificationWindow;
+    overlayNotificationWindow = new BrowserWindow({
+        ...getOverlayNotificationBounds(),
+        show: false,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        hasShadow: false,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            additionalArguments: ['--overlay-notification'],
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+        },
+    });
+    overlayNotificationWindow.setMenu(null);
+    secureAppWindow(overlayNotificationWindow);
+    overlayNotificationWindow.setAlwaysOnTop(true, 'screen-saver');
+    loadHostedAppWithFallback(overlayNotificationWindow, '/');
+    overlayNotificationWindow.on('closed', () => { overlayNotificationWindow = null; });
+    return overlayNotificationWindow;
+}
+
+function showOverlayNotificationPopover(notification) {
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || !gameOverlayWindow.isVisible() || isGameOverlayExpanded) {
+        return false;
+    }
+    pendingOverlayNotification = notification;
+    const popover = createOverlayNotificationWindow();
+    popover.setBounds(getOverlayNotificationBounds(), false);
+    popover.showInactive();
+    popover.webContents.send('overlay-notification-changed', pendingOverlayNotification);
+    if (streamManagementWindow && !streamManagementWindow.isDestroyed() && streamManagementWindow.isVisible()) {
+        streamManagementWindow.setBounds(getStreamManagementBounds(), false);
+    }
+    return true;
+}
+
+function createStreamManagementWindow() {
+    if (streamManagementWindow && !streamManagementWindow.isDestroyed()) return streamManagementWindow;
+    streamManagementWindow = new BrowserWindow({
+        ...getStreamManagementBounds(),
+        show: false,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: true,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        hasShadow: true,
+        icon: getAppIconPath(),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            additionalArguments: ['--stream-management'],
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+        },
+    });
+    streamManagementWindow.setMenu(null);
+    secureAppWindow(streamManagementWindow);
+    streamManagementWindow.setAlwaysOnTop(true, 'screen-saver');
+    loadHostedAppWithFallback(streamManagementWindow, '/');
+    streamManagementWindow.on('closed', () => { streamManagementWindow = null; });
+    return streamManagementWindow;
+}
+
+function openStreamManagementWindow({ focus = true } = {}) {
+    const manager = createStreamManagementWindow();
+    manager.setBounds(getStreamManagementBounds(), false);
+    if (focus) {
+        manager.show();
+        manager.focus();
+    } else {
+        manager.showInactive();
+    }
+    manager.webContents.send('stream-management-context-changed', pendingStreamStartContext);
+    return true;
+}
+
 function setOverlayExpanded(expanded) {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed()) return false;
     const settings = readOverlaySettings();
     if (expanded) {
+        if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
         isGameOverlayExpanded = true;
         const compact = gameOverlayWindow.getBounds();
         writeOverlaySettings({ x: compact.x, y: compact.y, size: compact.width });
@@ -410,6 +554,8 @@ async function updateGameOverlayVisibility() {
             if (!overlay.isVisible()) overlay.showInactive();
         } else if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
             gameOverlayWindow.hide();
+            if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
+            if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
         }
     } finally {
         gameProcessCheckInFlight = false;
@@ -432,7 +578,7 @@ function startGameProcessMonitor() {
 
 // Sendet ein Event an alle App-Fenster (Hauptfenster + Spiel-Overlay).
 function broadcastToAppWindows(channel, payload) {
-    for (const window of [mainWindow, gameOverlayWindow]) {
+    for (const window of [mainWindow, gameOverlayWindow, streamManagementWindow]) {
         if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
     }
 }
@@ -976,6 +1122,71 @@ ipcMain.handle('get-overlay-forced', (event) => {
 ipcMain.handle('get-active-game', (event) => {
     requireTrustedIpcSender(event, true);
     return activeGameId;
+});
+ipcMain.handle('get-stream-start-context', (event) => {
+    requireTrustedIpcSender(event, true);
+    return pendingStreamStartContext;
+});
+ipcMain.handle('open-stream-management', (event) => {
+    requireTrustedIpcSender(event, true);
+    return openStreamManagementWindow({ focus: true });
+});
+ipcMain.handle('close-stream-management', (event) => {
+    requireTrustedIpcSender(event, true);
+    if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
+    return true;
+});
+ipcMain.handle('sync-stream-management-session', (event, session) => {
+    requireTrustedIpcSender(event, true);
+    if (!session?.sessionId || session.status !== 'active') {
+        lastStreamNotificationIds = new Set();
+        if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
+        return true;
+    }
+    const notifications = Array.isArray(session.notifications) ? session.notifications.slice(0, 30) : [];
+    const ids = new Set(notifications.map((item) => String(item?.id || '')).filter(Boolean));
+    const hasIncoming = [...ids].some((id) => !lastStreamNotificationIds.has(id));
+    lastStreamNotificationIds = ids;
+    const prefs = session.streamNotificationPrefs || {};
+    const mutedUntilSeconds = Number(prefs.mutedUntil?.seconds || prefs.mutedUntil?._seconds || 0);
+    const muted = prefs.mode === 'session' || prefs.mode === 'permanent' ||
+        mutedUntilSeconds * 1000 > Date.now();
+    if (hasIncoming && !muted) openStreamManagementWindow({ focus: false });
+    return true;
+});
+ipcMain.handle('show-overlay-notification', (event, notification) => {
+    requireTrustedIpcSender(event, true);
+    if (!notification || typeof notification !== 'object') return false;
+    const link = typeof notification.link === 'string' && notification.link.startsWith('/') &&
+        !notification.link.startsWith('//') ? notification.link.slice(0, 500) : '/';
+    return showOverlayNotificationPopover({
+        id: String(notification.id || '').slice(0, 128),
+        title: String(notification.title || 'PlanetCreations').slice(0, 120),
+        message: String(notification.message || '').slice(0, 500),
+        link,
+    });
+});
+ipcMain.handle('get-overlay-notification-context', (event) => {
+    requireTrustedIpcSender(event, true);
+    return pendingOverlayNotification;
+});
+ipcMain.handle('close-overlay-notification', (event) => {
+    requireTrustedIpcSender(event, true);
+    pendingOverlayNotification = null;
+    if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
+    if (streamManagementWindow && !streamManagementWindow.isDestroyed() && streamManagementWindow.isVisible()) {
+        streamManagementWindow.setBounds(getStreamManagementBounds(), false);
+    }
+    return true;
+});
+ipcMain.handle('open-overlay-notification-link', (event, link) => {
+    requireTrustedIpcSender(event, true);
+    const route = typeof link === 'string' && link.startsWith('/') && !link.startsWith('//') ? link.slice(0, 500) : '/';
+    showMainWindow();
+    mainWindow?.webContents.send('navigate-to-route', route);
+    pendingOverlayNotification = null;
+    if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
+    return true;
 });
 ipcMain.handle('set-overlay-forced', (event, value) => {
     requireTrustedIpcSender(event, true);

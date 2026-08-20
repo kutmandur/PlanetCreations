@@ -5,7 +5,7 @@ import { readOverlayQr, subscribeOverlayQr } from '../../utils/overlayQr';
 import { composeSharingQrCanvas } from './SharingQrCode';
 import CollaborationOverlayControls from '../collaboration/CollaborationOverlayControls';
 
-export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null }) => {
+export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, streamSession = null }) => {
     const [dragging, setDragging] = useState(false);
     const [overlayQr, setOverlayQrState] = useState(() => readOverlayQr());
     const [qrDataUrl, setQrDataUrl] = useState(null);
@@ -96,6 +96,20 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null }) => {
                     <span className="game-overlay-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
                 )}
             </button>
+            {streamSession?.sessionId && (
+                <button
+                    type="button"
+                    className="game-overlay-live-button"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        window.electronAPI?.openStreamManagement?.();
+                    }}
+                    title="Open Stream Management"
+                    aria-label="Open Stream Management"
+                >
+                    LIVE
+                </button>
+            )}
         </div>
     );
 };
@@ -104,6 +118,7 @@ export const GameOverlayChrome = ({
     user,
     activeGameId,
     currentPath,
+    streamSession,
     onOpenCollaboration,
     setModalMessage,
 }) => {
@@ -149,6 +164,11 @@ export const GameOverlayChrome = ({
                 onOpenCollaboration={onOpenCollaboration}
                 setModalMessage={setModalMessage}
             />
+            {streamSession?.sessionId && (
+                <button type="button" data-overlay-interactive onClick={() => window.electronAPI?.openStreamManagement?.()} className="overlay-action-button bg-red-600 hover:bg-red-700">
+                    Stream Management
+                </button>
+            )}
             <button className="game-overlay-collapse" type="button" onClick={() => window.electronAPI?.setOverlayExpanded?.(false)} title="Collapse overlay" aria-label="Collapse overlay">
                 <Icon path={ICONS.chevronDown} className="w-5 h-5" />
             </button>
