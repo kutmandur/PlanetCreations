@@ -40,6 +40,20 @@ firebase-debug.log
 # Functions-Konfiguration (nur .env.example wird getrackt)
 /functions/.env
 
+# Lokale Hosting-/SFTP-Zugangsdaten und SSH-Schlüssel
+**/recentservers.xml
+**/sitemanager.xml
+**/filezilla.xml
+**/.ftpconfig
+**/.netrc
+**/known_hosts
+**/id_rsa*
+**/id_ed25519*
+**/*.pem
+**/*.ppk
+**/*.key
+/deploy-credentials/
+
 # Windows-Artefakt
 nul
 /Bugstuff
