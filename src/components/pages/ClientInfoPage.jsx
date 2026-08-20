@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
-const FeatureCard = ({ icon, title, description, accent = 'blue', badge }) => {
+const FeatureCard = ({ id, icon, title, description, accent = 'blue', badge }) => {
     const accents = {
         blue: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300',
         green: 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300',
@@ -13,7 +13,7 @@ const FeatureCard = ({ icon, title, description, accent = 'blue', badge }) => {
     };
 
     return (
-        <article className="client-feature-card relative overflow-hidden bg-white dark:bg-gray-800 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 p-6 text-center transition-all duration-300 hover:-translate-y-2 hover:shadow-xl">
+        <article id={id} className="client-feature-card relative scroll-mt-24 overflow-hidden bg-white dark:bg-gray-800 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 p-6 text-center transition-all duration-300 hover:-translate-y-2 hover:shadow-xl">
             <span className="client-card-shine" aria-hidden="true" />
             {badge && (
                 <span className="absolute top-4 right-4 rounded-full bg-blue-100 dark:bg-blue-900/50 px-2.5 py-1 text-xs font-bold text-blue-700 dark:text-blue-200">
@@ -109,12 +109,19 @@ const ClientInfoPage = () => {
 
     const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
     const recommendedPlatform = platform.includes('mac') ? 'mac' : platform.includes('win') ? 'windows' : platform.includes('linux') ? 'linux' : null;
-    const scrollToDownloads = () => {
-        document.getElementById('client-downloads')?.scrollIntoView({
+    const scrollToSection = (sectionId) => {
+        document.getElementById(sectionId)?.scrollIntoView({
             behavior: 'smooth',
             block: 'start',
         });
     };
+    const scrollToDownloads = () => scrollToSection('client-downloads');
+    const previewLinks = [
+        { label: 'PlanetCreations', sectionId: 'in-game-overlay-feature' },
+        { label: 'Savegame Backup', sectionId: 'savegame-backups' },
+        { label: 'Collaborations', sectionId: 'in-game-collaboration' },
+        { label: 'Notifications', sectionId: 'in-game-overlay-feature' },
+    ];
 
     return (
         <main className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
@@ -143,7 +150,7 @@ const ClientInfoPage = () => {
                         </a>
                     </div>
                     <p className="mt-4 text-sm text-gray-400">Available for Windows, Apple Silicon and Intel Macs, and Linux</p>
-                    <div className="client-app-preview relative mt-12 max-w-3xl mx-auto rounded-xl border border-white/20 bg-gray-950/80 p-2 shadow-2xl backdrop-blur-md text-left" aria-hidden="true">
+                    <div className="client-app-preview relative mt-12 max-w-3xl mx-auto rounded-xl border border-white/20 bg-gray-950/80 p-2 shadow-2xl backdrop-blur-md text-left" aria-label="Explore PlanetCreations client features">
                         <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
                             <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
                             <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
@@ -151,8 +158,16 @@ const ClientInfoPage = () => {
                             <span className="ml-3 text-xs text-gray-400">PlanetCreations Client</span>
                         </div>
                         <div className="grid grid-cols-4 gap-2 p-3 text-xs">
-                            {['PlanetCreations', 'Savegame Backup', 'Collaborations', 'Notifications'].map((tab, index) => (
-                                <div key={tab} className={`rounded-md px-2 py-2 text-center ${index === 0 ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}>{tab}</div>
+                            {previewLinks.map(({ label, sectionId }, index) => (
+                                <button
+                                    key={label}
+                                    type="button"
+                                    onClick={() => scrollToSection(sectionId)}
+                                    title={`Jump to ${label}`}
+                                    className={`rounded-md px-2 py-2 text-center font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${index === 0 ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'}`}
+                                >
+                                    {label}
+                                </button>
                             ))}
                         </div>
                         <div className="grid grid-cols-3 gap-3 p-3 pt-1">
@@ -164,8 +179,12 @@ const ClientInfoPage = () => {
                                 </div>
                             ))}
                         </div>
-                        <span className="client-floating-badge client-floating-badge-one"><Icon path={ICONS.desktop} className="w-4 h-4" /> In-Game Overlay</span>
-                        <span className="client-floating-badge client-floating-badge-two"><Icon path={ICONS.shieldCheck} className="w-4 h-4" /> Savegame backed up</span>
+                        <button type="button" onClick={() => scrollToSection('in-game-overlay-feature')} className="client-floating-badge client-floating-badge-one" title="Jump to the In-Game Overlay feature">
+                            <Icon path={ICONS.desktop} className="w-4 h-4" /> In-Game Overlay
+                        </button>
+                        <button type="button" onClick={() => scrollToSection('savegame-backups')} className="client-floating-badge client-floating-badge-two" title="Jump to immediate savegame backups">
+                            <Icon path={ICONS.shieldCheck} className="w-4 h-4" /> Savegame backed up
+                        </button>
                     </div>
                 </div>
             </section>
@@ -238,7 +257,7 @@ const ClientInfoPage = () => {
                         </p>
                     </div>
                     <div className="grid lg:grid-cols-2 gap-6 mb-10">
-                        <article className="relative overflow-hidden rounded-2xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/50 dark:to-cyan-950/30 p-7 md:p-8 text-center shadow-md">
+                        <article id="in-game-overlay-feature" className="relative scroll-mt-24 overflow-hidden rounded-2xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/50 dark:to-cyan-950/30 p-7 md:p-8 text-center shadow-md">
                             <span className="inline-flex rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
                             <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
                                 <Icon path={ICONS.desktop} className="w-7 h-7" />
@@ -253,7 +272,7 @@ const ClientInfoPage = () => {
                                 <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Collaboration controls</span>
                             </div>
                         </article>
-                        <article className="relative overflow-hidden rounded-2xl border border-green-200 dark:border-green-800 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/50 dark:to-emerald-950/30 p-7 md:p-8 text-center shadow-md">
+                        <article id="savegame-backups" className="relative scroll-mt-24 overflow-hidden rounded-2xl border border-green-200 dark:border-green-800 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/50 dark:to-emerald-950/30 p-7 md:p-8 text-center shadow-md">
                             <span className="inline-flex rounded-full bg-green-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
                             <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-green-600 text-white flex items-center justify-center shadow-md">
                                 <Icon path={ICONS.database} className="w-7 h-7" />
@@ -278,7 +297,7 @@ const ClientInfoPage = () => {
                         <FeatureCard icon={ICONS.image} accent="amber" title="Custom Media Manager" description="Collect the images, videos and audio used by a creation and preserve them as a dedicated media package for later restoration or sharing." />
                         <FeatureCard icon={ICONS.download} accent="cyan" badge="New" title="Direct Install" description="Install supported creations from their detail page. You can send an install to a connected PC even when you are browsing the website on another device." />
                         <FeatureCard icon={ICONS.refresh} accent="rose" badge="New" title="Background Queue" description="Queued installs are picked up by the desktop client. The system tray keeps notifications and background tasks available after the main window is closed." />
-                        <FeatureCard icon={ICONS.users} accent="green" badge="New" title="In-game collaboration" description="See build locks, install the newest shared version, open the build workspace and log your build turn directly through the In-Game Overlay." />
+                        <FeatureCard id="in-game-collaboration" icon={ICONS.users} accent="green" badge="New" title="In-game collaboration" description="See build locks, install the newest shared version, open the build workspace and log your build turn directly through the In-Game Overlay." />
                     </div>
                 </section>
 
