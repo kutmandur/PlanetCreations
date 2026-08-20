@@ -623,23 +623,21 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                         </button>
                         {isSiteAdmin && (
                             <>
-                                {PARTNER_COMMUNITIES_VISIBLE && (
-                                    <button
-                                        type="button"
-                                        onClick={handleTogglePartnerStatus}
-                                        disabled={isUpdatingPartnerStatus}
-                                        aria-pressed={community.isPartner === true}
-                                        aria-label={community.isPartner === true ? 'Remove partner status' : 'Mark as partner community'}
-                                        title={community.isPartner === true ? 'Remove from Partner Communitys' : 'Add to Partner Communitys'}
-                                        className={`flex items-center justify-center px-3 py-2 rounded-md transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
-                                            community.isPartner === true
-                                                ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
-                                                : 'bg-gray-200 hover:bg-yellow-100 text-gray-700 dark:bg-gray-700 dark:hover:bg-yellow-900/40 dark:text-gray-200'
-                                        }`}
-                                    >
-                                        <Icon path={ICONS.star} solid={community.isPartner === true} className="w-5 h-5"/>
-                                    </button>
-                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleTogglePartnerStatus}
+                                    disabled={isUpdatingPartnerStatus}
+                                    aria-pressed={community.isPartner === true}
+                                    aria-label={community.isPartner === true ? 'Remove partner status' : 'Mark as partner community'}
+                                    title={community.isPartner === true ? 'Remove from Partner Communitys' : 'Add to Partner Communitys'}
+                                    className={`flex items-center justify-center px-3 py-2 rounded-md transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        community.isPartner === true
+                                            ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                                            : 'bg-gray-200 hover:bg-yellow-100 text-gray-700 dark:bg-gray-700 dark:hover:bg-yellow-900/40 dark:text-gray-200'
+                                    }`}
+                                >
+                                    <Icon path={ICONS.star} solid={community.isPartner === true} className="w-5 h-5"/>
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => setConfirmation({
