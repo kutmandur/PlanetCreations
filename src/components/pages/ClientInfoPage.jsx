@@ -109,6 +109,12 @@ const ClientInfoPage = () => {
 
     const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
     const recommendedPlatform = platform.includes('mac') ? 'mac' : platform.includes('win') ? 'windows' : platform.includes('linux') ? 'linux' : null;
+    const scrollToDownloads = () => {
+        document.getElementById('client-downloads')?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+        });
+    };
 
     return (
         <main className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
@@ -127,10 +133,10 @@ const ClientInfoPage = () => {
                         Open the PlanetCreations hub without leaving the game, keep your collaborations and notifications close, and create an immediate backup of a detected savegame whenever you need one.
                     </p>
                     <div className="client-hero-enter client-hero-actions mt-9 flex flex-col sm:flex-row justify-center gap-3">
-                        <a href="#client-downloads" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
+                        <button type="button" onClick={scrollToDownloads} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
                             <Icon path={ICONS.download} className="w-5 h-5" />
                             Download Latest Release
-                        </a>
+                        </button>
                         <a href="https://github.com/kutmandur/PlanetCreations" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 px-6 py-3 font-bold text-white transition-colors">
                             <Icon path={ICONS.code} className="w-5 h-5" />
                             View Source Code
@@ -416,10 +422,10 @@ const ClientInfoPage = () => {
                     </div>
                     <h2 className="text-3xl font-bold">Ready to manage your creations?</h2>
                     <p className="mt-3 mb-7 text-gray-600 dark:text-gray-300 max-w-xl mx-auto">Jump to the downloads above and get the correct installer for your operating system.</p>
-                    <a href="#client-downloads" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors">
+                    <button type="button" onClick={scrollToDownloads} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors">
                         <Icon path={ICONS.download} className="w-5 h-5" />
                         Choose your download
-                    </a>
+                    </button>
                 </section>
             </div>
         </main>
