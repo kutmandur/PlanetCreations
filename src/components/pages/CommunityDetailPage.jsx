@@ -37,8 +37,6 @@ import CommunityJoinModal from '../modals/CommunityJoinModal';
 import OfficialPartnerBadge from '../community/OfficialPartnerBadge';
 
 const TABS = ['Creations', 'Members', 'Events'];
-const PARTNER_COMMUNITIES_VISIBLE =
-    import.meta.env.VITE_ENABLE_PARTNER_COMMUNITIES === 'true';
 
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
     const { communityName } = useParams();
@@ -589,7 +587,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             <div className="mb-8">
                 <div className="relative mb-4">
                     <img src={community.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Community+Banner'} alt={`${community.name} Banner`} className="w-full h-48 md:h-64 object-cover rounded-lg"/>
-                    {PARTNER_COMMUNITIES_VISIBLE && community.isPartner === true && (
+                    {community.isPartner === true && (
                         <OfficialPartnerBadge
                             communityName={community.name}
                             logoUrl={community.profileImageUrl}
