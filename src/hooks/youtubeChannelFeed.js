@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
-    'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
+const API_BASE_URL = import.meta.env.DEV
+    ? '/api'
+    : import.meta.env.VITE_API_BASE_URL ||
+        'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 
 // Geteilte React-Query-Optionen für den YouTube-Kanal-Feed, damit die Community-Seite
 // (Prefetch) und der Videos-Tab (Anzeige) denselben Cache-Key + Fetch nutzen.
-// Der Feed kommt aus YouTubes öffentlichem RSS-Feed via Cloud-Function-Proxy
-// (CORS-blockiert im Browser); serverseitig 15 min gecacht.
+// Die Daten kommen via Cloud-Function-Proxy aus YouTubes öffentlichem RSS-Feed
+// oder dessen Kanalseiten-Fallback; serverseitig werden sie 15 min gecacht.
 export const youtubeChannelFeedOptions = (url) => ({
     queryKey: ['youtubeChannelFeed', url],
     queryFn: async () => {

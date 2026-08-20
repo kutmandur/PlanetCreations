@@ -7,7 +7,7 @@ import BannerImageSizeTooltip from '../../community/BannerImageSizeTooltip';
 import { SectionCard, Field, SaveBar, inputClass } from './ui';
 import { scheduleDataRefresh } from '../../../utils/appRefresh';
 
-// Everything visual: theme color, banner & profile images, and the creation card editor.
+// Everything visual: theme color, banner & logo images, and the creation card editor.
 const AppearanceSection = ({ community, setModalMessage }) => {
   const [themeColor, setThemeColor] = useState(community.themeColor || '#F97316');
   const [bannerImageUrl, setBannerImageUrl] = useState(community.bannerImageUrl || '');
@@ -72,7 +72,7 @@ const AppearanceSection = ({ community, setModalMessage }) => {
           <div className="mt-2"><InfoBox /></div>
         </Field>
 
-        <Field label="Profile Image URL (Square)">
+        <Field label="Logo URL (Square)">
           <input
             type="url"
             value={profileImageUrl}
@@ -87,7 +87,7 @@ const AppearanceSection = ({ community, setModalMessage }) => {
       </SectionCard>
 
       {/* Custom creation card fields + live preview. The preview mirrors the theme color and
-          profile image edited above (even before they're saved). */}
+          logo edited above (even before it is saved). */}
       <CommunityCardEditor
         community={community}
         setModalMessage={setModalMessage}

@@ -183,6 +183,31 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "searchIndexShards",
+      "fieldPath": "e",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "communitySearchIndexShards",
+      "fieldPath": "e",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userSearchIndexShards",
+      "fieldPath": "e",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "showcaseIndexShards",
+      "fieldPath": "e",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "youtubeVideoIndexShards",
+      "fieldPath": "c",
+      "indexes": []
+    },
+    {
       "collectionGroup": "creations",
       "fieldPath": "creationId",
       "indexes": [

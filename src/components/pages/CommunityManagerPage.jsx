@@ -151,7 +151,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
         return unsubscribe;
     }, [communityId, managerPermissions.manageJoinRequests]);
 
-    // Creations kommen aus dem Community-Index (1 Read). Mutationen der Manager
+    // Creations kommen aus allen Shards des Community-Indexes. Mutationen der Manager
     // aktualisieren den lokalen State direkt; der Index zieht per Trigger nach.
     const { data: indexCreations, isError: indexError } = useQuery({
         queryKey: ['communityIndex', communityId],

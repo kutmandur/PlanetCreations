@@ -22,7 +22,9 @@ const OWNER_ID = "rules-owner";
 const MEMBER_ID = "rules-member";
 const OUTSIDER_ID = "rules-outsider";
 const MODERATOR_ID = "rules-moderator";
+const ADMIN_ID = "rules-admin";
 const PUBLISHED_CREATION_ID = "rules-published-creation";
+const COMMUNITY_ID = "rules-community";
 
 const emulatorAddress =
   process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
@@ -135,6 +137,18 @@ async function seedCollaboration() {
   });
 }
 
+async function seedCommunity() {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, "communitys", COMMUNITY_ID), {
+      name: "Rules Test Community",
+      description: "Community used by the partner-status rules tests.",
+      ownerId: OWNER_ID,
+      isPartner: false,
+    });
+  });
+}
+
 before(async () => {
   const rules = await readFile(
     new URL("../firestore.rules", import.meta.url),
@@ -153,6 +167,7 @@ before(async () => {
 beforeEach(async () => {
   await testEnvironment.clearFirestore();
   await seedCollaboration();
+  await seedCommunity();
 });
 
 after(async () => {
@@ -449,5 +464,134 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
       moderatorDb,
       `creations/${PUBLISHED_CREATION_ID}`,
     )));
+  });
+});
+
+describe("community partner-status Firestore rules", { concurrency: false }, () => {
+  test("only admins can change an existing community's partner status", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const moderatorDb = authenticatedFirestore(MODERATOR_ID, {
+      role: "moderator",
+    });
+    const adminDb = authenticatedFirestore(ADMIN_ID, { role: "admin" });
+    const communityRef = db => doc(db, "communitys", COMMUNITY_ID);
+
+    await assertSucceeds(updateDoc(communityRef(ownerDb), {
+      description: "The owner can still edit normal community fields.",
+    }));
+    await assertFails(updateDoc(communityRef(ownerDb), { isPartner: true }));
+    await assertFails(updateDoc(communityRef(moderatorDb), { isPartner: true }));
+    await assertSucceeds(updateDoc(communityRef(adminDb), { isPartner: true }));
+
+    const snapshot = await getDoc(communityRef(adminDb));
+    assert.equal(snapshot.data().isPartner, true);
+  });
+
+  test("non-admin creators cannot mark a new community as a partner", async () => {
+    const moderatorDb = authenticatedFirestore(MODERATOR_ID, {
+      role: "moderator",
+    });
+    const adminDb = authenticatedFirestore(ADMIN_ID, { role: "admin" });
+
+    await assertFails(setDoc(doc(moderatorDb, "communitys", "forged-partner"), {
+      name: "Forged Partner Community",
+      ownerId: MODERATOR_ID,
+      isPartner: true,
+    }));
+    await assertSucceeds(setDoc(doc(adminDb, "communitys", "admin-partner"), {
+      name: "Admin Partner Community",
+      ownerId: ADMIN_ID,
+      isPartner: true,
+    }));
+  });
+});
+
+describe("YouTube video index Firestore rules", { concurrency: false }, () => {
+  test("everyone can read index state and shards", async () => {
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await setDoc(doc(adminDb, "youtubeVideoIndexState", "current"), {
+        headShardId: "000001",
+      });
+      await setDoc(doc(adminDb, "youtubeVideoIndexShards", "000001"), {
+        c: {},
+        p: null,
+      });
+    });
+
+    const anonymousDb = testEnvironment.unauthenticatedContext().firestore();
+    await assertSucceeds(getDoc(doc(
+      anonymousDb,
+      "youtubeVideoIndexState",
+      "current",
+    )));
+    await assertSucceeds(getDoc(doc(
+      anonymousDb,
+      "youtubeVideoIndexShards",
+      "000001",
+    )));
+  });
+
+  test("even authenticated admins cannot write server-owned index data", async () => {
+    const adminDb = authenticatedFirestore(ADMIN_ID, { role: "admin" });
+    await assertFails(setDoc(doc(
+      adminDb,
+      "youtubeVideoIndexState",
+      "current",
+    ), {headShardId: "forged"}));
+    await assertFails(setDoc(doc(
+      adminDb,
+      "youtubeVideoIndexShards",
+      "000001",
+    ), {c: {forged: true}}));
+    await assertFails(setDoc(doc(
+      adminDb,
+      "youtubeChannelSubscriptions",
+      "forged",
+    ), {secret: "stolen"}));
+  });
+});
+
+describe("scalable map-index Firestore rules", { concurrency: false }, () => {
+  const publicCollections = [
+    ["searchIndexState", "planet-coaster-2"],
+    ["searchIndexShards", "game-shard"],
+    ["communitySearchIndexState", COMMUNITY_ID],
+    ["communitySearchIndexShards", "community-shard"],
+    ["userSearchIndexState", "all"],
+    ["userSearchIndexShards", "user-shard"],
+    ["showcaseIndexState", "showcase-id"],
+    ["showcaseIndexShards", "showcase-shard"],
+  ];
+
+  test("anonymous clients can read every public state and shard family", async () => {
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      await Promise.all(publicCollections.map(([collectionName, documentId]) =>
+        setDoc(doc(context.firestore(), collectionName, documentId), {
+          e: {},
+          shardIds: [],
+        })));
+    });
+    const anonymousDb = testEnvironment.unauthenticatedContext().firestore();
+    await Promise.all(publicCollections.map(([collectionName, documentId]) =>
+      assertSucceeds(getDoc(doc(anonymousDb, collectionName, documentId)))));
+  });
+
+  test("even admin clients cannot mutate public shards or private locations", async () => {
+    const adminDb = authenticatedFirestore(ADMIN_ID, {role: "admin"});
+    await Promise.all(publicCollections.map(([collectionName, documentId]) =>
+      assertFails(setDoc(doc(adminDb, collectionName, documentId), {
+        e: {forged: true},
+      }))));
+    for (const collectionName of [
+      "searchIndexLocations",
+      "communitySearchIndexLocations",
+      "userSearchIndexLocations",
+      "showcaseIndexLocations",
+    ]) {
+      await assertFails(setDoc(doc(adminDb, collectionName, "forged"), {
+        shardId: "forged",
+      }));
+    }
   });
 });

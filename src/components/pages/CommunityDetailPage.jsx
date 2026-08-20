@@ -9,13 +9,13 @@ import {
     joinCommunityWithPassword,
     leaveCommunity,
     deleteCommunityAsAdmin,
+    setCommunityPartnerStatus,
     requestCommunityJoin,
     withdrawCommunityJoinRequest,
 } from '../../firebase/community';
 import { fetchCommunityIndex } from '../../firebase/communityIndexService';
 import AddCreationsToCommunityModal from '../modals/AddCreationsToCommunityModal';
 import CommunityVideosTab from '../community/CommunityVideosTab';
-import { youtubeChannelFeedOptions } from '../../hooks/youtubeChannelFeed';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import MiniCreationCard from '../cards/MiniCreationCard';
@@ -34,8 +34,11 @@ import {
     isCommunityInfoRestricted,
 } from '../../utils/communityVisibility';
 import CommunityJoinModal from '../modals/CommunityJoinModal';
+import OfficialPartnerBadge from '../community/OfficialPartnerBadge';
 
 const TABS = ['Creations', 'Members', 'Events'];
+const PARTNER_COMMUNITIES_VISIBLE =
+    import.meta.env.VITE_ENABLE_PARTNER_COMMUNITIES === 'true';
 
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
     const { communityName } = useParams();
@@ -57,6 +60,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const [hasInvite, setHasInvite] = useState(false);
     const [joinModalMode, setJoinModalMode] = useState(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [isUpdatingPartnerStatus, setIsUpdatingPartnerStatus] = useState(false);
     const navigate = useNavigate();
 
     const [isFilterVisible, setIsFilterVisible] = useState(false);
@@ -78,7 +82,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         infoAccessResolved &&
         canViewCommunityInfo(community, isMember, userProfile, user?.uid);
 
-    // Creations der Community kommen aus dem Kompakt-Index (1 Read),
+    // Creations der Community kommen aus dem vollständigen Shard-Index,
     // gepflegt von den Cloud-Function-Triggern.
     const { data: creations = [] } = useQuery({
         queryKey: ['communityIndex', community?.id],
@@ -297,16 +301,6 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
     const visibleTabs = useMemo(() => hasVideos ? [...TABS, 'Videos'] : TABS, [hasVideos]);
 
-    // YouTube-Feed schon beim Laden der Community vorwärmen, damit die Videos beim
-    // Wechsel in den Videos-Tab sofort da sind (der Tab wird erst dann gemountet).
-    // prefetchQuery füllt nur den Cache und löst kein Re-Render dieser Seite aus.
-    const youtubeChannelUrl = community?.socialLinks?.youtube || null;
-    useEffect(() => {
-        if (youtubeChannelUrl && canViewInfoPage) {
-            queryClient.prefetchQuery(youtubeChannelFeedOptions(youtubeChannelUrl));
-        }
-    }, [youtubeChannelUrl, canViewInfoPage, queryClient]);
-
     useEffect(() => {
         if (!visibleTabs.includes(activeTab)) setActiveTab(TABS[0]);
     }, [visibleTabs, activeTab]);
@@ -352,6 +346,26 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     const canAddCreations = siteStaffBypass || memberPermissions.addCreations;
     const canApplyShowcase = siteStaffBypass || memberPermissions.applyShowcase;
     const canCreateEvents = siteStaffBypass || memberPermissions.createEvents;
+
+    const handleTogglePartnerStatus = async () => {
+        if (!isSiteAdmin || !community?.id || isUpdatingPartnerStatus) return;
+
+        const nextPartnerStatus = community.isPartner !== true;
+        setIsUpdatingPartnerStatus(true);
+        try {
+            await setCommunityPartnerStatus(community.id, nextPartnerStatus);
+            await queryClient.invalidateQueries({ queryKey: ['communities'] });
+            setModalMessage(
+                nextPartnerStatus
+                    ? `${community.name} is now a partner community.`
+                    : `${community.name} is no longer a partner community.`
+            );
+        } catch (error) {
+            setModalMessage(`Could not update partner status: ${error.message}`);
+        } finally {
+            setIsUpdatingPartnerStatus(false);
+        }
+    };
 
     // Öffentlicher Events-Tab ist für Owner und Nutzer identisch: unsichtbare
     // Events erscheinen nur noch im Community-Manager (Events-Tab).
@@ -575,6 +589,12 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             <div className="mb-8">
                 <div className="relative mb-4">
                     <img src={community.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Community+Banner'} alt={`${community.name} Banner`} className="w-full h-48 md:h-64 object-cover rounded-lg"/>
+                    {PARTNER_COMMUNITIES_VISIBLE && community.isPartner === true && (
+                        <OfficialPartnerBadge
+                            communityName={community.name}
+                            logoUrl={community.profileImageUrl}
+                        />
+                    )}
                     {SOCIAL_PLATFORMS.some(p => community.socialLinks?.[p.id]) && (
                         <div className="absolute bottom-3 right-3 flex gap-2">
                             {SOCIAL_PLATFORMS.filter(p => community.socialLinks?.[p.id]).map(platform => (
@@ -594,7 +614,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 </div>
 
                 <div className="flex flex-col md:flex-row justify-center items-center md:items-start gap-y-4 px-2">
-                    <div className="flex flex-col sm:flex-row gap-2 order-2 md:order-1 w-48 flex-shrink-0">
+                    <div className="flex flex-col sm:flex-row gap-2 order-2 md:order-1 w-56 flex-shrink-0">
                         <button 
                             onClick={() => navigate('/communitys')} 
                             className="flex items-center justify-center community-bg hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold"
@@ -602,24 +622,44 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back to Hub
                         </button>
                         {isSiteAdmin && (
-                             <button 
-                                onClick={() => setConfirmation({
-                                    message: `Are you sure you want to permanently delete the "${community.name}" community?`,
-                                    onConfirm: async () => {
-                                        try {
-                                            await deleteCommunityAsAdmin(community.id);
-                                            setModalMessage("Community deleted successfully.");
-                                            scheduleDataRefresh();
-                                            navigate('/communitys');
-                                        } catch (error) {
-                                            setModalMessage(`Error deleting community: ${error.message}`);
+                            <>
+                                {PARTNER_COMMUNITIES_VISIBLE && (
+                                    <button
+                                        type="button"
+                                        onClick={handleTogglePartnerStatus}
+                                        disabled={isUpdatingPartnerStatus}
+                                        aria-pressed={community.isPartner === true}
+                                        aria-label={community.isPartner === true ? 'Remove partner status' : 'Mark as partner community'}
+                                        title={community.isPartner === true ? 'Remove from Partner Communitys' : 'Add to Partner Communitys'}
+                                        className={`flex items-center justify-center px-3 py-2 rounded-md transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
+                                            community.isPartner === true
+                                                ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                                                : 'bg-gray-200 hover:bg-yellow-100 text-gray-700 dark:bg-gray-700 dark:hover:bg-yellow-900/40 dark:text-gray-200'
+                                        }`}
+                                    >
+                                        <Icon path={ICONS.star} solid={community.isPartner === true} className="w-5 h-5"/>
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmation({
+                                        message: `Are you sure you want to permanently delete the "${community.name}" community?`,
+                                        onConfirm: async () => {
+                                            try {
+                                                await deleteCommunityAsAdmin(community.id);
+                                                setModalMessage("Community deleted successfully.");
+                                                scheduleDataRefresh();
+                                                navigate('/communitys');
+                                            } catch (error) {
+                                                setModalMessage(`Error deleting community: ${error.message}`);
+                                            }
                                         }
-                                    }
-                                })}
-                                className={`flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition-all font-semibold`}
-                            >
-                                <Icon path={ICONS.trash} className="w-5 h-5"/>
-                            </button>
+                                    })}
+                                    className="flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition-all font-semibold"
+                                >
+                                    <Icon path={ICONS.trash} className="w-5 h-5"/>
+                                </button>
+                            </>
                         )}
                     </div>
 
@@ -628,7 +668,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                         <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">{community.description}</p>
                     </div>
                     
-                    <div className="text-center order-3 md:order-3 md:text-right w-48 flex-shrink-0">
+                    <div className="text-center order-3 md:order-3 md:text-right w-56 flex-shrink-0">
                         {user && !isCommunityOwner ? (
                             isMember ? (
                                 <div className="flex flex-col items-center md:items-end gap-2">

@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getYoutubeThumbnailUrl } from '../../utils/helpers';
-import { useYoutubeChannelFeed } from '../../hooks/youtubeChannelFeed';
+import { useCommunityYoutubeVideos } from '../../hooks/youtubeVideoIndex';
 import Spinner from '../ui/Spinner';
 import CommunityFilterBar from '../management/CommunityFilterBar';
 
@@ -48,9 +48,35 @@ const CommunityVideosTab = ({ community, creations, events }) => {
 
     const [activeSubTab, setActiveSubTab] = useState(subTabs[0]);
 
-    // Kanal-Videos über den geteilten Hook laden (Prefetch passiert bereits beim
-    // Laden der Community-Seite, daher meist sofort aus dem Cache verfügbar).
-    const { data: channelFeed, isLoading: feedLoading, error: feedError } = useYoutubeChannelFeed(youtubeChannelUrl);
+    const loadMoreVideosRef = useRef(null);
+    const {
+        error: feedError,
+        hasMore: hasMoreYoutubeVideos,
+        isFetchingMore: youtubeVideosFetchingMore,
+        isLoading: feedLoading,
+        loadMore: loadMoreYoutubeVideos,
+        videos: indexedYoutubeVideos,
+    } = useCommunityYoutubeVideos(community.id, {
+        minimumVideos: 15,
+        pageSize: 15,
+    });
+
+    useEffect(() => {
+        const target = loadMoreVideosRef.current;
+        if (activeSubTab !== 'Youtube' || !target || !hasMoreYoutubeVideos) return undefined;
+        const observer = new IntersectionObserver(entries => {
+            if (entries[0]?.isIntersecting && !youtubeVideosFetchingMore) {
+                loadMoreYoutubeVideos();
+            }
+        }, { rootMargin: '240px' });
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [
+        activeSubTab,
+        hasMoreYoutubeVideos,
+        loadMoreYoutubeVideos,
+        youtubeVideosFetchingMore,
+    ]);
 
     // Showcases: Creations mit derselben showcaseVideoUrl gehören zu einem Showcase
     const showcases = useMemo(() => {
@@ -148,18 +174,16 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                     <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                         Could not load channel videos. Please check the YouTube link in the community settings.
                     </p>
-                ) : (channelFeed?.videos?.length > 0 ? (
+                ) : (indexedYoutubeVideos.length > 0 ? (
                     <>
-                        {channelFeed.channelTitle && (
-                            <p className="text-center text-gray-500 dark:text-gray-400 mb-4">
-                                Latest videos from{' '}
-                                <a href={youtubeChannelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold community-text hover:underline">
-                                    {channelFeed.channelTitle}
-                                </a>
-                            </p>
-                        )}
+                        <p className="text-center text-gray-500 dark:text-gray-400 mb-4">
+                            Latest videos from{' '}
+                            <a href={youtubeChannelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold community-text hover:underline">
+                                {community.name}
+                            </a>
+                        </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {channelFeed.videos.map(video => (
+                            {indexedYoutubeVideos.map(video => (
                                 <div key={video.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                                     <VideoThumb url={`https://www.youtube.com/watch?v=${video.id}`} />
                                     <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer" className="block p-3 hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -171,6 +195,11 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                                 </div>
                             ))}
                         </div>
+                        {hasMoreYoutubeVideos && (
+                            <div ref={loadMoreVideosRef} className="flex min-h-24 items-center justify-center py-6">
+                                {youtubeVideosFetchingMore && <Spinner />}
+                            </div>
+                        )}
                     </>
                 ) : (
                     <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">This channel has no videos yet.</p>

@@ -1,6 +1,7 @@
 import {
   cleanCommunitySocialLinks,
   getCommunityWizardStepError,
+  isYoutubeChannelUrl,
   slugifyCommunityName,
 } from './communityWizard';
 
@@ -64,4 +65,6 @@ test('requires secure social links and cleans empty entries', () => {
     youtube: ' https://youtube.com/example ',
     twitch: '',
   })).toEqual({ youtube: 'https://youtube.com/example' });
+  expect(isYoutubeChannelUrl('https://www.youtube.com/@PlanetCoaster')).toBe(true);
+  expect(isYoutubeChannelUrl('https://youtube.com/watch?v=abcdefghijk')).toBe(false);
 });

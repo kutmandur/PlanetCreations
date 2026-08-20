@@ -73,13 +73,13 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         const platformFilterActive = supportsConsole && homeState.platformFilter === 'console';
         const dlcActive = dlcFilterMode !== 'all';
         // "Recommended" (Default) rankt übers ganze Spiel und läuft daher
-        // ebenfalls über den Index — billiger als der paginierte Pfad (1 Read).
+        // ebenfalls über den vollständigen, geshardeten Index.
         const recommendedActive = homeState.sortBy === 'recommended';
         return hasSearchTerm || tagCount > 0 || modsFilterActive || platformFilterActive || dlcActive || recommendedActive;
     }, [homeState.searchTerm, homeState.filterTags, homeState.showModsOnly, homeState.platformFilter, homeState.sortBy, dlcFilterMode, supportsMods, supportsConsole]);
 
-    // Suchindex des aktiven Spiels: 1 Firestore-Read, 15 Minuten gecacht,
-    // wird für den Recommended-Feed und im Suchmodus geladen.
+    // Alle Shards des aktiven Spiels, 15 Minuten gecacht; werden für den
+    // Recommended-Feed zu einem gemeinsamen Pool vereinigt.
     const { data: indexCreations, isLoading: indexLoading } = useQuery({
         queryKey: ['searchIndex', activeTab],
         queryFn: () => fetchSearchIndex(activeTab),

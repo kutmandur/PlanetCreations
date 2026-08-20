@@ -131,7 +131,8 @@ service cloud.firestore {
       return data.keys().hasAll(['name', 'ownerId']) &&
              data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 2000)) &&
-             (!('membersOnlyInfoPage' in data.keys()) || data.membersOnlyInfoPage is bool);
+             (!('membersOnlyInfoPage' in data.keys()) || data.membersOnlyInfoPage is bool) &&
+             (!('isPartner' in data.keys()) || data.isPartner is bool);
     }
 
     // --- Rules for Collections ---
@@ -171,9 +172,14 @@ service cloud.firestore {
 
     match /communitys/{communityId} {
       allow read: if true;
-      allow create: if (isInfluencer() || isModerator()) && isValidCommunityData(request.resource.data);
+      allow create: if (isInfluencer() || isModerator()) &&
+        isValidCommunityData(request.resource.data) &&
+        (isAdmin() || !('isPartner' in request.resource.data.keys()));
       allow update: if isLoggedIn() &&
         isValidCommunityData(request.resource.data) &&
+        // Der Partnerstatus ist eine plattformweite Auszeichnung und darf weder
+        // von Community-Ownern noch von Community-Moderatoren verändert werden.
+        (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPartner'])) &&
         (
           get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
           isAdmin() ||
@@ -384,29 +390,49 @@ service cloud.firestore {
       allow read: if isLoggedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // Kompakter Suchindex (ein Doc pro Spiel), wird nur von Cloud Functions
-    // (Admin SDK, umgeht Rules) geschrieben — Clients lesen ihn für die Suche.
-    match /searchIndex/{gameId} {
+    // Größenbasierte State-/Shard-Indexe. Locations bleiben absichtlich ohne
+    // Client-Regel und sind damit ausschließlich über das Admin SDK erreichbar.
+    match /searchIndexState/{gameId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /searchIndexShards/{shardId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /communitySearchIndexState/{communityId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /communitySearchIndexShards/{shardId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /userSearchIndexState/{scopeId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /userSearchIndexShards/{shardId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /showcaseIndexState/{showcaseId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /showcaseIndexShards/{shardId} {
       allow read: if true;
       allow write: if false;
     }
 
-    // Community-Suchindex (ein Doc pro Community), analog nur von Functions gepflegt.
-    match /communitySearchIndex/{communityId} {
+    // Öffentlicher, rückwärts verketteter YouTube-Videoindex. Ausschließlich die
+    // WebSub-/Backfill-Functions schreiben State und Shards über das Admin SDK.
+    match /youtubeVideoIndexState/{documentId} {
       allow read: if true;
       allow write: if false;
     }
 
-    // Nutzer-Suchindex (userSearchIndex/all, ggf. später Shards), nur von der
-    // Cloud Function onProfileWrite (Admin SDK) gepflegt — Clients lesen ihn für
-    // die Nutzersuche (HomePage, Einladungen).
-    match /userSearchIndex/{shardId} {
-      allow read: if true;
-      allow write: if false;
-    }
-
-    // Showcase-Index (ein Doc pro Showcase), nur von Cloud Functions gepflegt.
-    match /showcaseIndex/{showcaseId} {
+    match /youtubeVideoIndexShards/{shardId} {
       allow read: if true;
       allow write: if false;
     }
