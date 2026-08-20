@@ -27,4 +27,24 @@ describe('ClientInfoPage download shortcuts', () => {
             block: 'start',
         });
     });
+
+    it.each([
+        ['PlanetCreations', 'in-game-overlay-feature'],
+        ['Savegame Backup', 'savegame-backups'],
+        ['Collaborations', 'in-game-collaboration'],
+        ['Notifications', 'in-game-overlay-feature'],
+        ['In-Game Overlay', 'in-game-overlay-feature'],
+        ['Savegame backed up', 'savegame-backups'],
+    ])('opens the relevant section from the preview label %s', (buttonName, sectionId) => {
+        render(<ClientInfoPage />);
+        const target = document.getElementById(sectionId);
+        target.scrollIntoView = vi.fn();
+
+        fireEvent.click(screen.getByRole('button', { name: buttonName, exact: true }));
+
+        expect(target.scrollIntoView).toHaveBeenCalledWith({
+            behavior: 'smooth',
+            block: 'start',
+        });
+    });
 });
