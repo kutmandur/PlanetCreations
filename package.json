@@ -48,6 +48,7 @@
     "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/firestore.rules.test.mjs && node --test tests/scalable-map-index.emulator.test.cjs\"",
     "test:installed-production": "node scripts/installed-production-smoke.mjs",
     "test:watch": "vitest",
+    "deploy:ionos": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-ionos.ps1",
     "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",
     "package": "npm run build && electron-builder"
   },
