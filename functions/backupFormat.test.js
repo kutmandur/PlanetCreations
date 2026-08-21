@@ -63,6 +63,7 @@ test("accepts a signed creation package with a fixed empty media manifest", () =
   const result = validateCreationArchive(makePackage(), publicKey, [".park2"]);
   assert.equal(result.metadata.packageType, "creation");
   assert.deepEqual(result.mediaManifest.assets, []);
+  assert.equal(result.payloadBuffer.toString("utf8"), "planet-coaster-save-data");
 });
 
 test("rejects a payload whose bytes do not match the signed SHA-256", () => {

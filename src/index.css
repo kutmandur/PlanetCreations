@@ -212,8 +212,13 @@ html.game-overlay-window #root { background: transparent !important; }
   cursor: grab;
   user-select: none;
   touch-action: none;
+  -webkit-app-region: drag;
 }
 .game-overlay-chrome:active { cursor: grabbing; }
+.game-overlay-chrome button,
+.game-overlay-chrome [data-overlay-interactive] {
+  -webkit-app-region: no-drag;
+}
 .game-overlay-chrome .game-overlay-collapse,
 .game-overlay-chrome .overlay-refresh-button {
   width: 30px;
@@ -258,6 +263,14 @@ html.pc-window-resizing *::after {
   transition-duration: 0s !important;
   transition-delay: 0s !important;
   animation-play-state: paused !important;
+}
+
+/* Large creation lists otherwise force Chromium to relayout and repaint every
+   off-screen card during a native window resize. */
+.pc-creation-file-card {
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-block-size: 260px;
 }
 
 /* Springy micro-interactions for pill selectors and floating navigation.

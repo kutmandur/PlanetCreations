@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported } from 'firebase/messaging';
+import { shouldForceRecaptchaForElectronTest } from '../utils/appCheckMode';
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -31,6 +32,11 @@ export const isConfigured = Boolean(
 const useFirebaseEmulators =
     import.meta.env.DEV &&
     import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+const forceRecaptchaForElectronTest = shouldForceRecaptchaForElectronTest({
+    isDev: import.meta.env.DEV,
+    search: typeof window !== 'undefined' ? window.location.search : '',
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+});
 
 let app, auth, db, appCheck;
 
@@ -41,6 +47,7 @@ if (isConfigured) {
     if (!useFirebaseEmulators && appCheckSiteKey) {
         if (import.meta.env.DEV &&
             import.meta.env.VITE_FIREBASE_APP_CHECK_DEBUG === 'true' &&
+            !forceRecaptchaForElectronTest &&
             typeof window !== 'undefined') {
             window.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
         }

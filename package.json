@@ -1,6 +1,6 @@
 {
   "name": "planet-creation-net",
-  "version": "1.0.30",
+  "version": "1.0.31",
   "description": "PlanetCreations Desktop Client",
   "author": "PlanetCreations",
   "private": true,
@@ -58,7 +58,9 @@
     "productName": "PlanetCreations Client",
     "files": [
       "build/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "!electron/**/*.test.js",
+      "!electron/modules/FrontierSaveWatcher.js"
     ],
     "publish": {
       "provider": "github",

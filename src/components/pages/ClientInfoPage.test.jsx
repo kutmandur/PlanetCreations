@@ -30,9 +30,9 @@ describe('ClientInfoPage download shortcuts', () => {
 
     it.each([
         ['PlanetCreations', 'in-game-overlay-feature'],
-        ['Savegame Backup', 'savegame-backups'],
-        ['Collaborations', 'in-game-collaboration'],
-        ['Notifications', 'in-game-overlay-feature'],
+        ['Savefile Stats', 'savefile-intelligence'],
+        ['Backups', 'savegame-backups'],
+        ['Custom Media', 'custom-media-automation'],
         ['In-Game Overlay', 'in-game-overlay-feature'],
         ['Savegame backed up', 'savegame-backups'],
     ])('opens the relevant section from the preview label %s', (buttonName, sectionId) => {
@@ -46,5 +46,14 @@ describe('ClientInfoPage download shortcuts', () => {
             behavior: 'smooth',
             block: 'start',
         });
+    });
+
+    it('documents automatic savefile metadata and Custom Media handling', () => {
+        render(<ClientInfoPage />);
+
+        expect(screen.getByRole('heading', { name: 'From savefile to useful Creation data' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Automatic Custom Media' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Attractions & Areas' })).toBeInTheDocument();
+        expect(screen.queryByText('Custom media is selected manually')).not.toBeInTheDocument();
     });
 });

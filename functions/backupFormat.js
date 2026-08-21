@@ -260,7 +260,11 @@ function validateCreationArchive(fileBuffer, publicKey, allowedExtensions) {
     if (!publicKey || !verifyMetadataSignature(metadata, publicKey)) {
         throw new Error("The package signature is invalid.");
     }
-    return { metadata, mediaManifest: manifestResult.value };
+    return {
+        metadata,
+        mediaManifest: manifestResult.value,
+        payloadBuffer,
+    };
 }
 
 module.exports = {

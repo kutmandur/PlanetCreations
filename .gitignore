@@ -58,3 +58,21 @@ firebase-debug.log
 nul
 /Bugstuff
 /Neues
+
+# Lokale Analyse- und Admin-Hilfsdateien
+/.pnpm-store/
+/discord-bot/read-bugs.js
+/discord-bot/close-bugs.js
+/scripts/watch-frontier-save.js
+/scripts/watch-frontier-memory.ps1
+/electron/modules/FrontierSaveWatcher.js
+/electron/modules/FrontierSaveWatcher.test.js
+
+# Persönliche Frontier-Testdateien und erzeugte Backup-Pakete
+*.park2
+*.blpr2
+*.prkauto2
+*.zoo
+*.pzblueprint
+*.zooauto
+*.PlanetCreations

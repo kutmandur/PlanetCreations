@@ -9,6 +9,7 @@ const {
     getObjectPath,
     storeAssetBuffer,
     findManifestPathsByMediaSetId,
+    syncAutomaticMediaSnapshot,
 } = require('./MediaManager');
 const {
     FORMAT_NAME,
@@ -331,8 +332,10 @@ async function validateBackupForUpload(backupFilePath) {
     }
 }
 
-async function backupAllCreations(app, files, note, isSigned, idToken, appCheckToken = null) {
+async function backupAllCreations(app, files, note, isSigned, idToken, appCheckToken = null, includeMediaPackages = false) {
     let successCount = 0;
+    let mediaPackageCount = 0;
+    let mediaSkippedCount = 0;
     for (const file of files) {
         if (await createBackup(
             app,
@@ -342,9 +345,18 @@ async function backupAllCreations(app, files, note, isSigned, idToken, appCheckT
             idToken,
             null,
             appCheckToken,
-        )) successCount++;
+        )) {
+            successCount++;
+            if (includeMediaPackages) {
+                const mediaResult = await backupCreationMedia(app, file.path, note, isSigned, idToken, appCheckToken);
+                if (mediaResult.success) mediaPackageCount++;
+                else mediaSkippedCount++;
+            }
+        }
     }
-    return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.` };
+    const mediaSummary = includeMediaPackages ?
+        ` ${mediaPackageCount} matching Custom Media package(s) created; ${mediaSkippedCount} creation(s) did not produce a media package.` : '';
+    return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.${mediaSummary}` };
 }
 
 function deleteBackup(app, backupFilePath) {
@@ -388,6 +400,10 @@ async function createBackup(
         throw new Error('The game file must be between 1 byte and 300 MB.');
     }
     const packageId = crypto.randomUUID();
+    const mediaSync = syncAutomaticMediaSnapshot(sourceFilePath);
+    if (!mediaSync.success) {
+        console.warn(`[BackupManager] Automatic media detection failed for ${fileName}: ${mediaSync.message}`);
+    }
     const portableManifest = createPortableManifest(sourceFilePath);
     const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
     let metadata = {
@@ -482,8 +498,13 @@ async function backupCreationMedia(
     appCheckToken = null,
 ) {
     try {
+        const mediaSync = syncAutomaticMediaSnapshot(sourceFilePath);
         const snapshot = getSnapshot(sourceFilePath);
-        if (!snapshot?.assets?.length) return { success: false, message: 'No media is associated with this creation.' };
+        if (!snapshot?.assets?.length) {
+            const suffix = mediaSync.referenceCount > 0 ?
+                ` ${mediaSync.referenceCount} reference(s) were found, but the files are not available locally.` : '';
+            return { success: false, message: `No available media is associated with this creation.${suffix}` };
+        }
         const portableManifest = createPortableManifest(sourceFilePath, snapshot.mediaSetId);
         const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
         const packageId = crypto.randomUUID();
@@ -517,7 +538,8 @@ async function backupCreationMedia(
         }
         zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata, null, 2)));
         zip.writeZip(destinationPath);
-        return { success: true, message: `Checked media package created for '${path.basename(sourceFilePath)}'.` };
+        const missingSuffix = mediaSync.missing?.length ? ` ${mediaSync.missing.length} referenced file(s) are missing locally.` : '';
+        return { success: true, message: `Checked media package created for '${path.basename(sourceFilePath)}'.${missingSuffix}` };
     } catch (error) {
         console.error('Failed to create media package:', error);
         return { success: false, message: error.message };

@@ -11,6 +11,11 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, stream
     const [qrDataUrl, setQrDataUrl] = useState(null);
     const movedRef = useRef(false);
     const startRef = useRef({ x: 0, y: 0 });
+    const draggingRef = useRef(false);
+    const pendingMoveRef = useRef(null);
+    const moveFrameRef = useRef(null);
+    const resizeStepsRef = useRef(0);
+    const resizeFrameRef = useRef(null);
 
     useEffect(() => subscribeOverlayQr(setOverlayQrState), []);
 
@@ -30,8 +35,20 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, stream
     }, [overlayQr?.url, overlayQr?.title]);
 
     useEffect(() => {
+        const flushMove = () => {
+            moveFrameRef.current = null;
+            if (!pendingMoveRef.current) return;
+            window.electronAPI?.moveOverlay?.(pendingMoveRef.current);
+            pendingMoveRef.current = null;
+        };
         const stopDragging = () => {
+            if (!draggingRef.current) return;
+            draggingRef.current = false;
             setDragging(false);
+            if (moveFrameRef.current !== null) {
+                window.cancelAnimationFrame(moveFrameRef.current);
+                flushMove();
+            }
             window.electronAPI?.endOverlayDrag?.();
         };
         window.addEventListener('mouseup', stopDragging);
@@ -39,6 +56,8 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, stream
         return () => {
             window.removeEventListener('mouseup', stopDragging);
             window.removeEventListener('blur', stopDragging);
+            if (moveFrameRef.current !== null) window.cancelAnimationFrame(moveFrameRef.current);
+            if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
         };
     }, []);
 
@@ -47,25 +66,49 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, stream
         event.currentTarget.setPointerCapture?.(event.pointerId);
         startRef.current = { x: event.screenX, y: event.screenY };
         movedRef.current = false;
+        draggingRef.current = true;
         setDragging(true);
         window.electronAPI?.startOverlayDrag?.({ screenX: event.screenX, screenY: event.screenY });
     };
 
     const handleMouseMove = (event) => {
-        if (!dragging) return;
+        if (!draggingRef.current) return;
         if (Math.abs(event.screenX - startRef.current.x) > 3 || Math.abs(event.screenY - startRef.current.y) > 3) movedRef.current = true;
-        window.electronAPI?.moveOverlay?.({ screenX: event.screenX, screenY: event.screenY });
+        pendingMoveRef.current = { screenX: event.screenX, screenY: event.screenY };
+        if (moveFrameRef.current === null) {
+            moveFrameRef.current = window.requestAnimationFrame(() => {
+                moveFrameRef.current = null;
+                if (pendingMoveRef.current) window.electronAPI?.moveOverlay?.(pendingMoveRef.current);
+                pendingMoveRef.current = null;
+            });
+        }
     };
 
     const handleMouseUp = () => {
+        if (!draggingRef.current) return;
+        draggingRef.current = false;
         setDragging(false);
+        if (moveFrameRef.current !== null) {
+            window.cancelAnimationFrame(moveFrameRef.current);
+            moveFrameRef.current = null;
+        }
+        if (pendingMoveRef.current) window.electronAPI?.moveOverlay?.(pendingMoveRef.current);
+        pendingMoveRef.current = null;
         window.electronAPI?.endOverlayDrag?.();
     };
 
     const handleWheel = (event) => {
-        if (!dragging) return;
+        if (!draggingRef.current) return;
         event.preventDefault();
-        window.electronAPI?.resizeOverlay?.(event.deltaY < 0 ? 1 : -1);
+        resizeStepsRef.current += event.deltaY < 0 ? 1 : -1;
+        if (resizeFrameRef.current === null) {
+            resizeFrameRef.current = window.requestAnimationFrame(() => {
+                resizeFrameRef.current = null;
+                const steps = resizeStepsRef.current;
+                resizeStepsRef.current = 0;
+                if (steps !== 0) window.electronAPI?.resizeOverlay?.(steps);
+            });
+        }
     };
 
     const handleClick = () => {
@@ -122,37 +165,8 @@ export const GameOverlayChrome = ({
     onOpenCollaboration,
     setModalMessage,
 }) => {
-    const [dragging, setDragging] = useState(false);
-
-    useEffect(() => {
-        const stopDragging = () => {
-            setDragging(false);
-            window.electronAPI?.endOverlayDrag?.();
-        };
-        window.addEventListener('mouseup', stopDragging);
-        window.addEventListener('blur', stopDragging);
-        return () => {
-            window.removeEventListener('mouseup', stopDragging);
-            window.removeEventListener('blur', stopDragging);
-        };
-    }, []);
-
     return (
-        <div
-            className="game-overlay-chrome"
-            onPointerDown={(event) => {
-                if (event.button !== 0 || event.target.closest('[data-overlay-interactive], button')) return;
-                setDragging(true);
-                window.electronAPI?.startOverlayDrag?.({ screenX: event.screenX, screenY: event.screenY });
-            }}
-            onPointerMove={(event) => {
-                if (dragging) window.electronAPI?.moveOverlay?.({ screenX: event.screenX, screenY: event.screenY });
-            }}
-            onPointerUp={() => {
-                setDragging(false);
-                window.electronAPI?.endOverlayDrag?.();
-            }}
-        >
+        <div className="game-overlay-chrome">
             <span className="flex items-center gap-2 font-semibold text-sm">
                 <img src="logo.png" alt="" className="w-6 h-6 rounded-full" draggable="false" />
                 In-Game Overlay

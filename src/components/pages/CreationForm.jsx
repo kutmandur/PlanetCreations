@@ -16,6 +16,17 @@ import HighlightableTextarea from '../ui/HighlightableTextarea';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import InfoBox from '../ui/InfoBox';
 import SelectBackupModal from '../modals/SelectBackupModal';
+import ParkRidesAreasEditor from '../creation/ParkRidesAreasEditor';
+import {
+    buildSavegamePrefill,
+    cleanSavegameTags,
+    getCreationWizardSteps,
+    inferCreationCategory,
+} from '../../utils/creationSavePrefill';
+import {
+    isParkCreationCategory,
+    sanitizeParkRidePresentation,
+} from '../../utils/parkRidePresentation';
 
 // --- Sub-component: DlcSelector ---
 const DlcSelector = ({ gameDlcs, selectedDlcs, onDlcChange, color }) => {
@@ -190,6 +201,7 @@ const MediaPreview = ({ item, onRemove, provided }) => {
 const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blacklist }) => {
     const { id: creationToEditId } = useParams(); 
     const navigate = useNavigate();
+    const isNewDesktopCreation = !creationToEditId && Boolean(window.electronAPI?.isElectron);
     
     const [game, setGame] = useState(creationToEditId ? '' : initialGame || getDefaultGameId());
     const [title, setTitle] = useState('');
@@ -222,10 +234,18 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [hadExistingBackup, setHadExistingBackup] = useState(false);
     const [removeExistingBackup, setRemoveExistingBackup] = useState(false);
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+    const [backupModalPurpose, setBackupModalPurpose] = useState('upload');
     const [isPreparingUpload, setIsPreparingUpload] = useState(false);
     const [ownershipConfirmed, setOwnershipConfirmed] = useState(false);
     const [hostingAccepted, setHostingAccepted] = useState(false);
-    const [activeStep, setActiveStep] = useState('details');
+    const [savegameDecision, setSavegameDecision] = useState(isNewDesktopCreation ? null : 'skip');
+    const [selectedSourceFile, setSelectedSourceFile] = useState(null);
+    const [loadedVerifiedMetadata, setLoadedVerifiedMetadata] = useState(null);
+    const [parkRidePresentation, setParkRidePresentation] = useState(() => sanitizeParkRidePresentation(null));
+    const [inGameTags, setInGameTags] = useState([]);
+    const [prefilledFields, setPrefilledFields] = useState([]);
+    const [pendingCategoryPrefill, setPendingCategoryPrefill] = useState(null);
+    const [activeStep, setActiveStep] = useState(isNewDesktopCreation ? 'source' : 'details');
     const [mobileOpen, setMobileOpen] = useState(false);
     const [completedSteps, setCompletedSteps] = useState([]);
     const [isChangingStep, setIsChangingStep] = useState(false);
@@ -281,6 +301,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     setVideoItems(loadedVideos);
                     setCustomMediaLink(data.customMediaLink || '');
                     setTags(data.tags?.join(', ') || '');
+                    setInGameTags(cleanSavegameTags(data.verifiedGameMetadata?.metadata));
+                    setLoadedVerifiedMetadata(data.verifiedGameMetadata?.metadata || null);
+                    setParkRidePresentation(sanitizeParkRidePresentation(data.parkRidePresentation));
                     setStatus(data.status || 'wip');
                     setPlatform(data.platform || 'pc');
                     setCategory(data.category || '');
@@ -301,11 +324,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 setLoading(false);
             };
             fetchCreationToEdit();
-        } else {
+        } else if (!selectedSourceFile) {
             const ownedDlcsForGame = userProfile?.ownedDlcs?.[game] || [];
             setRequiredDlcs(ownedDlcsForGame);
         }
-    }, [creationToEditId, navigate, setModalMessage, user, userProfile, game]);
+    }, [creationToEditId, navigate, setModalMessage, user, userProfile, game, selectedSourceFile]);
 
     useEffect(() => {
         if (user) {
@@ -426,6 +449,18 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         };
     }, [game, category, CATEGORIES]);
 
+    useEffect(() => {
+        if (!pendingCategoryPrefill || pendingCategoryPrefill.gameId !== game) return;
+        const categories = CATEGORIES[game] || [];
+        if (categories.length === 0) return;
+        const inferred = inferCreationCategory(pendingCategoryPrefill.metadata, categories);
+        if (inferred) {
+            setCategory(inferred);
+            setPrefilledFields(previous => previous.includes('category') ? previous : [...previous, 'category']);
+        }
+        setPendingCategoryPrefill(null);
+    }, [CATEGORIES, game, pendingCategoryPrefill]);
+
     const handleDlcChange = (dlcName) => {
         setRequiredDlcs(prev => 
             prev.includes(dlcName) 
@@ -481,16 +516,16 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     
     const handleFileSelectedForUpload = async (file) => {
         setIsBackupModalOpen(false);
-        if (!file || !file.path) return;
+        if (!file || !file.path) return false;
 
         if (!ownershipConfirmed || !hostingAccepted) {
             setModalMessage("Please confirm that you own the creation and accept hosting before uploading it.");
-            return;
+            return false;
         }
     
         if (!window.electronAPI) {
             setModalMessage("This feature is only available in the desktop client.");
-            return;
+            return false;
         }
     
         setIsPreparingUpload(true);
@@ -514,7 +549,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             if (!result.success) {
                 setModalMessage(result.message || "Could not prepare backup file.");
                 setIsPreparingUpload(false);
-                return;
+                return false;
             }
     
             setBackupInfo({ name: result.fileName, path: result.filePath, signed: result.isSigned });
@@ -543,18 +578,76 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 await abortBackupUpload({ uploadId }).catch(() => null);
                 throw new Error(uploadResult?.message || `R2 upload failed (${uploadResult?.status || 'network error'}).`);
             }
+            // For edits, switch the local read-only preview only after the new
+            // file reached R2 successfully. The authoritative copy is replaced
+            // by finalizeBackupUpload when the Creation itself is saved.
+            setSelectedSourceFile(file);
+            setInGameTags(cleanSavegameTags(file.frontierMetadata));
             setBackupUploadId(uploadId);
             setRemoveExistingBackup(false);
             setUploadProgress(100);
             setIsUploading(false);
             setModalMessage("Backup uploaded securely. It will be verified when you save the creation.");
+            return true;
         } catch (error) {
             console.error("Error during backup attachment:", error);
             setModalMessage(`An error occurred: ${error.message}`);
             setIsPreparingUpload(false);
             setIsUploading(false);
             setBackupInfo(null);
+            return false;
         }
+    };
+
+    const handleInitialSaveSelected = (file) => {
+        setIsBackupModalOpen(false);
+        if (!file?.path) return;
+
+        const categories = CATEGORIES[file.gameId] || [];
+        const prefill = buildSavegamePrefill(file, categories, game);
+        const applied = [];
+        setSelectedSourceFile(file);
+        setSavegameDecision('attach');
+        setBackupInfo(null);
+        setRemoveExistingBackup(false);
+
+        if (prefill.gameId && prefill.gameId !== game) {
+            setGame(prefill.gameId);
+            applied.push('game');
+        }
+        if (!title.trim() && prefill.title) {
+            setTitle(prefill.title);
+            applied.push('title');
+        }
+        if (!description.trim() && prefill.description) {
+            setDescription(prefill.description);
+            applied.push('description');
+        }
+        if (prefill.requiredDlcs !== null) {
+            setRequiredDlcs(prefill.requiredDlcs);
+            applied.push('required DLCs');
+        }
+        if (prefill.usesMods !== null) {
+            setUsesMods(prefill.usesMods);
+            applied.push('mod status');
+        }
+        setInGameTags(prefill.gameTags);
+        if (prefill.category) {
+            setCategory(prefill.category);
+            applied.push('category');
+            setPendingCategoryPrefill(null);
+        } else if (prefill.metadata && prefill.gameId) {
+            setPendingCategoryPrefill({ gameId: prefill.gameId, metadata: prefill.metadata });
+        }
+        setPrefilledFields([...new Set(applied)]);
+    };
+
+    const handleModalFileSelected = (file) => {
+        if (backupModalPurpose === 'source') {
+            handleInitialSaveSelected(file);
+            return;
+        }
+        void handleFileSelectedForUpload(file);
     };
 
     const handleRemoveBackup = async () => {
@@ -577,10 +670,26 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             return;
         }
         if (window.electronAPI?.isElectron) {
+            setBackupModalPurpose('upload');
             setIsBackupModalOpen(true);
         } else {
             navigate('/client-info');
         }
+    };
+
+    const chooseSavegameAttachment = () => {
+        setSavegameDecision('attach');
+        setBackupModalPurpose('source');
+        setIsBackupModalOpen(true);
+    };
+
+    const chooseManualCreation = () => {
+        if (backupUploadId || backupInfo) void handleRemoveBackup();
+        setSavegameDecision('skip');
+        setSelectedSourceFile(null);
+        setInGameTags([]);
+        setPrefilledFields([]);
+        setPendingCategoryPrefill(null);
     };
 
 
@@ -591,6 +700,13 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (isNewDesktopCreation && !isStepValid('source')) {
+            setActiveStep('source');
+            setMobileOpen(true);
+            setModalMessage('Please complete the savegame choice before creating the Creation.');
+            return;
+        }
 
         if (!title.trim() || !description.trim() || !category || !hasAtLeastOneValidTag()) {
             setActiveStep('details');
@@ -651,6 +767,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 category, status, platform,
                 requiredDlcs, communityIds: selectedCommunities,
                 communityAssignments, communitySpecificData: customFieldData,
+                parkRidePresentation: isParkCreationCategory(category) ?
+                    sanitizeParkRidePresentation(parkRidePresentation) : null,
             };
             let savedCreationId;
 
@@ -698,7 +816,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     await removeCreationBackup({ creationId: savedCreationId });
                 }
 
-                setModalMessage("Creation updated successfully!");
+                setModalMessage(backupUploadId
+                    ? "Creation and verified savefile metadata updated successfully!"
+                    : "Creation updated successfully!");
                 scheduleDataRefresh();
                 navigate(`/creation/${creationToEditId}`);
 
@@ -779,12 +899,12 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const selectedTags = tags.split(',').map(t => t.trim()).filter(Boolean);
 
-    const WIZARD_STEPS = [
-        { id: 'details', label: 'Details' },
-        { id: 'savegame', label: 'Savegame' },
-        { id: 'media', label: 'Gallery' },
-        { id: 'sharing', label: 'Communitys' },
-    ];
+    const WIZARD_STEPS = getCreationWizardSteps({
+        isDesktopClient: Boolean(window.electronAPI?.isElectron),
+        isEdit: Boolean(creationToEditId),
+        category,
+    });
+    const editablePark = (selectedSourceFile?.frontierMetadata || loadedVerifiedMetadata)?.park || null;
     const activeStepIndex = WIZARD_STEPS.findIndex(step => step.id === activeStep);
     const isLastStep = activeStepIndex === WIZARD_STEPS.length - 1;
     const activeStepLabel = WIZARD_STEPS[activeStepIndex]?.label || '';
@@ -796,15 +916,40 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     };
 
     const isStepValid = (stepId) => {
+        if (stepId === 'source') {
+            return savegameDecision === 'skip' || (savegameDecision === 'attach' && Boolean(selectedSourceFile && backupInfo) && !isPreparingUpload && !isUploading);
+        }
         if (stepId === 'details') return !!(title.trim() && description.trim() && category && hasAtLeastOneValidTag());
         if (stepId === 'savegame') return !!shareCode.trim() && (!customMediaLink.trim() || isSafeHttpUrl(customMediaLink));
         return true;
     };
 
-    const goNext = (event) => {
+    const goNext = async (event) => {
         event?.preventDefault();
         event?.stopPropagation();
         if (isChangingStep) return;
+        if (activeStep === 'source') {
+            if (!savegameDecision) {
+                setModalMessage('Please choose whether you want to attach a savegame.');
+                return;
+            }
+            if (savegameDecision === 'attach') {
+                if (!selectedSourceFile) {
+                    setModalMessage('Please select the savegame you want to attach.');
+                    setBackupModalPurpose('source');
+                    setIsBackupModalOpen(true);
+                    return;
+                }
+                if (!ownershipConfirmed || !hostingAccepted) {
+                    setModalMessage('Please confirm ownership and hosting before attaching the savegame.');
+                    return;
+                }
+                if (!backupInfo) {
+                    const uploaded = await handleFileSelectedForUpload(selectedSourceFile);
+                    if (!uploaded) return;
+                }
+            }
+        }
         if (activeStep === 'details' && (!title.trim() || !description.trim() || !category || !hasAtLeastOneValidTag())) {
             setCompletedSteps(prev => prev.filter(step => step !== activeStep));
             setModalMessage('Please complete the title, description, creation type and add at least one tag before continuing.');
@@ -830,8 +975,12 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     };
 
     const renderTags = () => (
-        <div>
-            <label className="block text-gray-700 font-bold mb-2">Tags <span className="text-red-500">*</span></label>
+        <div className="space-y-4">
+            <div>
+            <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="block font-bold text-gray-700 dark:text-gray-200">Your tags <span className="text-red-500">*</span></label>
+                <span className="text-xs text-gray-500">{selectedTags.length} / {TAG_LIMIT}</span>
+            </div>
             <div className={`w-full p-3 border rounded-lg focus-within:ring-2 ${color.ring}`}>
                 <div className="flex flex-wrap gap-2 mb-2">
                     {selectedTags.map(tag => {
@@ -853,6 +1002,21 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     </div>
                 )}
             </div>
+            <p className="mt-1 text-xs text-gray-500">You can add up to ten of your own tags.</p>
+            </div>
+
+            {inGameTags.length > 0 && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+                    <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100">In-game tags</p>
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900 dark:text-blue-200">Read-only</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {inGameTags.map(tag => <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-sm font-medium text-blue-800 shadow-sm dark:bg-gray-900 dark:text-blue-200">{tag}</span>)}
+                    </div>
+                    <p className="mt-3 text-xs text-blue-700 dark:text-blue-300">Extracted from the attached savegame. These do not count toward your ten user tags and are verified from the uploaded file by the server.</p>
+                </div>
+            )}
         </div>
     );
 
@@ -863,8 +1027,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             <SelectBackupModal
                 isOpen={isBackupModalOpen}
                 onClose={() => setIsBackupModalOpen(false)}
-                onFileSelect={handleFileSelectedForUpload}
+                onFileSelect={handleModalFileSelected}
                 game={game}
+                allowGameSelection={backupModalPurpose === 'source'}
             />
 
             <h1 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'Create New Creation'}</h1>
@@ -892,7 +1057,88 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                 <h2 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100">{activeStepLabel}</h2>
                                 <span className="absolute right-0 text-sm text-gray-400">{activeStepIndex + 1} / {WIZARD_STEPS.length}</span>
                             </div>
+                {activeStep === 'source' && (<>
+                <div className="mx-auto max-w-2xl text-center">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: color.hex }}>Start with your local creation</p>
+                    <h3 className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">Would you like to attach a savegame?</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">If you select one, PlanetCreations reads its in-game image and uses safe local metadata to prefill the editable wizard fields.</p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <button type="button" aria-pressed={savegameDecision === 'attach'} onClick={chooseSavegameAttachment} className={`rounded-2xl border-2 p-5 text-left transition-all ${savegameDecision === 'attach' ? 'border-transparent text-white shadow-lg' : 'border-gray-200 bg-gray-50 text-gray-800 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100'}`} style={savegameDecision === 'attach' ? { backgroundColor: color.hex } : {}}>
+                        <span className="flex items-center gap-3 text-lg font-bold"><Icon path={ICONS.upload} className="h-6 w-6" /> Yes, select a savegame</span>
+                        <span className={`mt-2 block text-sm ${savegameDecision === 'attach' ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}>Attach the file and prefill everything that can be read reliably.</span>
+                    </button>
+                    <button type="button" aria-pressed={savegameDecision === 'skip'} onClick={chooseManualCreation} className={`rounded-2xl border-2 p-5 text-left transition-all ${savegameDecision === 'skip' ? 'border-gray-800 bg-gray-800 text-white shadow-lg dark:border-gray-200 dark:bg-gray-100 dark:text-gray-900' : 'border-gray-200 bg-gray-50 text-gray-800 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100'}`}>
+                        <span className="block text-lg font-bold">No, fill it in manually</span>
+                        <span className={`mt-2 block text-sm ${savegameDecision === 'skip' ? 'text-white/75 dark:text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>Continue without uploading a local game file.</span>
+                    </button>
+                </div>
+
+                {savegameDecision === 'attach' && !selectedSourceFile && (
+                    <button type="button" onClick={chooseSavegameAttachment} className={`w-full rounded-xl px-4 py-3 font-semibold text-white ${color.bg} ${color.hoverBg}`}>Choose savegame</button>
+                )}
+
+                {savegameDecision === 'attach' && selectedSourceFile && (
+                    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
+                        <div className="grid md:grid-cols-[15rem_minmax(0,1fr)]">
+                            <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-950 md:aspect-auto md:min-h-44">
+                                {selectedSourceFile.previewDataUrl ? <img src={selectedSourceFile.previewDataUrl} alt="Selected in-game save preview" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center p-5 text-center text-xs text-gray-400">No in-game preview stored in this file.</div>}
+                            </div>
+                            <div className="min-w-0 p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-semibold uppercase tracking-widest text-green-600 dark:text-green-400">Selected savegame</p>
+                                        <h4 className="mt-1 truncate text-lg font-bold text-gray-900 dark:text-white" title={selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}>{selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}</h4>
+                                        <p className="mt-1 truncate text-xs text-gray-500" title={selectedSourceFile.name}>{selectedSourceFile.name}</p>
+                                    </div>
+                                    <button type="button" onClick={chooseSavegameAttachment} className="flex-none rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100">Change</button>
+                                </div>
+                                {prefilledFields.length > 0 ? (
+                                    <div className="mt-4">
+                                        <p className="text-xs text-gray-500">Prefilled locally</p>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">{prefilledFields.map(field => <span key={field} className="rounded-full bg-green-100 px-2 py-1 text-xs text-green-800 dark:bg-green-950 dark:text-green-200">{field}</span>)}</div>
+                                    </div>
+                                ) : <p className="mt-4 text-xs text-amber-600 dark:text-amber-300">The file can be attached, but it did not expose editable wizard values.</p>}
+                            </div>
+                        </div>
+
+                        {!backupInfo && (
+                            <div className="space-y-3 border-t border-gray-200 p-4 dark:border-gray-700">
+                                <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Required before upload</p>
+                                <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+                                    <input type="checkbox" checked={ownershipConfirmed} onChange={event => setOwnershipConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                                    <span>I confirm that this is my own creation or that I have all necessary rights to upload it. <span className="text-red-500">*</span></span>
+                                </label>
+                                <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+                                    <input type="checkbox" checked={hostingAccepted} onChange={event => setHostingAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                                    <span>I agree that this file may be uploaded to and hosted by PlanetCreations. <span className="text-red-500">*</span></span>
+                                </label>
+                                <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">Your wizard choices remain editable. Only required DLCs may later be corrected by the server; automatic stats stay in separate, server-verified fields.</p>
+                            </div>
+                        )}
+
+                        {(isPreparingUpload || isUploading) && (
+                            <div className="border-t border-gray-200 p-4 dark:border-gray-700">
+                                <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200"><Spinner /> {isPreparingUpload ? 'Preparing signed backup…' : `Uploading… ${Math.round(uploadProgress)}%`}</div>
+                                {isUploading && <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"><div className={`${color.bg} h-full rounded-full`} style={{ width: `${uploadProgress}%` }} /></div>}
+                            </div>
+                        )}
+
+                        {backupInfo && !isPreparingUpload && !isUploading && (
+                            <div className="flex items-center gap-2 border-t border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200"><Icon path={ICONS.checkCircle} className="h-5 w-5" /> Savegame is ready to be attached.</div>
+                        )}
+                    </div>
+                )}
+
+                {savegameDecision === 'skip' && (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">No savegame will be attached. All Creation details will be entered manually.</div>
+                )}
+                </>)}
                 {activeStep === 'details' && (<>
+                {prefilledFields.length > 0 && selectedSourceFile && (
+                    <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200">Prefilled from <span className="font-semibold">{selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}</span>. You remain in control of every editable field.</div>
+                )}
                 <div className="flex justify-center my-6">
                     <div className="relative flex items-center bg-gray-200 dark:bg-gray-700 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} style={gliderStyle} />
@@ -941,6 +1187,14 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 
                 {/* Savegame-Upload nur im Desktop-Client — im Browser komplett ausgeblendet */}
                 </>)}
+                {activeStep === 'rides-areas' && (
+                    <ParkRidesAreasEditor
+                        park={editablePark}
+                        value={parkRidePresentation}
+                        onChange={setParkRidePresentation}
+                        color={color}
+                    />
+                )}
                 {activeStep === 'savegame' && (<>
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">{getShareCodeLabel(game)} <span className="text-red-500">*</span></label>
@@ -950,7 +1204,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     <label className="block text-gray-700 font-bold mb-2">Custom Media Link</label>
                     <input type="url" value={customMediaLink} onChange={(e) => setCustomMediaLink(e.target.value)} className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
                 </div>
-                {window.electronAPI?.isElectron && (
+                {window.electronAPI?.isElectron && !isNewDesktopCreation && (
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Add savegame file</label>
                     <div className={`p-2 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
@@ -1008,6 +1262,17 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                         <p className="mt-2 text-xs text-center text-gray-500">Optional — lets desktop-client users import your creation with one click.</p>
                     </div>
                 </div>
+                )}
+                {window.electronAPI?.isElectron && isNewDesktopCreation && (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Attached savegame</p>
+                                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{backupInfo ? (selectedSourceFile?.frontierMetadata?.name || selectedSourceFile?.name || backupInfo.name) : 'No savegame attached'}</p>
+                            </div>
+                            <button type="button" onClick={() => goToStep('source')} className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-white">Change</button>
+                        </div>
+                    </div>
                 )}
                 {!window.electronAPI?.isElectron && (
                     <div className="text-center py-3 px-4 border rounded-lg">
@@ -1112,8 +1377,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                             {loading ? 'Saving...' : (creationToEditId ? 'Save Changes' : 'Create Creation')}
                         </button>
                     ) : (
-                        <button type="button" onClick={goNext} disabled={isChangingStep} style={{ backgroundColor: color.hex }} className="text-white font-bold py-2.5 px-6 rounded-xl hover:brightness-95 disabled:opacity-50 flex items-center gap-2">
-                            Next <Icon path={ICONS.chevronRight} className="w-5 h-5" />
+                        <button type="button" onClick={goNext} disabled={isChangingStep || isPreparingUpload || isUploading} style={{ backgroundColor: color.hex }} className="text-white font-bold py-2.5 px-6 rounded-xl hover:brightness-95 disabled:opacity-50 flex items-center gap-2">
+                            {activeStep === 'source' && savegameDecision === 'attach' && !backupInfo ? 'Attach & Continue' : 'Next'} <Icon path={ICONS.chevronRight} className="w-5 h-5" />
                         </button>
                     )}
                 </div>

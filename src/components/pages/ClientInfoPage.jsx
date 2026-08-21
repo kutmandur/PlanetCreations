@@ -118,9 +118,9 @@ const ClientInfoPage = () => {
     const scrollToDownloads = () => scrollToSection('client-downloads');
     const previewLinks = [
         { label: 'PlanetCreations', sectionId: 'in-game-overlay-feature' },
-        { label: 'Savegame Backup', sectionId: 'savegame-backups' },
-        { label: 'Collaborations', sectionId: 'in-game-collaboration' },
-        { label: 'Notifications', sectionId: 'in-game-overlay-feature' },
+        { label: 'Savefile Stats', sectionId: 'savefile-intelligence' },
+        { label: 'Backups', sectionId: 'savegame-backups' },
+        { label: 'Custom Media', sectionId: 'custom-media-automation' },
     ];
 
     return (
@@ -137,7 +137,7 @@ const ClientInfoPage = () => {
                     </div>
                     <h1 className="client-hero-enter client-hero-title text-4xl md:text-6xl font-extrabold tracking-tight">PlanetCreations, <span className="client-gradient-text">right inside your game.</span></h1>
                     <p className="client-hero-enter client-hero-copy max-w-3xl mx-auto mt-6 text-lg md:text-xl leading-relaxed text-gray-200">
-                        Open the PlanetCreations hub without leaving the game, keep your collaborations and notifications close, and create an immediate backup of a detected savegame whenever you need one.
+                        Manage parks and blueprints, extract useful savefile metadata, preserve matching Custom Media and open the PlanetCreations hub without leaving your game.
                     </p>
                     <div className="client-hero-enter client-hero-actions mt-9 flex flex-col sm:flex-row justify-center gap-3">
                         <button type="button" onClick={scrollToDownloads} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-6 py-3 font-bold text-white transition-colors shadow-lg">
@@ -253,10 +253,10 @@ const ClientInfoPage = () => {
                     <div className="text-center mb-10">
                         <h2 className="text-3xl md:text-4xl font-bold">PlanetCreations where you build</h2>
                         <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-                            The client brings the PlanetCreations experience into your game and keeps your local savegames protected. These are its two central jobs.
+                            The client brings PlanetCreations into your game, understands supported local savefiles and keeps both creations and their media protected.
                         </p>
                     </div>
-                    <div className="grid lg:grid-cols-2 gap-6 mb-10">
+                    <div className="grid lg:grid-cols-3 gap-6 mb-10">
                         <article id="in-game-overlay-feature" className="relative scroll-mt-24 overflow-hidden rounded-2xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/50 dark:to-cyan-950/30 p-7 md:p-8 text-center shadow-md">
                             <span className="inline-flex rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
                             <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
@@ -279,7 +279,7 @@ const ClientInfoPage = () => {
                             </div>
                             <h3 className="mt-5 text-2xl font-bold">Immediate savegame backups</h3>
                             <p className="mt-3 leading-relaxed text-gray-700 dark:text-gray-200">
-                                The client finds supported savegames in your configured folders, so you can protect one save or an entire selection immediately. Keep multiple versions and restore the one you need later.
+                                The client finds supported savegames in your configured folders, so you can protect one file or an entire selection immediately and optionally create matching separate Custom Media packages.
                             </p>
                             <div className="mt-5 flex flex-wrap justify-center gap-2 text-sm font-semibold text-green-800 dark:text-green-200">
                                 <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Individual or batch</span>
@@ -287,17 +287,50 @@ const ClientInfoPage = () => {
                                 <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Safe restore</span>
                             </div>
                         </article>
+                        <article className="relative overflow-hidden rounded-2xl border border-purple-200 dark:border-purple-800 bg-gradient-to-br from-purple-50 to-fuchsia-50 dark:from-purple-950/50 dark:to-fuchsia-950/30 p-7 md:p-8 text-center shadow-md">
+                            <span className="inline-flex rounded-full bg-purple-600 px-3 py-1 text-xs font-bold text-white">Core feature</span>
+                            <div className="w-14 h-14 mx-auto mt-5 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-md">
+                                <Icon path={ICONS.search} className="w-7 h-7" />
+                            </div>
+                            <h3 className="mt-5 text-2xl font-bold">Savefile intelligence</h3>
+                            <p className="mt-3 leading-relaxed text-gray-700 dark:text-gray-200">
+                                Analyze supported parks and blueprints for previews, required DLC, ride categories, stored test values, object counts and referenced Custom Media.
+                            </p>
+                            <div className="mt-5 flex flex-wrap justify-center gap-2 text-sm font-semibold text-purple-800 dark:text-purple-200">
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Sequential scanning</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Persistent cache</span>
+                                <span className="rounded-full bg-white/70 dark:bg-white/10 px-3 py-1.5">Verified online stats</span>
+                            </div>
+                        </article>
                     </div>
                     <div className="text-center mb-8">
                         <h3 className="text-2xl font-bold">More tools around your Creations</h3>
                     </div>
                     <div className="client-feature-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <FeatureCard icon={ICONS.search} accent="blue" title="Automatic File Discovery" description="Scan configured game folders and browse parks, blueprints, autosaves, Workshop files and their available backups in one place." />
+                        <FeatureCard icon={ICONS.search} accent="blue" title="Automatic File Discovery" description="Browse parks, blueprints, autosaves and Workshop files immediately while their metadata is analyzed one file at a time and cached until the save changes." />
                         <FeatureCard icon={ICONS.shieldCheck} accent="purple" badge="Verified" title="Signed Packages" description="When signed in, backups can receive a digital signature. The client verifies package integrity before restoring or installing them." />
-                        <FeatureCard icon={ICONS.image} accent="amber" title="Custom Media Manager" description="Collect the images, videos and audio used by a creation and preserve them as a dedicated media package for later restoration or sharing." />
-                        <FeatureCard icon={ICONS.download} accent="cyan" badge="New" title="Direct Install" description="Install supported creations from their detail page. You can send an install to a connected PC even when you are browsing the website on another device." />
-                        <FeatureCard icon={ICONS.refresh} accent="rose" badge="New" title="Background Queue" description="Queued installs are picked up by the desktop client. The system tray keeps notifications and background tasks available after the main window is closed." />
-                        <FeatureCard id="in-game-collaboration" icon={ICONS.users} accent="green" badge="New" title="In-game collaboration" description="See build locks, install the newest shared version, open the build workspace and log your build turn directly through the In-Game Overlay." />
+                        <FeatureCard id="custom-media-automation" icon={ICONS.image} accent="amber" badge="New" title="Automatic Custom Media" description="Every creation backup creates or updates its media document, even when no media was selected manually, and offers a separate matching media package." />
+                        <FeatureCard icon={ICONS.download} accent="cyan" title="Direct Install" description="Install supported creations from their detail page. You can send an install to a connected PC even when you are browsing the website on another device." />
+                        <FeatureCard icon={ICONS.refresh} accent="rose" title="Background Queue" description="Queued installs are picked up by the desktop client. The system tray keeps notifications and background tasks available after the main window is closed." />
+                        <FeatureCard id="in-game-collaboration" icon={ICONS.users} accent="green" title="In-game collaboration" description="See build locks, install the newest shared version, open the build workspace and log your build turn directly through the In-Game Overlay." />
+                    </div>
+                </section>
+
+                <section id="savefile-intelligence" className="scroll-mt-8">
+                    <div className="text-center mb-10">
+                        <span className="inline-flex rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-200">New in 1.0.31</span>
+                        <h2 className="mt-4 text-3xl md:text-4xl font-bold">From savefile to useful Creation data</h2>
+                        <p className="mt-3 text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
+                            PlanetCreations reads conservative, player-relevant values from supported Planet Coaster 2 files and keeps server-verified results separate from creator-controlled presentation.
+                        </p>
+                    </div>
+                    <div className="client-feature-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <FeatureCard icon={ICONS.image} accent="cyan" title="In-game previews" description="Use the image stored in a park or blueprint throughout the offline file picker, metadata overview and save-first Creation workflow." />
+                        <FeatureCard icon={ICONS.checklist} accent="green" title="Required DLC" description="Detected DLC requirements are attached as verified metadata and can update the Creation's DLC selection when a savefile is added or replaced." />
+                        <FeatureCard icon={ICONS.database} accent="blue" title="Park overview" description="Show ride totals by category together with available buildings, pools and a combined scenery-piece count in compact cards." />
+                        <FeatureCard icon={ICONS.squares2x2} accent="rose" title="Per-attraction details" description="List named rides by type and display trusted stored test values when the save contains them. Unknown or calculated EFN values remain hidden unless entered by the creator." />
+                        <FeatureCard icon={ICONS.edit} accent="purple" title="Save-first Creation wizard" description="Attach a local save first and prefill useful wizard fields. Creator choices stay creator-controlled; only verified DLC requirements may be refreshed by the server." />
+                        <FeatureCard icon={ICONS.users} accent="amber" title="Attractions & Areas" description="Rename or hide detected rides, add custom rides, restaurants, shops and shows, and organize them into color-coded park areas for the public Ride List." />
                     </div>
                 </section>
 
@@ -312,9 +345,9 @@ const ClientInfoPage = () => {
 
                     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 p-6 md:p-8">
                         <h2 className="text-2xl font-bold text-center mb-8">Immediate backup workflow</h2>
-                        <WorkflowStep number="1" title="Select your game folder" description="Configure the location once. The client scans supported files and organizes them by game and file type." />
-                        <WorkflowStep number="2" title="Back up now" description="Select one savegame or several files, add an optional note and create the backup immediately. When signed in, you can also request a digital signature." />
-                        <WorkflowStep number="3" title="Keep or share the package" description="Backups use the .PlanetCreations format and can be archived privately, attached to an online creation or shared directly." />
+                        <WorkflowStep number="1" title="Select your game folder" description="Configure the location once. Files appear immediately, then metadata is analyzed sequentially and retained until a file changes or you refresh all stats." />
+                        <WorkflowStep number="2" title="Back up now" description="Select one savegame or several files. Each backup also creates its Custom Media document and offers a separate matching media package." />
+                        <WorkflowStep number="3" title="Keep or share the packages" description="Creation and optional media backups use the .PlanetCreations format and can be archived, restored or attached to an online Creation." />
                         <WorkflowStep number="4" title="Restore safely" description="Open the backup in the client or use the Restore tab. Signed packages are verified before any game file is replaced." last />
                     </div>
                 </section>
@@ -329,7 +362,7 @@ const ClientInfoPage = () => {
                                 <h2 className="text-2xl font-bold">Local-first, online when useful</h2>
                             </div>
                             <p className="text-center lg:text-left text-gray-300 leading-relaxed max-w-3xl">
-                                Scanning files, creating local backups, managing media and restoring your own packages work locally. An internet connection is only required for account features such as signing packages, attaching backups to online creations, Direct Install from the website and checking for updates.
+                                Scanning and caching savefile metadata, creating local backups, managing media and restoring your own packages work locally. An internet connection is only required for account features such as server verification, signing packages, attaching backups to online Creations, Direct Install and update checks.
                             </p>
                         </div>
                         <div className="flex flex-wrap lg:flex-col justify-center gap-2 text-sm font-semibold">
@@ -419,8 +452,8 @@ const ClientInfoPage = () => {
                         <div className="flex gap-4">
                             <Icon path={ICONS.info} className="w-7 h-7 shrink-0 text-amber-600 dark:text-amber-400" />
                             <div>
-                                <h2 className="font-bold text-lg text-amber-900 dark:text-amber-100">Custom media is selected manually</h2>
-                                <p className="mt-2 text-sm leading-relaxed text-amber-800 dark:text-amber-200">The client cannot reliably know which media belongs to a creation. Use the Media Manager to select the relevant files before creating a media package.</p>
+                                <h2 className="font-bold text-lg text-amber-900 dark:text-amber-100">Automatic media detection is conservative</h2>
+                                <p className="mt-2 text-sm leading-relaxed text-amber-800 dark:text-amber-200">The client records safely detected Custom Media references automatically and reports missing files. Review the media document before sharing when a creation uses unusual or indirectly referenced media.</p>
                             </div>
                         </div>
                     </div>
