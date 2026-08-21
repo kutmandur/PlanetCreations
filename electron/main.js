@@ -21,6 +21,10 @@ const { readFrontierPreview } = require('./modules/FrontierSaveParser');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
+const {
+    PRODUCTION_WEB_ORIGIN,
+    isProductionWebOrigin,
+} = require('./modules/WebAppOrigin');
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { responseToBuffer } = require('./modules/ResponseBuffer');
@@ -71,8 +75,6 @@ const OVERLAY_MIN_SIZE = 56;
 const OVERLAY_MAX_SIZE = 640;
 const OVERLAY_DEFAULT_SIZE = 88;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const PRODUCTION_WEB_ORIGIN = 'https://planetcreations.net';
-
 function getBundledAppUrl() {
     return withLocalTestParameters(isDev ? devServerUrl : pathToFileURL(path.join(__dirname, '../build/index.html')).toString());
 }
@@ -91,7 +93,7 @@ function withLocalTestParameters(rawUrl) {
 function isAllowedAppUrl(rawUrl) {
     try {
         const parsed = new URL(rawUrl);
-        if (parsed.origin === PRODUCTION_WEB_ORIGIN || parsed.origin === 'https://www.planetcreations.net') return true;
+        if (isProductionWebOrigin(parsed.origin)) return true;
         if (isDev && parsed.origin === devServerUrl) return true;
         if (parsed.protocol !== 'file:') return false;
         const filePath = path.resolve(fileURLToPath(parsed));
@@ -105,7 +107,7 @@ function isAllowedAppUrl(rawUrl) {
 function isHostedAppUrl(rawUrl) {
     try {
         const origin = new URL(rawUrl).origin;
-        return origin === PRODUCTION_WEB_ORIGIN || origin === 'https://www.planetcreations.net';
+        return isProductionWebOrigin(origin);
     } catch (error) {
         return false;
     }
