@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import {
+    getToken,
     initializeAppCheck,
     ReCaptchaEnterpriseProvider,
 } from 'firebase/app-check';
@@ -12,7 +13,10 @@ import {
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported } from 'firebase/messaging';
-import { shouldForceRecaptchaForElectronTest } from '../utils/appCheckMode';
+import {
+    recoverElectronAppCheck,
+    shouldForceRecaptchaForElectronTest,
+} from '../utils/appCheckMode';
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -56,6 +60,18 @@ if (isConfigured) {
                 provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
                 isTokenAutoRefreshEnabled: true,
             });
+            if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+                void recoverElectronAppCheck({
+                    appCheckInstance: appCheck,
+                    getToken,
+                    isDev: import.meta.env.DEV,
+                    userAgent: navigator.userAgent,
+                    origin: window.location.origin,
+                    isGameOverlay: window.electronAPI?.isGameOverlay === true,
+                    sessionStorage: window.sessionStorage,
+                    reload: () => window.location.reload(),
+                });
+            }
         } catch (error) {
             console.error('Firebase App Check could not be initialized:', error);
         }
