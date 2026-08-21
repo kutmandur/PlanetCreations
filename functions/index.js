@@ -58,6 +58,11 @@ const {
     validateCreationArchive,
 } = require("./backupFormat");
 const {
+    VERIFIED_METADATA_SCHEMA_VERSION,
+    buildCreationMetadataUpdate,
+    extractFrontierMetadata,
+} = require("./frontierMetadata");
+const {
     getEffectiveCommunityPermissionKeys,
     hashCommunityPassword,
     verifyCommunityPassword,
@@ -602,6 +607,25 @@ function validateBackupBuffer(fileBuffer, publicKey, allowedExtensions = ALLOWED
     }
 }
 
+function buildVerifiedGameMetadata(validation) {
+    const metadata = extractFrontierMetadata(validation.payloadBuffer, {
+        originalFileName: validation.metadata.originalFileName,
+        expectedGameId: validation.metadata.gameId,
+        expectedFileKind: validation.metadata.fileKind,
+    });
+    return {
+        schemaVersion: VERIFIED_METADATA_SCHEMA_VERSION,
+        source: "server-verified-backup",
+        gameId: validation.metadata.gameId,
+        fileKind: validation.metadata.fileKind,
+        originalFileName: validation.metadata.originalFileName,
+        packageId: validation.metadata.packageId,
+        payloadSha256: validation.metadata.payloadSha256,
+        extractedAt: Timestamp.now(),
+        metadata,
+    };
+}
+
 /**
  * Generiert den öffentlichen Schlüssel aus dem privaten Signing Key
  */
@@ -1087,6 +1111,11 @@ exports.finalizeBackupUpload = onCallWith(
             if (validation.metadata.gameId !== creationSnap.data().game) {
                 throw new Error("The game in the package does not match the creation.");
             }
+            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const metadataUpdate = buildCreationMetadataUpdate(
+                creationSnap.data().requiredDlcs,
+                verifiedGameMetadata,
+            );
 
             destinationKey = `creation-backups/${uid}/${creationId}/${uploadId}.PlanetCreations`;
             await getS3().send(new CopyObjectCommand({
@@ -1111,6 +1140,14 @@ exports.finalizeBackupUpload = onCallWith(
                 backupProcessingError: null,
                 backupUpdatedAt: FieldValue.serverTimestamp(),
                 backupUploadConsent: session.uploadConsent,
+                // This is the only editable wizard field corrected from the
+                // server-verified file. All other user-authored fields remain
+                // untouched; automatic stats live below verifiedGameMetadata.
+                // Keep these explicit. Besides making the protected write easy
+                // to audit, this prevents a future refactor of the surrounding
+                // backup fields from accidentally dropping the metadata object.
+                verifiedGameMetadata: metadataUpdate.verifiedGameMetadata,
+                requiredDlcs: metadataUpdate.requiredDlcs,
             });
             await sessionRef.update({
                 status: "completed",
@@ -1126,7 +1163,12 @@ exports.finalizeBackupUpload = onCallWith(
                 await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: oldObjectKey }))
                     .catch((error) => console.warn("Old R2 object cleanup failed:", error.message));
             }
-            return { success: true };
+            return {
+                success: true,
+                metadataUpdated: true,
+                metadataSchemaVersion: verifiedGameMetadata.schemaVersion,
+                metadataPayloadSha256: verifiedGameMetadata.payloadSha256,
+            };
         } catch (error) {
             console.error(`Backup finalization failed for ${uploadId}:`, error);
             await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey })).catch(() => null);
@@ -1164,6 +1206,91 @@ exports.getBackupDownloadUrl = onCallWith(
         return { downloadUrl, expiresInSeconds: 600 };
     });
 
+exports.refreshCreationGameMetadata = onCallWith(
+    {
+        concurrency: 2,
+        cpu: 1,
+        maxInstances: 5,
+        memory: "1GiB",
+        timeoutSeconds: 300,
+        secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
+    },
+    async (data, context) => {
+        const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "refresh-creation-game-metadata",
+            subject: uid,
+            limit: 30,
+            windowMs: 15 * 60 * 1000,
+        });
+        const creationId = data && data.creationId;
+        if (typeof creationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(creationId)) {
+            throw new functions.https.HttpsError("invalid-argument", "A valid creation ID is required.");
+        }
+
+        const creationRef = db.doc(`creations/${creationId}`);
+        const creationSnap = await creationRef.get();
+        if (!creationSnap.exists || creationSnap.data().userId !== uid) {
+            throw new functions.https.HttpsError("permission-denied", "You do not own this creation.");
+        }
+        const creation = creationSnap.data();
+        const objectKey = creation.backupObjectKey;
+        if (!isOwnedObjectKey(objectKey, uid, "creation-backups") ||
+            !objectKey.startsWith(`creation-backups/${uid}/${creationId}/`)) {
+            throw new functions.https.HttpsError("not-found", "This creation has no verified R2 backup.");
+        }
+
+        try {
+            const bucket = getR2Bucket();
+            const head = await getS3().send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }));
+            if (!Number.isSafeInteger(head.ContentLength) || head.ContentLength <= 0 ||
+                head.ContentLength > MAX_BACKUP_SIZE_BYTES) {
+                throw new Error("The stored backup size is invalid.");
+            }
+            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
+            const fileBuffer = await r2BodyToBuffer(object.Body);
+            if (fileBuffer.length !== head.ContentLength) {
+                throw new Error("The stored backup is incomplete.");
+            }
+            const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
+            const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
+            if (!validation.valid) throw new Error(validation.error);
+            if (validation.metadata.signerUid !== uid) {
+                throw new Error("The package signer does not match the creation owner.");
+            }
+            if (validation.metadata.gameId !== creation.game) {
+                throw new Error("The game in the package does not match the creation.");
+            }
+            if (creation.backupPackageId &&
+                validation.metadata.packageId !== creation.backupPackageId) {
+                throw new Error("The stored package identity does not match the creation.");
+            }
+
+            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const metadataUpdate = buildCreationMetadataUpdate(
+                creation.requiredDlcs,
+                verifiedGameMetadata,
+            );
+            await creationRef.update({
+                verifiedGameMetadata: metadataUpdate.verifiedGameMetadata,
+                requiredDlcs: metadataUpdate.requiredDlcs,
+                backupProcessingError: null,
+            });
+            return {
+                success: true,
+                metadataUpdated: true,
+                metadataSchemaVersion: verifiedGameMetadata.schemaVersion,
+                metadataPayloadSha256: verifiedGameMetadata.payloadSha256,
+            };
+        } catch (error) {
+            console.error(`Creation metadata refresh failed for ${creationId}:`, error);
+            await creationRef.update({
+                backupProcessingError: String(error.message || "Metadata extraction failed").slice(0, 500),
+            }).catch(() => null);
+            throw new functions.https.HttpsError("failed-precondition", error.message);
+        }
+    });
+
 exports.removeCreationBackup = onCallWith(
     uploadFunctionOptions,
     async (data, context) => {
@@ -1197,6 +1324,7 @@ exports.removeCreationBackup = onCallWith(
             backupMediaSetId: null,
             backupProcessingError: null,
             backupUpdatedAt: FieldValue.serverTimestamp(),
+            verifiedGameMetadata: null,
         });
         return { success: true };
     });
@@ -4437,6 +4565,7 @@ exports.createCollaboration = onCallWith({
                     "The game in the initial save does not match the collaboration.",
                 );
             }
+            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
 
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
@@ -4515,6 +4644,7 @@ exports.createCollaboration = onCallWith({
                     originalFileName,
                     fileKind: validation.metadata.fileKind || null,
                     packageId: validation.metadata.packageId || null,
+                    verifiedGameMetadata,
                     note: initialNote,
                     changelogEntryId: uploadRef.id,
                     buildEndedAt: now,
@@ -6324,6 +6454,7 @@ exports.finalizeCollaborationVersion = onCallWith(
             if (validation.metadata.gameId !== collabSnap.data().game) {
                 throw new Error("The game in the package does not match the collaboration.");
             }
+            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
 
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
@@ -6419,6 +6550,7 @@ exports.finalizeCollaborationVersion = onCallWith(
                     originalFileName,
                     fileKind: validation.metadata.fileKind || null,
                     packageId: validation.metadata.packageId || null,
+                    verifiedGameMetadata,
                     note,
                     imageUrls,
                     completedTodos: finalizedCompletedTodos,
@@ -7044,6 +7176,8 @@ exports.publishCollaboration = onCallWith(
                     backupMediaSetId: null,
                     backupProcessingError: null,
                     backupUpdatedAt: now,
+                    verifiedGameMetadata:
+                        version.verifiedGameMetadata || null,
                     backupUploadConsent: {
                         ownershipConfirmed: true,
                         hostingAccepted: true,

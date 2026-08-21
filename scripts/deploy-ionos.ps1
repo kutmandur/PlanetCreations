@@ -233,9 +233,9 @@ public static class PcnSftpAskPass
     $null = Invoke-SftpCommands $downloadCommands
 
     foreach ($file in $relativeFiles) {
-        $localHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        $localHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($file.FullName))
         $verifiedPath = Join-Path $verificationRoot $file.RelativePath
-        $remoteHash = (Get-FileHash -LiteralPath $verifiedPath -Algorithm SHA256).Hash
+        $remoteHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($verifiedPath))
         if ($localHash -ne $remoteHash) {
             throw "Remote hash mismatch: $($file.RelativePath)"
         }

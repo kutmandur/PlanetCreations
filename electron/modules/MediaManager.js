@@ -2,6 +2,7 @@ const { app } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { inspectFrontierFile } = require('./FrontierSaveParser');
 
 const MEDIA_MANIFEST_FORMAT = 'PlanetCreationsMediaManifest';
 const MEDIA_MANIFEST_VERSION = 2;
@@ -210,7 +211,7 @@ function getSnapshot(saveOrBlueprintPath) {
     }
 }
 
-function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths) {
+function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {}) {
     try {
         initializeDirectories();
         const current = getSnapshot(saveOrBlueprintPath);
@@ -247,6 +248,8 @@ function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths) {
             gameId: getGameIdFromPath(saveOrBlueprintPath),
             localSavePath: saveOrBlueprintPath,
             assets,
+            associationMode: options.associationMode || 'manual',
+            ...(options.discovery ? { discovery: options.discovery } : {}),
         };
         writeJsonAtomic(getManifestPath(saveOrBlueprintPath), manifest);
         return true;
@@ -275,12 +278,13 @@ function savePortableManifestForCreation(saveOrBlueprintPath, portableManifest) 
         ...manifest,
         gameId: getGameIdFromPath(saveOrBlueprintPath),
         localSavePath: saveOrBlueprintPath,
+        associationMode: 'imported',
     });
     return true;
 }
 
 function hasMediaSnapshot(saveOrBlueprintPath) {
-    return fs.existsSync(getManifestPath(saveOrBlueprintPath)) || fs.existsSync(getLegacyManifestPath(saveOrBlueprintPath));
+    return Boolean(getSnapshot(saveOrBlueprintPath)?.assets?.length);
 }
 
 function readActiveManifest() {
@@ -299,6 +303,89 @@ function getGameMediaPaths(gameName) {
         userMedia: path.join(gamePath, 'UserMedia'),
         userAudio: path.join(gamePath, 'UserAudio'),
     };
+}
+
+function discoverCreationMedia(saveOrBlueprintPath) {
+    const inspection = inspectFrontierFile(saveOrBlueprintPath, { includeMediaReferences: true });
+    const gameName = getGameName(getGameIdFromPath(saveOrBlueprintPath), saveOrBlueprintPath);
+    const mediaPaths = getGameMediaPaths(gameName);
+    const filesByName = new Map();
+    for (const [target, directory] of Object.entries({ UserMedia: mediaPaths.userMedia, UserAudio: mediaPaths.userAudio })) {
+        if (!fs.existsSync(directory)) continue;
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            try {
+                if (getTargetForFile(entry.name) !== target) continue;
+                filesByName.set(entry.name.toLowerCase(), {
+                    logicalName: entry.name,
+                    path: path.join(directory, entry.name),
+                    target,
+                });
+            } catch {
+                // Unsupported files in the game's media folders are ignored.
+            }
+        }
+    }
+
+    const found = [];
+    const missing = [];
+    for (const reference of inspection.mediaReferences || []) {
+        const match = filesByName.get(reference.toLowerCase());
+        if (match && match.target === getTargetForFile(reference)) found.push(match);
+        else missing.push(reference);
+    }
+    return {
+        references: inspection.mediaReferences || [],
+        found,
+        missing,
+        source: inspection.source,
+    };
+}
+
+function automaticSnapshotResult(status, snapshot, discovery = null) {
+    return {
+        success: status !== 'error',
+        status,
+        associationMode: snapshot?.associationMode || null,
+        assetCount: snapshot?.assets?.length || 0,
+        referenceCount: discovery?.references?.length ?? snapshot?.discovery?.references?.length ?? null,
+        missing: discovery?.missing || snapshot?.discovery?.missing || [],
+    };
+}
+
+function syncAutomaticMediaSnapshot(saveOrBlueprintPath) {
+    try {
+        const existing = getSnapshot(saveOrBlueprintPath);
+        if (existing && existing.associationMode !== 'automatic') {
+            return automaticSnapshotResult('manual', existing);
+        }
+
+        const stats = fs.statSync(saveOrBlueprintPath);
+        if (existing?.associationMode === 'automatic' && existing.discovery?.sourceSize === stats.size &&
+            existing.discovery?.sourceModifiedAtMs === stats.mtimeMs) {
+            return automaticSnapshotResult('unchanged', existing);
+        }
+
+        const discovery = discoverCreationMedia(saveOrBlueprintPath);
+        const discoveryRecord = {
+            sourceSize: discovery.source.size,
+            sourceModifiedAtMs: discovery.source.modifiedAtMs,
+            references: discovery.references,
+            missing: discovery.missing,
+            detectedAt: new Date().toISOString(),
+        };
+        if (!createOrUpdateSnapshot(
+            saveOrBlueprintPath,
+            discovery.found.map(item => item.path),
+            { associationMode: 'automatic', discovery: discoveryRecord },
+        )) {
+            return { success: false, status: 'error', message: 'Referenced media failed its integrity checks.' };
+        }
+        return automaticSnapshotResult('synchronized', getSnapshot(saveOrBlueprintPath), discovery);
+    } catch (error) {
+        console.error('[MediaManager] Failed to detect referenced media:', error);
+        return { success: false, status: 'error', message: error.message, assetCount: 0, referenceCount: null, missing: [] };
+    }
 }
 
 function targetPathForAsset(mediaPaths, asset) {
@@ -508,6 +595,8 @@ module.exports = {
     getMediaSetStatus,
     getManifestPath,
     getGameMediaPaths,
+    discoverCreationMedia,
+    syncAutomaticMediaSnapshot,
     hasMediaSnapshot,
     deleteCreationMedia,
     getObjectPath,

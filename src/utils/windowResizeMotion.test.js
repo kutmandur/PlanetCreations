@@ -38,4 +38,5 @@ describe('window resize motion guard', () => {
         window.dispatchEvent(new Event('resize'));
         expect(document.documentElement).not.toHaveClass('pc-window-resizing');
     });
+
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -15,6 +15,8 @@ import { recordView, recordVote } from '../../utils/interestTracker';
 import { LIVE_PLATFORMS, getActiveLiveStreams, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
+import { getVerifiedGameTags } from '../../utils/creationSavePrefill';
+import VerifiedParkStats from '../ui/VerifiedParkStats';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -34,6 +36,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
     const [isStartingInstall, setIsStartingInstall] = useState(false);
     const [selectedClientId, setSelectedClientId] = useState('');
+    const [metadataRepairStatus, setMetadataRepairStatus] = useState('idle');
+    const metadataRepairAttemptRef = useRef('');
+    const inGameTags = getVerifiedGameTags(creation);
 
     // Streamer Tools: Overlay-QR-Zustand (lokal + remote) und OBS-Status
     const [overlayQrEntry, setOverlayQrEntry] = useState(() => readOverlayQr());
@@ -93,6 +98,29 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [userVote, setUserVote] = useState(null);
     const navigate = useNavigate();
     const functions = getFunctions();
+
+    useEffect(() => {
+        const repairKey = creation?.backupObjectKey ? `${id}:${creation.backupObjectKey}` : '';
+        const shouldRepair = Boolean(
+            repairKey &&
+            creation?.backupIsSigned === true &&
+            !creation?.verifiedGameMetadata &&
+            creation?.userId === user?.uid &&
+            metadataRepairAttemptRef.current !== repairKey
+        );
+        if (!shouldRepair) return;
+
+        metadataRepairAttemptRef.current = repairKey;
+        setMetadataRepairStatus('loading');
+        const refreshCreationGameMetadata = httpsCallable(functions, 'refreshCreationGameMetadata');
+        refreshCreationGameMetadata({ creationId: id })
+            .then(() => setMetadataRepairStatus('complete'))
+            .catch((error) => {
+                console.warn('Verified game metadata repair failed:', error);
+                setMetadataRepairStatus('error');
+            });
+    }, [creation?.backupIsSigned, creation?.backupObjectKey, creation?.userId,
+        creation?.verifiedGameMetadata, functions, id, user?.uid]);
 
     const formatDate = (timestamp) => {
         if (!timestamp) return 'N/A';
@@ -666,6 +694,16 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         <h3 className="text-2xl font-bold mb-4 text-center">Description</h3>
                         <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap text-center">{creation.description}</p>
                     </div>
+                    <VerifiedParkStats
+                        metadata={creation.verifiedGameMetadata?.metadata}
+                        presentation={creation.parkRidePresentation}
+                    />
+                    {metadataRepairStatus === 'loading' && !creation.verifiedGameMetadata && (
+                        <p className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">Reading verified stats from the attached savefile…</p>
+                    )}
+                    {metadataRepairStatus === 'error' && !creation.verifiedGameMetadata && (
+                        <p className="mt-3 text-center text-sm text-red-600 dark:text-red-400">The attached savefile metadata could not be prepared.</p>
+                    )}
 
                     {showcaseVideos.length > 0 && (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
@@ -929,7 +967,21 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </div>
                             </div>
                         )}
-                        <div className="mt-6 pt-6 border-t"><p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-2 text-center">Tags</p><div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold px-2.5 py-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors cursor-pointer">{tag}</button>))}</div></div>
+                        <div className="mt-6 space-y-4 border-t pt-6">
+                            <div>
+                                <p className="mb-2 text-center text-sm font-bold text-gray-600 dark:text-gray-300">User tags</p>
+                                <div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="cursor-pointer rounded-full bg-gray-200 px-2.5 py-1 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">{tag}</button>))}</div>
+                            </div>
+                            {inGameTags.length > 0 && (
+                                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+                                    <div className="flex items-center justify-center gap-2">
+                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100">Verified in-game tags</p>
+                                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900 dark:text-blue-200">Game file</span>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap justify-center gap-2">{inGameTags.map(tag => <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-sm font-medium text-blue-800 shadow-sm dark:bg-gray-900 dark:text-blue-200">{tag}</span>)}</div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                     {loadingCommunities ? (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 animate-pulse">

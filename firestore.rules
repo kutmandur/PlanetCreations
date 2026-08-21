@@ -43,7 +43,8 @@ service cloud.firestore {
         'backupObjectKey', 'backupStorageProvider', 'backupUrl',
         'backupFileSize', 'backupIsSigned', 'backupSignerUid',
         'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
-        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt'
+        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt',
+        'verifiedGameMetadata'
       ]) || (
         data.get('backupObjectKey', null) == null &&
         data.get('backupStorageProvider', null) == null &&
@@ -56,7 +57,8 @@ service cloud.firestore {
         data.get('backupPackageId', null) == null &&
         data.get('backupMediaSetId', null) == null &&
         data.get('backupProcessingError', null) == null &&
-        data.get('backupUpdatedAt', null) == null
+        data.get('backupUpdatedAt', null) == null &&
+        data.get('verifiedGameMetadata', null) == null
       );
     }
 
@@ -65,7 +67,8 @@ service cloud.firestore {
         'backupObjectKey', 'backupStorageProvider', 'backupUrl',
         'backupFileSize', 'backupIsSigned', 'backupSignerUid',
         'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
-        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt'
+        'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt',
+        'verifiedGameMetadata'
       ]);
     }
 
@@ -83,6 +86,32 @@ service cloud.firestore {
       ]);
     }
 
+    // User-owned display settings. These may hide or add presentation-only
+    // rides, but never contain or replace the server-owned verified metadata.
+    function isValidParkRidePresentation(data) {
+      let presentation = data.get('parkRidePresentation', null);
+      return presentation == null || (
+        presentation is map &&
+        presentation.keys().hasOnly([
+          'version', 'areas', 'customRides', 'hiddenRideKeys',
+          'rideAreaAssignments', 'rideEfnOverrides', 'rideDisplayNames'
+        ]) &&
+        presentation.get('version', 1) == 1 &&
+        presentation.get('areas', []) is list &&
+        presentation.get('areas', []).size() <= 24 &&
+        presentation.get('customRides', []) is list &&
+        presentation.get('customRides', []).size() <= 100 &&
+        presentation.get('hiddenRideKeys', []) is list &&
+        presentation.get('hiddenRideKeys', []).size() <= 500 &&
+        presentation.get('rideAreaAssignments', {}) is map &&
+        presentation.get('rideAreaAssignments', {}).keys().size() <= 500 &&
+        presentation.get('rideEfnOverrides', {}) is map &&
+        presentation.get('rideEfnOverrides', {}).keys().size() <= 500 &&
+        presentation.get('rideDisplayNames', {}) is map &&
+        presentation.get('rideDisplayNames', {}).keys().size() <= 500
+      );
+    }
+
     // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
@@ -98,6 +127,7 @@ service cloud.firestore {
              data.userId == request.auth.uid &&
              hasNoServerBackupFields(data) &&
              hasNoServerCollaborationPublicationFields(data) &&
+             isValidParkRidePresentation(data) &&
              (!('likes' in data.keys()) || data.likes == 0) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
@@ -108,6 +138,7 @@ service cloud.firestore {
       return data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              data.userId == existing.userId &&
              data.game == existing.game &&
+             isValidParkRidePresentation(data) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20 &&
              // Activity-Score wird nur serverseitig gepflegt (onCreationActivityScore,

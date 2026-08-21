@@ -10,7 +10,14 @@ const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 
-const { scanGamesFromPath, scanAllMediaFiles } = require('./modules/FileHandler');
+const {
+    indexGamesFromPath,
+    inspectFrontierFileInWorker,
+    saveMetadataInspection,
+    scanGamesFromPath,
+    scanAllMediaFiles,
+} = require('./modules/FileHandler');
+const { readFrontierPreview } = require('./modules/FrontierSaveParser');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
@@ -18,10 +25,13 @@ const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { responseToBuffer } = require('./modules/ResponseBuffer');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
-const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia } = require('./modules/MediaManager');
+const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
 const isDev = !app.isPackaged;
+const shouldOpenDevTools = isDev && process.argv.includes('--devtools');
+const forceRecaptchaAppCheckForTest = isDev && process.argv.includes('--force-recaptcha-app-check-for-test');
 const useHostedUiInDev = isDev && process.env.PLANETCREATIONS_USE_HOSTED_UI === '1';
+const openLocalUiInDev = isDev && process.argv.includes('--local-ui');
 const devServerUrl = resolveDevServerUrl(process.env.PLANETCREATIONS_DEV_SERVER_URL);
 const AUTO_START_ARG = '--autostart';
 const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
@@ -39,11 +49,16 @@ let activeGameId = null;
 let gameProcessCheckInFlight = false;
 let updateCheckTimer;
 let overlayDragState = null;
+let overlayDragFlushTimer = null;
+let pendingOverlayDragPoint = null;
+let overlaySettingsWriteTimer = null;
+let pendingOverlaySettingsPatch = null;
 let isGameOverlayExpanded = false;
 let pendingMainWebRefresh = false;
 let isQuitting = false;
 let hasShownTrayHint = false;
 let streamingIntegration = null;
+let frontierMetadataScanGeneration = 0;
 // Manueller Overlay-Schalter: zeigt das Overlay unabhängig von der
 // PC2-Prozesserkennung — auf macOS/Linux der einzige Weg (kein tasklist.exe),
 // auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
@@ -59,11 +74,18 @@ const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const PRODUCTION_WEB_ORIGIN = 'https://planetcreations.net';
 
 function getBundledAppUrl() {
-    return isDev ? devServerUrl : pathToFileURL(path.join(__dirname, '../build/index.html')).toString();
+    return withLocalTestParameters(isDev ? devServerUrl : pathToFileURL(path.join(__dirname, '../build/index.html')).toString());
 }
 
 function getHostedAppUrl() {
-    return isDev && !useHostedUiInDev ? devServerUrl : PRODUCTION_WEB_ORIGIN;
+    return withLocalTestParameters(isDev && !useHostedUiInDev ? devServerUrl : PRODUCTION_WEB_ORIGIN);
+}
+
+function withLocalTestParameters(rawUrl) {
+    if (!forceRecaptchaAppCheckForTest) return rawUrl;
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.set('pcAppCheck', 'recaptcha-test-only');
+    return parsed.toString();
 }
 
 function isAllowedAppUrl(rawUrl) {
@@ -187,6 +209,23 @@ function writeOverlaySettings(patch) {
     }
 }
 
+function flushPendingOverlaySettings() {
+    if (overlaySettingsWriteTimer) {
+        clearTimeout(overlaySettingsWriteTimer);
+        overlaySettingsWriteTimer = null;
+    }
+    if (!pendingOverlaySettingsPatch) return;
+    const patch = pendingOverlaySettingsPatch;
+    pendingOverlaySettingsPatch = null;
+    writeOverlaySettings(patch);
+}
+
+function scheduleOverlaySettingsWrite(patch) {
+    pendingOverlaySettingsPatch = { ...(pendingOverlaySettingsPatch || {}), ...patch };
+    if (overlaySettingsWriteTimer) clearTimeout(overlaySettingsWriteTimer);
+    overlaySettingsWriteTimer = setTimeout(flushPendingOverlaySettings, 250);
+}
+
 // --- Streaming-Integration (OBS ODER Streamlabs Desktop, wählbar) ---
 // Beide Adapter teilen sich Event-Interface und IPC-Kanäle; hier liegen
 // Konfiguration und Lifecycle. OBS: obs-websocket (Port 4455, Passwort).
@@ -308,7 +347,10 @@ async function setStreamingConfig(patch) {
 
 function keepBoundsOnScreen(bounds) {
     const display = screen.getDisplayMatching(bounds);
-    const area = display.workArea;
+    return keepBoundsInsideWorkArea(bounds, display.workArea);
+}
+
+function keepBoundsInsideWorkArea(bounds, area) {
     return {
         x: Math.min(Math.max(bounds.x, area.x), area.x + Math.max(0, area.width - bounds.width)),
         y: Math.min(Math.max(bounds.y, area.y), area.y + Math.max(0, area.height - bounds.height)),
@@ -356,6 +398,13 @@ function createGameOverlayWindow() {
     secureAppWindow(gameOverlayWindow);
     gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
     loadHostedAppWithFallback(gameOverlayWindow, '/', { requireOverlayCapability: true });
+    const rememberExpandedBounds = () => {
+        if (isGameOverlayExpanded && gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
+            scheduleOverlaySettingsWrite({ panelBounds: gameOverlayWindow.getBounds() });
+        }
+    };
+    gameOverlayWindow.on('move', rememberExpandedBounds);
+    gameOverlayWindow.on('resize', rememberExpandedBounds);
     gameOverlayWindow.on('closed', () => { gameOverlayWindow = null; });
     return gameOverlayWindow;
 }
@@ -485,6 +534,7 @@ function openStreamManagementWindow({ focus = true } = {}) {
 
 function setOverlayExpanded(expanded) {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed()) return false;
+    flushPendingOverlaySettings();
     const settings = readOverlaySettings();
     if (expanded) {
         if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
@@ -998,13 +1048,14 @@ function createWindow({ openOnline = false } = {}) {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
+        backgroundColor: '#111827',
         icon: getAppIconPath(),
         webPreferences: {
           preload: path.join(__dirname, 'preload.js'),
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
-          backgroundThrottling: false,
+          backgroundThrottling: true,
         },
     });
 
@@ -1020,7 +1071,7 @@ function createWindow({ openOnline = false } = {}) {
         else if (mode === 'offline') loadHostedAppWithFallback(mainWindow, '/client/dashboard');
     });
 
-    if (isDev) mainWindow.webContents.openDevTools();
+    if (shouldOpenDevTools) mainWindow.webContents.openDevTools();
 
     mainWindow.on('close', (event) => {
         if (isQuitting || !tray) return;
@@ -1195,41 +1246,69 @@ ipcMain.handle('set-overlay-forced', (event, value) => {
 ipcMain.on('overlay-drag-start', (event, point) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
     if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
-    overlayDragState = { pointerX: point.screenX, pointerY: point.screenY, bounds: gameOverlayWindow.getBounds() };
+    const bounds = gameOverlayWindow.getBounds();
+    overlayDragState = {
+        pointerX: point.screenX,
+        pointerY: point.screenY,
+        bounds,
+        workArea: screen.getDisplayMatching(bounds).workArea,
+    };
 });
-ipcMain.on('overlay-drag-move', (event, point) => {
-    if (!overlayDragState || !gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
-    if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
-    const next = keepBoundsOnScreen({
+
+function flushOverlayDrag() {
+    if (overlayDragFlushTimer) {
+        clearTimeout(overlayDragFlushTimer);
+        overlayDragFlushTimer = null;
+    }
+    const point = pendingOverlayDragPoint;
+    pendingOverlayDragPoint = null;
+    if (!point || !overlayDragState || !gameOverlayWindow || gameOverlayWindow.isDestroyed()) return;
+    const next = keepBoundsInsideWorkArea({
         ...overlayDragState.bounds,
         x: overlayDragState.bounds.x + Math.round(point.screenX - overlayDragState.pointerX),
         y: overlayDragState.bounds.y + Math.round(point.screenY - overlayDragState.pointerY),
-    });
-    gameOverlayWindow.setBounds(next);
+    }, overlayDragState.workArea);
+    gameOverlayWindow.setPosition(next.x, next.y, false);
+}
+
+ipcMain.on('overlay-drag-move', (event, point) => {
+    if (!overlayDragState || !gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
+    if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
+    pendingOverlayDragPoint = { screenX: point.screenX, screenY: point.screenY };
+    if (!overlayDragFlushTimer) overlayDragFlushTimer = setTimeout(flushOverlayDrag, 16);
 });
 ipcMain.on('overlay-drag-end', (event) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
+    flushOverlayDrag();
     const bounds = gameOverlayWindow.getBounds();
-    if (gameOverlayWindow.isResizable()) writeOverlaySettings({ panelBounds: bounds });
-    else writeOverlaySettings({ x: bounds.x, y: bounds.y, size: bounds.width });
+    if (gameOverlayWindow.isResizable()) scheduleOverlaySettingsWrite({ panelBounds: bounds });
+    else scheduleOverlaySettingsWrite({ x: bounds.x, y: bounds.y, size: bounds.width });
+    flushPendingOverlaySettings();
     overlayDragState = null;
 });
 ipcMain.on('overlay-resize', (event, direction) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || gameOverlayWindow.isResizable() || event.sender !== gameOverlayWindow.webContents) return;
+    const steps = Math.max(-20, Math.min(20, Math.trunc(Number(direction) || 0)));
+    if (steps === 0) return;
     const current = gameOverlayWindow.getBounds();
-    const nextSize = Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, current.width + (direction > 0 ? 8 : -8)));
+    const nextSize = Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, current.width + steps * 8));
     const next = keepBoundsOnScreen({
         x: Math.round(current.x - (nextSize - current.width) / 2),
         y: Math.round(current.y - (nextSize - current.height) / 2),
         width: nextSize,
         height: nextSize,
     });
-    gameOverlayWindow.setBounds(next);
+    gameOverlayWindow.setBounds(next, false);
     if (overlayDragState) {
         const pointer = screen.getCursorScreenPoint();
-        overlayDragState = { pointerX: pointer.x, pointerY: pointer.y, bounds: next };
+        overlayDragState = {
+            pointerX: pointer.x,
+            pointerY: pointer.y,
+            bounds: next,
+            workArea: screen.getDisplayMatching(next).workArea,
+        };
     }
-    writeOverlaySettings({ x: next.x, y: next.y, size: nextSize });
+    scheduleOverlaySettingsWrite({ x: next.x, y: next.y, size: nextSize });
 });
 ipcMain.handle('set-overlay-expanded', (event, expanded) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return false;
@@ -1431,6 +1510,34 @@ ipcMain.handle('read-file-as-data-url', (event, filePath) => {
     }
 });
 
+ipcMain.handle('read-frontier-preview', (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    if (!filePath || typeof filePath !== 'string') return null;
+    const resolvedPath = path.resolve(filePath);
+    const allowedRoots = [
+        getStoredPath(),
+        path.join(app.getPath('home'), 'Saved Games'),
+        app.getPath('documents'),
+    ].filter(Boolean);
+    if (!allowedRoots.some(root => isPathInside(root, resolvedPath))) {
+        throw new Error('Preview path is outside the configured game folders.');
+    }
+    return readFrontierPreview(resolvedPath);
+});
+
+ipcMain.handle('inspect-frontier-file', async (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    const storedPath = getStoredPath();
+    if (!filePath || typeof filePath !== 'string' || !storedPath) {
+        throw new Error('A configured local Frontier file is required.');
+    }
+    const resolvedPath = path.resolve(filePath);
+    if (!isPathInside(storedPath, resolvedPath) || !isValidGameFile(resolvedPath) || !fs.existsSync(resolvedPath)) {
+        throw new Error('The selected file is outside the configured game folders or unsupported.');
+    }
+    return inspectFrontierFileInWorker(resolvedPath);
+});
+
 ipcMain.handle('open-backup-folder', () => {
     const backupDir = path.join(app.getPath('documents'), 'PlanetCreations');
     fs.mkdirSync(backupDir, { recursive: true });
@@ -1461,7 +1568,9 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
         return {}; 
     }
 
-    const gameFiles = scanGamesFromPath(storedPath);
+    // The dashboard owns the sequential background scan. File pickers reuse its
+    // persistent cache and analyze only the file the user actually selects.
+    const gameFiles = indexGamesFromPath(storedPath).results;
     const allBackupsBySave = listAllBackups(app);
     const flatBackups = Object.values(allBackupsBySave).flat();
     
@@ -1613,6 +1722,10 @@ ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentT
                 'Content-Length': String(stats.size),
             },
             body: fs.createReadStream(resolvedPath),
+            // Node's fetch/undici requires half-duplex mode when the request
+            // body is a stream. Without it, the upload fails before any bytes
+            // reach R2 with "RequestInit: duplex option is required".
+            duplex: 'half',
         });
         if (!response.ok) {
             return { success: false, status: response.status, message: `Cloudflare R2 returned HTTP ${response.status}.` };
@@ -1630,7 +1743,55 @@ ipcMain.handle('has-media-snapshot', (event, filePath) => hasMediaSnapshot(fileP
 ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken) =>
     backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken));
 ipcMain.handle('delete-creation-media', (event, filePath, mode) => deleteCreationMedia(filePath, mode));
-ipcMain.handle('scan-games', (event, basePath) => scanGamesFromPath(basePath));
+ipcMain.handle('scan-games', (event, basePath, options = {}) => {
+    requireTrustedIpcSender(event, true);
+    const storedPath = getStoredPath();
+    if (!basePath || typeof basePath !== 'string' || !storedPath ||
+        path.resolve(basePath) !== path.resolve(storedPath)) {
+        throw new Error('Only the configured Frontier folder can be scanned.');
+    }
+    const generation = ++frontierMetadataScanGeneration;
+    const sender = event.sender;
+    const indexed = indexGamesFromPath(basePath, {
+        forceMetadataRefresh: options?.forceMetadataRefresh === true,
+    });
+    indexed.results.__metadataProgress = {
+        completed: 0,
+        total: indexed.pending.length,
+        running: indexed.pending.length > 0,
+    };
+
+    void (async () => {
+        let completed = 0;
+        for (const pendingFile of indexed.pending) {
+            if (generation !== frontierMetadataScanGeneration || sender.isDestroyed()) return;
+            let inspection = null;
+            let inspectionError = null;
+            try {
+                inspection = await inspectFrontierFileInWorker(pendingFile.path);
+            } catch (error) {
+                inspectionError = error;
+            }
+            if (generation !== frontierMetadataScanGeneration || sender.isDestroyed()) return;
+            const cached = saveMetadataInspection(indexed.cache, pendingFile, inspection, inspectionError);
+            completed += 1;
+            sender.send('frontier-metadata-updated', {
+                filePath: pendingFile.path,
+                metadata: cached.metadata,
+                mediaReferences: cached.mediaReferences,
+                error: cached.error,
+                status: cached.error ? 'error' : 'ready',
+                progress: {
+                    completed,
+                    total: indexed.pending.length,
+                    running: completed < indexed.pending.length,
+                },
+            });
+        }
+    })().catch(error => log.error('Sequential Frontier metadata scan failed:', error));
+
+    return indexed.results;
+});
 ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken) =>
     createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken));
 ipcMain.handle('list-all-backups', () => listAllBackups(app));
@@ -1655,10 +1816,11 @@ ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath)
     return restoreBackup(app, backupFilePath, targetPath);
 });
 ipcMain.handle('delete-backup', (event, filePath) => deleteBackup(app, filePath));
-ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken, appCheckToken) =>
-    backupAllCreations(app, files, note, isSigned, idToken, appCheckToken));
+ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken, appCheckToken, includeMediaPackages) =>
+    backupAllCreations(app, files, note, isSigned, idToken, appCheckToken, includeMediaPackages));
 ipcMain.handle('scan-all-media-files', () => scanAllMediaFiles(app));
 ipcMain.handle('create-media-snapshot', (event, savePath, mediaPaths) => createOrUpdateSnapshot(savePath, mediaPaths));
+ipcMain.handle('sync-automatic-media-snapshot', (event, savePath) => syncAutomaticMediaSnapshot(savePath));
 ipcMain.handle('get-media-snapshot', (event, savePath) => getSnapshot(savePath));
 ipcMain.handle('install-media', (event, savePath, options) => installMedia(savePath, options));
 ipcMain.handle('uninstall-media', (event, savePath) => uninstallMedia(savePath));
@@ -1668,13 +1830,14 @@ app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
     overlayForcedVisible = readOverlaySettings().forcedVisible;
     createTray();
-    createWindow({ openOnline: isAutoStart || useHostedUiInDev });
+    createWindow({ openOnline: isAutoStart || useHostedUiInDev || openLocalUiInDev });
     startGameProcessMonitor();
     streamingIntegration = createStreamingIntegration();
     streamingIntegration.start();
 });
 app.on('before-quit', () => {
     isQuitting = true;
+    flushPendingOverlaySettings();
     if (gameProcessTimer) clearInterval(gameProcessTimer);
     if (updateCheckTimer) clearInterval(updateCheckTimer);
     if (streamingIntegration) streamingIntegration.stop();

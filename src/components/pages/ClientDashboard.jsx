@@ -12,6 +12,7 @@ import BackupNoteModal from '../modals/BackupNoteModal';
 import DeleteConfirmationModal from '../modals/DeleteConfirmationModal';
 import DeleteMediaModal from '../modals/DeleteMediaModal';
 import MediaSnapshotModal from '../modals/MediaSnapshotModal';
+import CreationMetadataPanel from '../ui/CreationMetadataPanel';
 
 // --- HILFSFUNKTIONEN ---
 function formatBytes(bytes, decimals = 2) {
@@ -21,6 +22,34 @@ function formatBytes(bytes, decimals = 2) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+function applyMetadataUpdate(results, update) {
+    if (!results || !update?.filePath) return results;
+    let changed = false;
+    const next = {};
+    for (const [gameName, game] of Object.entries(results)) {
+        if (!game || typeof game !== 'object') {
+            next[gameName] = game;
+            continue;
+        }
+        const nextGame = { ...game };
+        for (const category of ['parks', 'blueprints', 'autosaves']) {
+            nextGame[category] = (game[category] || []).map(file => {
+                if (file.path !== update.filePath) return file;
+                changed = true;
+                return {
+                    ...file,
+                    frontierMetadata: update.metadata || file.frontierMetadata,
+                    customMediaReferences: update.mediaReferences || file.customMediaReferences || [],
+                    frontierMetadataError: update.error || undefined,
+                    metadataStatus: update.status,
+                };
+            });
+        }
+        next[gameName] = nextGame;
+    }
+    return changed ? next : results;
 }
 
 // --- UI-KOMPONENTEN ---
@@ -68,14 +97,14 @@ const FilterControls = ({ searchTerm, setSearchTerm, sortOption, setSortOption, 
 
 // --- LISTENDARSTELLUNG ---
 
-const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
+const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, mediaDiscoveryStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
     if (!files || files.length === 0) {
         return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
     }
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4 items-start">
             {files.map(file => {
-                const displayName = file.name.includes('-') ? file.name.split('-')[0] : file.name.replace(/\.[^/.]+$/, "");
+                const displayName = file.frontierMetadata?.name || (file.name.includes('-') ? file.name.split('-')[0] : file.name.replace(/\.[^/.]+$/, ""));
                 const isInstalled = viewMode === 'media' && mediaStatus && mediaStatus[file.path] === 'installed';
                 const hasMedia = viewMode === 'media' && snapshotStatus && snapshotStatus[file.path];
                 const isBackingUp = viewMode === 'backup' && backingUpFile === file.path;
@@ -84,9 +113,10 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                 const backupsForFile = allBackups ? allBackups[baseName] : null;
                 const lastBackupDate = backupsForFile && backupsForFile.length > 0 ? new Date(backupsForFile[0].backupDate) : null;
                 const isSelected = viewMode === 'backup' && selectedItems && selectedItems.has(file.path);
+                const discovery = viewMode === 'media' ? mediaDiscoveryStatus?.[file.path] : null;
 
                 return (
-                    <div key={file.path} className={`rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
+                    <div key={file.path} className={`pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
                         {viewMode === 'backup' && (
                             <div className="self-end flex-shrink-0">
                                 <input
@@ -102,6 +132,14 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                 <p className="font-semibold text-white truncate text-lg" title={file.name}>{displayName}</p>
                                 <p className="text-sm text-gray-500 truncate">{file.name}</p>
                             </div>
+                            <CreationMetadataPanel
+                                metadata={file.frontierMetadata}
+                                filePath={file.path}
+                                metadataStatus={file.metadataStatus}
+                                metadataError={file.frontierMetadataError}
+                                customMediaReferences={file.customMediaReferences}
+                            />
+                            {file.frontierMetadataError && <p className="mt-2 text-xs text-amber-400">Metadata could not be read.</p>}
                         </div>
                         <div className="grid grid-cols-2 gap-2 w-full mt-4">
                             <div className="text-center text-sm bg-gray-800 rounded-lg p-2">
@@ -117,6 +155,12 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                 <p className="font-semibold text-white">{lastBackupDate ? lastBackupDate.toLocaleString() : 'N/A'}</p>
                             </div>
                             <div className="flex flex-wrap gap-2 items-center justify-center col-span-2 mt-2">
+                                {viewMode === 'media' && discovery && (
+                                    <div className="w-full rounded-md bg-gray-800 px-2 py-1 text-center text-xs text-gray-300">
+                                        {discovery.success ? `${discovery.assetCount} media file(s) matched` : 'Automatic media detection failed'}
+                                        {discovery.missing?.length > 0 && <span className="text-amber-400"> · {discovery.missing.length} missing</span>}
+                                    </div>
+                                )}
                                 {viewMode === 'backup' && (
                                     <button onClick={() => onBackupClick(file)} disabled={isBackingUp} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm w-20 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
                                         {isBackingUp ? '...' : 'Backup'}
@@ -124,7 +168,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                 )}
                                 {viewMode === 'media' && (
                                     <>
-                                        <button onClick={() => onBackupMediaClick(file)} disabled={!hasMedia || isBackingUpMedia} title="Backup associated media" className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-sm w-28 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <button onClick={() => onBackupMediaClick(file)} disabled={isBackingUpMedia} title="Automatically detect and back up referenced media" className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-sm w-28 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
                                             {isBackingUpMedia ? '...' : 'Backup Media'}
                                         </button>
                                         <button onClick={() => onManageMediaClick(file)} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded text-sm">
@@ -207,7 +251,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
         setBackupModalState({ isOpen: true, file: null, isBatch: true, selectedFiles: filesToBackup });
     };
     
-    const handleConfirmBackup = async (note, isSigned) => {
+    const handleConfirmBackup = async (note, isSigned, includeMediaPackage) => {
         const { file, isBatch, selectedFiles: filesForBatch } = backupModalState;
         setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] });
 
@@ -242,6 +286,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
                     isSigned,
                     idToken,
                     appCheckToken,
+                    includeMediaPackage,
                 );
                 alert(result.message);
                 if (result.success) {
@@ -264,7 +309,19 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
                     idToken,
                     appCheckToken,
                 );
-                alert(`Backup for "${file.name}" created successfully!`);
+                let message = `Backup for "${file.name}" created successfully!`;
+                if (includeMediaPackage) {
+                    setGlobalLoader({ isLoading: true, message: `Creating matching Custom Media package for ${file.name}...` });
+                    const mediaResult = await window.electronAPI.backupCreationMedia(
+                        file.path,
+                        note,
+                        isSigned,
+                        idToken,
+                        appCheckToken,
+                    );
+                    message += `\n\n${mediaResult.message}`;
+                }
+                alert(message);
                 if(onBackupCreated) onBackupCreated();
             } catch (error) { 
                 alert(`An error occurred: ${error.message}`); 
@@ -277,7 +334,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
     
     return (
         <div className="flex flex-col h-full bg-gray-800">
-            {backupModalState.isOpen && (<BackupNoteModal onConfirm={handleConfirmBackup} onCancel={() => setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] })} isOnline={!!user} />)}
+            {backupModalState.isOpen && (<BackupNoteModal onConfirm={handleConfirmBackup} onCancel={() => setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] })} isOnline={!!user} showMediaPackageOption />)}
             <SubHeader {...subHeaderProps} />
             <FilterControls 
                 searchTerm={searchTerm} setSearchTerm={setSearchTerm} 
@@ -575,6 +632,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
     const [snapshotModalState, setSnapshotModalState] = useState({ isOpen: false, file: null, gameName: null });
     const [mediaStatus, setMediaStatus] = useState({});
     const [snapshotStatus, setSnapshotStatus] = useState({});
+    const [mediaDiscoveryStatus, setMediaDiscoveryStatus] = useState({});
     const [statusLoading, setStatusLoading] = useState(false);
     const [backingUpMediaFile, setBackingUpMediaFile] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -622,10 +680,48 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
 
     const checkStatuses = useCallback(async (files) => { if (!files || !window.electronAPI) return; setStatusLoading(true); const mediaStatusMap = {}, snapshotStatusMap = {}; for (const file of files) { const [media, snapshot] = await Promise.all([ window.electronAPI.getMediaStatus(file.path), window.electronAPI.hasMediaSnapshot(file.path) ]); mediaStatusMap[file.path] = media; snapshotStatusMap[file.path] = snapshot; } setMediaStatus(mediaStatusMap); setSnapshotStatus(snapshotStatusMap); setStatusLoading(false); }, []);
     useEffect(() => { const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) { checkStatuses(currentFiles); } }, [scanResults, activeGame, activeTab, checkStatuses]);
-    const handleManageMediaClick = (file) => { setSnapshotModalState({ isOpen: true, file: file, gameName: activeGame }); };
+    const synchronizeMedia = useCallback(async (file) => {
+        const result = await window.electronAPI.syncAutomaticMediaSnapshot(file.path);
+        setMediaDiscoveryStatus(previous => ({ ...previous, [file.path]: result }));
+        const currentFiles = scanResults?.[activeGame]?.[activeTab];
+        if (currentFiles) await checkStatuses(currentFiles);
+        return result;
+    }, [activeGame, activeTab, checkStatuses, scanResults]);
+
+    const handleManageMediaClick = async (file) => {
+        setGlobalLoader({ isLoading: true, message: `Detecting referenced media for ${file.name}...` });
+        try {
+            const result = await synchronizeMedia(file);
+            if (!result.success) alert(`Automatic media detection failed: ${result.message}`);
+            setSnapshotModalState({ isOpen: true, file, gameName: activeGame });
+        } catch (error) {
+            alert(`Automatic media detection failed: ${error.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+        }
+    };
     
-    const handleBackupMediaClick = (file) => {
-        setMediaBackupModalState({ isOpen: true, file: file });
+    const handleBackupMediaClick = async (file) => {
+        setGlobalLoader({ isLoading: true, message: `Detecting referenced media for ${file.name}...` });
+        try {
+            const result = await synchronizeMedia(file);
+            if (!result.success) {
+                alert(`Automatic media detection failed: ${result.message}`);
+                return;
+            }
+            if (result.assetCount === 0) {
+                const message = result.referenceCount > 0 ?
+                    `${result.referenceCount} media reference(s) were found, but none of the files are available locally.` :
+                    'This creation does not reference any detectable custom media.';
+                alert(message);
+                return;
+            }
+            setMediaBackupModalState({ isOpen: true, file });
+        } catch (error) {
+            alert(`Automatic media detection failed: ${error.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+        }
     };
 
     const handleConfirmMediaBackup = async (note, isSigned) => {
@@ -685,7 +781,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         return result;
     };
     const handleSaveSnapshot = async (savePath, mediaPaths) => { const fileToInstall = snapshotModalState.file; if (!fileToInstall) { alert('Error: Could not identify the target file.'); return; } const snapshotSuccess = await window.electronAPI.createMediaSnapshot(savePath, mediaPaths); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if (snapshotSuccess) { const installResult = await activateMediaWithConflictHandling(fileToInstall.path); alert(installResult?.success ? 'Snapshot saved and media activated!' : `Snapshot saved, but activation failed: ${installResult?.message || installResult?.status || 'unknown error'}`); if (currentFiles) { checkStatuses(currentFiles); } } else { alert('Failed to save snapshot. Only supported image/video files and MP3/OGG audio may be selected.'); } setSnapshotModalState({ isOpen: false, file: null, gameName: null }); };
-    const handleInstall = async (file) => { const result = await activateMediaWithConflictHandling(file.path); if(result?.success) alert('Media installed!'); else if (result?.status !== 'conflict') alert(`Failed to install media: ${result?.message || result?.status || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
+    const handleInstall = async (file) => { const discovery = await synchronizeMedia(file); if (!discovery.success || discovery.assetCount === 0) { alert(discovery.message || 'No available referenced media was found for this creation.'); return; } const result = await activateMediaWithConflictHandling(file.path); if(result?.success) alert('Media installed!'); else if (result?.status !== 'conflict') alert(`Failed to install media: ${result?.message || result?.status || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
     const handleUninstall = async (file) => { const result = await window.electronAPI.uninstallMedia(file.path); if(result?.success) alert('Media uninstalled!'); else alert(`Failed to uninstall media: ${result?.message || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
     const handleDeleteMediaClick = (file) => { setDeleteMediaModalState({ isOpen: true, file: file }); };
     const handleDeletionModeSelected = (mode) => { setFinalDeleteState({ isOpen: true, file: deleteMediaModalState.file, mode: mode }); setDeleteMediaModalState({ isOpen: false, file: null }); };
@@ -708,7 +804,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
                 ) : (
                     <>
                         {statusLoading && <div className="text-center text-xs text-gray-400 mb-2">Checking statuses...</div>}
-                        <FileList files={processedFiles} viewMode="media" onManageMediaClick={handleManageMediaClick} onInstallMedia={handleInstall} onUninstallMedia={handleUninstall} onDeleteMediaClick={handleDeleteMediaClick} mediaStatus={mediaStatus} snapshotStatus={snapshotStatus} onBackupMediaClick={handleBackupMediaClick} backingUpMediaFile={backingUpMediaFile} allBackups={allBackups} />
+                        <FileList files={processedFiles} viewMode="media" onManageMediaClick={handleManageMediaClick} onInstallMedia={handleInstall} onUninstallMedia={handleUninstall} onDeleteMediaClick={handleDeleteMediaClick} mediaStatus={mediaStatus} snapshotStatus={snapshotStatus} mediaDiscoveryStatus={mediaDiscoveryStatus} onBackupMediaClick={handleBackupMediaClick} backingUpMediaFile={backingUpMediaFile} allBackups={allBackups} />
                     </>
                 )}
             </div>
@@ -723,10 +819,12 @@ const ClientDashboard = ({ user }) => {
     const [backupRefreshKey, setBackupRefreshKey] = useState(0);
     const [scanResults, setScanResults] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [scanProgress, setScanProgress] = useState({ completed: 0, total: 0, running: false });
     const [selectedPath, setSelectedPath] = useState(null);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [globalLoader, setGlobalLoader] = useState({ isLoading: false, message: '' });
     const settingsRef = useRef(null);
+    const pendingMetadataUpdatesRef = useRef(new Map());
     
     // Desktop-Client indexiert lokale Dateien nach Anzeigenamen; nur Spiele mit
     // Datei-Endungen (= vom Desktop-Client scannbar) anbieten.
@@ -762,28 +860,42 @@ const ClientDashboard = ({ user }) => {
     const fileTypeGliderRef = useRef(null);
     const activeGameColor = getGameColor(registryGames.find(g => g.name === activeGame)?.id);
     
-    const handleScan = useCallback(async (basePath) => {
+    const handleScan = useCallback(async (basePath, options = {}) => {
         if (!basePath) return;
-        let isMounted = true;
-        setLoading(true);
-        setScanResults(null);
+        pendingMetadataUpdatesRef.current.clear();
+        if (!options.preserveResults) {
+            setLoading(true);
+            setScanResults(null);
+        }
         if (window.electronAPI) {
             try {
-                const filesByGame = await window.electronAPI.scanGames(basePath);
-                if (isMounted) {
-                    setScanResults(filesByGame);
+                const indexed = await window.electronAPI.scanGames(basePath, {
+                    forceMetadataRefresh: options.forceMetadataRefresh === true,
+                });
+                const { __metadataProgress: progress, ...filesByGame } = indexed || {};
+                let merged = filesByGame;
+                let latestProgress = progress;
+                for (const update of pendingMetadataUpdatesRef.current.values()) {
+                    merged = applyMetadataUpdate(merged, update);
+                    if (update.progress) latestProgress = update.progress;
                 }
+                setScanResults(merged);
+                setScanProgress(latestProgress || { completed: 0, total: 0, running: false });
             } catch (error) {
                 console.error("Error scanning games:", error);
-                if (isMounted) {
-                    alert(`An error occurred: ${error.message}`);
-                }
+                alert(`An error occurred: ${error.message}`);
             }
         }
-        if (isMounted) {
-            setLoading(false);
-        }
-        return () => { isMounted = false; };
+        setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        if (!window.electronAPI?.onFrontierMetadataUpdated) return undefined;
+        return window.electronAPI.onFrontierMetadataUpdated(update => {
+            pendingMetadataUpdatesRef.current.set(update.filePath, update);
+            setScanResults(current => applyMetadataUpdate(current, update));
+            if (update.progress) setScanProgress(update.progress);
+        });
     }, []);
 
     useEffect(() => {
@@ -878,6 +990,13 @@ const ClientDashboard = ({ user }) => {
         window.electronAPI.openBackupFolder();
         setIsSettingsOpen(false);
     };
+
+    const handleRefreshAllStats = () => {
+        if (selectedPath) {
+            handleScan(selectedPath, { forceMetadataRefresh: true, preserveResults: true });
+        }
+        setIsSettingsOpen(false);
+    };
     
     const handleLoadExternalBackup = async () => {
         const result = await window.electronAPI.loadExternalBackup();
@@ -957,7 +1076,9 @@ const ClientDashboard = ({ user }) => {
             {globalLoader.isLoading && <GlobalLoader message={globalLoader.message} />}
             
             <div className="p-4 flex justify-between items-center flex-shrink-0">
-                <div className="flex-1"></div>
+                <div className="flex-1">
+                    {scanProgress.running && <p className="text-xs text-blue-300">Analyzing files {scanProgress.completed} / {scanProgress.total}</p>}
+                </div>
                 <div className="flex-1 flex justify-center">
                     <div className="relative flex items-center bg-gray-900 rounded-full p-1 shadow-inner overflow-x-auto">
                         <div ref={mainGliderRef} className={`absolute h-full rounded-full ${activeGameColor.bg} transition-all duration-500 ease-in-out`} />
@@ -977,6 +1098,7 @@ const ClientDashboard = ({ user }) => {
                             <div className="absolute top-full right-0 mt-2 w-64 bg-gray-700 border border-gray-600 rounded-lg shadow-xl z-50">
                                 <ul className="text-sm text-white">
                                     <li onClick={handleSelectFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-t-lg">Change Game Files Path</li>
+                                    <li onClick={handleRefreshAllStats} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Refresh all stats</li>
                                     <li onClick={handleLoadExternalBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Backup</li>
                                     <li onClick={handleImportMediaBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Media Backup</li>
                                     <li onClick={handleOpenBackupFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-b-lg">Open Backup Folder</li>

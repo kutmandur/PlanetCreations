@@ -128,6 +128,12 @@ async function seedCollaboration() {
         `creation-backups/${OWNER_ID}/${PUBLISHED_CREATION_ID}/version-1.PlanetCreations`,
       backupStorageProvider: "cloudflare-r2",
       backupIsSigned: true,
+      verifiedGameMetadata: {
+        schemaVersion: 1,
+        source: "server-verified-backup",
+        payloadSha256: "a".repeat(64),
+        metadata: {kind: "park", name: "Verified Park"},
+      },
       createdAt: 1,
       updatedAt: 1,
       likes: 0,
@@ -448,6 +454,76 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
     }));
     await assertFails(updateDoc(creationRef, {
       sourceCollaborationId: null,
+    }));
+  });
+
+  test("verified game metadata can only be written by server code", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const moderatorDb = authenticatedFirestore(MODERATOR_ID, {
+      role: "moderator",
+    });
+    const verifiedGameMetadata = {
+      schemaVersion: 1,
+      source: "server-verified-backup",
+      payloadSha256: "b".repeat(64),
+      metadata: {kind: "blueprint", name: "Forged Blueprint"},
+    };
+
+    await assertFails(setDoc(doc(ownerDb, "creations/forged-metadata"), {
+      title: "Forged metadata",
+      game: "planet-coaster-2",
+      category: "Blueprints",
+      userId: OWNER_ID,
+      tags: ["blueprint"],
+      verifiedGameMetadata,
+    }));
+    await assertFails(updateDoc(
+      doc(ownerDb, `creations/${PUBLISHED_CREATION_ID}`),
+      {verifiedGameMetadata},
+    ));
+    await assertFails(updateDoc(
+      doc(moderatorDb, `creations/${PUBLISHED_CREATION_ID}`),
+      {verifiedGameMetadata},
+    ));
+  });
+
+  test("owners can edit bounded park ride presentation settings", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    const creationRef = doc(ownerDb, `creations/${PUBLISHED_CREATION_ID}`);
+    await assertSucceeds(updateDoc(creationRef, {
+      parkRidePresentation: {
+        version: 1,
+        areas: [{id: "area-harbor", name: "Harbor", color: "#2563EB"}],
+        customRides: [{id: "custom-laser", name: "Laser Show", rideCategoryKey: "dark-ride"}],
+        hiddenRideKeys: ["save-hidden-0"],
+        rideAreaAssignments: {"custom-laser": "area-harbor"},
+        rideEfnOverrides: {
+          "custom-laser": {excitement: 5.5, fear: 2.1, nausea: 0.4},
+        },
+        rideDisplayNames: {"custom-laser": "Harbor Laser Show"},
+      },
+    }));
+    await assertFails(updateDoc(creationRef, {
+      parkRidePresentation: {
+        version: 1,
+        areas: [],
+        customRides: [],
+        hiddenRideKeys: Array.from({length: 501}, (_, index) => `ride-${index}`),
+        rideAreaAssignments: {},
+        rideEfnOverrides: {},
+        rideDisplayNames: {},
+      },
+    }));
+    await assertFails(updateDoc(creationRef, {
+      parkRidePresentation: {
+        version: 1,
+        areas: [],
+        customRides: [],
+        hiddenRideKeys: [],
+        rideAreaAssignments: {},
+        rideEfnOverrides: "not-a-map",
+        rideDisplayNames: {},
+      },
     }));
   });
 
