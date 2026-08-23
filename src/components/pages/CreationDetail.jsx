@@ -17,6 +17,7 @@ import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl 
 import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { getVerifiedGameTags } from '../../utils/creationSavePrefill';
 import VerifiedParkStats from '../ui/VerifiedParkStats';
+import { buildCreationEditNavigationState } from '../../utils/creationNavigation';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -630,7 +631,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     <button onClick={handleShare} title="Share Creation" className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"><Icon path={ICONS.share} className="w-6 h-6" /></button>
                     {user && (<button onClick={handleFollowCreation} disabled={isTogglingCreationFollow} title={isFollowingCreation ? "Following this creation — you'll be notified of updates" : "Follow this creation to get notified of updates"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:opacity-50 ${isFollowingCreation ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.bell} className="w-6 h-6" solid={isFollowingCreation} /></button>)}
                     {user && user.uid !== creation.userId && (<button onClick={handleFollow} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.userAdd} className="w-6 h-6" solid={isFollowing} /></button>)}
-                    {canEdit && (<Link to={`/creation/${id}/edit`} className="flex items-center justify-center w-10 h-10 bg-yellow-500 hover:bg-yellow-600 text-white rounded-full transition-colors"><Icon path={ICONS.edit} className="w-5 h-5" solid/></Link>)}
+                    {canEdit && (<Link to={`/creation/${id}/edit`} state={buildCreationEditNavigationState(id)} className="flex items-center justify-center w-10 h-10 bg-yellow-500 hover:bg-yellow-600 text-white rounded-full transition-colors"><Icon path={ICONS.edit} className="w-5 h-5" solid/></Link>)}
                     {canDelete && (<button onClick={handleDelete} className="flex items-center justify-center w-10 h-10 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"><Icon path={ICONS.trash} className="w-5 h-5" solid/></button>)}
                 </div>
             </div>
