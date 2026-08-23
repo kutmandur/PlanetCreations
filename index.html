@@ -7,10 +7,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script type="module" src="/src/earlyBootstrap.js"></script>
     <meta name="theme-color" content="#000000" />
-    <meta
-      name="description"
-      content="A hub for your park- and zoo-builder creations."
-    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="description" content="Share Planet Coaster 2, Planet Coaster and Planet Zoo creations, join community events, and manage saves, previews and backups with PlanetCreations." />
+    <link rel="canonical" href="https://www.planetcreations.net/" />
     <link
       rel="apple-touch-icon"
       href="%BASE_URL%apple-touch-icon-V2?v=3.png"
@@ -18,26 +18,78 @@
     <link rel="manifest" href="%BASE_URL%manifest.json" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="PlanetCreations" />
-    <meta
-      property="og:description"
-      content="A hub for your park- and zoo-builder creations."
-    />
-    <meta property="og:image" content="%BASE_URL%logo.png" />
+    <meta property="og:site_name" content="PlanetCreations" />
+    <meta property="og:url" content="https://www.planetcreations.net/" />
+    <meta property="og:title" content="PlanetCreations – Workshop and save manager" />
+    <meta property="og:description" content="Discover and share Planet Coaster 2, Planet Coaster and Planet Zoo creations, community events and collaborations." />
+    <meta property="og:image" content="https://www.planetcreations.net/logo.png" />
+    <meta property="og:image:alt" content="PlanetCreations logo" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="PlanetCreations" />
-    <meta
-      name="twitter:description"
-      content="A hub for your park- and zoo-builder creations."
-    />
-    <meta name="twitter:image" content="%BASE_URL%logo.png" />
+    <meta name="twitter:title" content="PlanetCreations – Workshop and save manager" />
+    <meta name="twitter:description" content="Discover and share Planet Coaster 2, Planet Coaster and Planet Zoo creations, community events and collaborations." />
+    <meta name="twitter:image" content="https://www.planetcreations.net/logo.png" />
 
-    <title>PlanetCreations</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://www.planetcreations.net/#website",
+            "url": "https://www.planetcreations.net/",
+            "name": "PlanetCreations",
+            "alternateName": ["Planet Creations", "PlanetCreations.net"],
+            "description": "Community workshop and desktop save manager for Planet Coaster, Planet Coaster 2 and Planet Zoo.",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://www.planetcreations.net/#client",
+            "name": "PlanetCreations Client",
+            "url": "https://www.planetcreations.net/",
+            "applicationCategory": "UtilitiesApplication",
+            "operatingSystem": "Windows 10, Windows 11, macOS, Linux",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "EUR"
+            },
+            "description": "A free desktop client for browsing the PlanetCreations workshop and managing local game saves, previews, metadata, backups and Custom Media."
+          }
+        ]
+      }
+    </script>
+
+    <title>PlanetCreations – Planet Coaster 2 &amp; Planet Zoo Workshop</title>
+    <style>
+      #seo-fallback { box-sizing: border-box; min-height: 100vh; padding: 3rem 1.5rem; background: #030712; color: #e5e7eb; font: 16px/1.65 system-ui, sans-serif; }
+      #seo-fallback > div { max-width: 58rem; margin: 0 auto; }
+      #seo-fallback h1 { margin: 0 0 1rem; color: #fff; font-size: clamp(2.25rem, 7vw, 4.5rem); line-height: 1; }
+      #seo-fallback h2 { margin-top: 2rem; color: #fff; }
+      #seo-fallback a { color: #93c5fd; }
+      #seo-fallback nav { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 2rem; }
+    </style>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
+    <noscript>PlanetCreations requires JavaScript for its interactive workshop. The site is a free community and desktop save manager for Planet Coaster, Planet Coaster 2 and Planet Zoo.</noscript>
+    <div id="root">
+      <main id="seo-fallback">
+        <div>
+          <h1>PlanetCreations</h1>
+          <p>PlanetCreations is an independent community workshop for Planet Coaster, Planet Coaster 2 and Planet Zoo. Discover and share parks, blueprints and other creations, join community events, and collaborate with other builders.</p>
+          <h2>Workshop and desktop save manager</h2>
+          <p>The free PlanetCreations Client combines the online workshop with local save management. Browse community creations, scan supported game files, view embedded previews and available metadata, create or restore backups, and manage matching Custom Media.</p>
+          <p>PlanetCreations is an independent fan project and is not affiliated with or endorsed by Frontier Developments. The supported games and any required DLC must be purchased separately.</p>
+          <nav aria-label="PlanetCreations links">
+            <a href="https://www.planetcreations.net/">Open PlanetCreations</a>
+            <a href="/privacy.html">Privacy Policy</a>
+            <a href="/community-guidelines.html">Community Guidelines</a>
+          </nav>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/index.jsx"></script>
   </body>
 </html>
