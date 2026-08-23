@@ -7,9 +7,11 @@ import {
     groupPresentedParkRidesByArea,
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
+import CreationMetadataPanel from './CreationMetadataPanel';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const decimalFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const moneyFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const CATEGORY_STYLES = {
     coaster: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200',
@@ -56,10 +58,10 @@ function formatNumber(value, digits = 0) {
     return digits === 0 ? numberFormatter.format(value) : decimalFormatter.format(value);
 }
 
-const AutoFitStatNumber = ({ value, testId, className = '' }) => {
+const AutoFitStatNumber = ({ value, testId, className = '', formatter = numberFormatter }) => {
     const wrapperRef = useRef(null);
     const textRef = useRef(null);
-    const formattedValue = formatNumber(value);
+    const formattedValue = Number.isFinite(value) ? formatter.format(value) : 'N/A';
 
     useLayoutEffect(() => {
         const wrapper = wrapperRef.current;
@@ -97,6 +99,55 @@ const AutoFitStatNumber = ({ value, testId, className = '' }) => {
             >
                 {formattedValue}
             </span>
+        </div>
+    );
+};
+
+const BlueprintStatCard = ({ label, value, formatter = decimalFormatter, metric, neutral = false }) => {
+    const tone = metric ? getPlanetCoaster2ScoreTone(metric, value) : null;
+    const toneClasses = neutral ?
+        'border border-gray-200 bg-white text-gray-950 dark:border-gray-700 dark:bg-gray-900 dark:text-white' :
+        (SCORE_TONE_STYLES[tone] || 'border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100');
+    return (
+        <article
+            data-testid={metric ? `blueprint-score-${metric}` : undefined}
+            data-tone={tone || undefined}
+            className={`flex min-h-14 items-center justify-between gap-3 rounded-xl px-3 py-2 shadow-sm ${toneClasses}`}
+        >
+            <p className={`min-w-0 flex-1 text-[10px] font-bold uppercase leading-tight tracking-wide ${neutral ? 'text-gray-500' : ''}`}>{label}</p>
+            <AutoFitStatNumber value={value} formatter={formatter} />
+        </article>
+    );
+};
+
+const VerifiedBlueprintStats = ({ metadata }) => {
+    const blueprint = metadata?.blueprint;
+    const ratings = blueprint?.ratings;
+    const hasPlacementCost = Number.isFinite(blueprint?.placementCost);
+    const hasRunningCost = Number.isFinite(blueprint?.runningCost);
+    const ratingEntries = [
+        { metric: 'excitement', label: 'Excitement', value: ratings?.excitement },
+        { metric: 'fear', label: 'Fear', value: ratings?.fear },
+        { metric: 'nausea', label: 'Nausea', value: ratings?.nausea },
+    ].filter(entry => Number.isFinite(entry.value));
+    if (!blueprint) return null;
+
+    return (
+        <div
+            className="mt-3 grid gap-2 text-left"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(7.5rem, 1fr))' }}
+            data-testid="verified-blueprint-stats"
+        >
+            {hasPlacementCost && <BlueprintStatCard label="Build cost" value={blueprint.placementCost} formatter={moneyFormatter} neutral />}
+            {hasRunningCost && <BlueprintStatCard label="Running cost" value={blueprint.runningCost} formatter={moneyFormatter} neutral />}
+            {ratingEntries.map(entry => (
+                <BlueprintStatCard key={entry.metric} {...entry} />
+            ))}
+            <CreationMetadataPanel
+                metadata={metadata}
+                triggerLabel="More stats"
+                triggerClassName="flex min-h-14 items-center justify-center rounded-xl bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+            />
         </div>
     );
 };
@@ -325,7 +376,7 @@ const VerifiedParkStats = ({ metadata, presentation }) => {
     const park = metadata?.park || (normalizedPresentation.customRides.length > 0 ? { rides: [] } : null);
     const groups = useMemo(() => groupPresentedParkRides(park, normalizedPresentation), [park, normalizedPresentation]);
     const areaGroups = useMemo(() => groupPresentedParkRidesByArea(park, normalizedPresentation), [park, normalizedPresentation]);
-    if (!park) return null;
+    if (!park) return <VerifiedBlueprintStats metadata={metadata} />;
 
     const pieceCount = getCombinedParkPieceCount(park);
     return <>

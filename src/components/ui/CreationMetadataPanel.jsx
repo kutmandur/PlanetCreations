@@ -239,6 +239,7 @@ const ZooOverview = ({ park, blueprint }) => {
             {Number.isFinite(park?.scenarioStarsTotal) && <Metric label="Scenario stars" value={`${formatNumber(park.scenarioStarsEarned)} / ${formatNumber(park.scenarioStarsTotal)}`} />}
             {park?.isDiorama === true && <Metric label="Park type" value="Diorama" />}
             {blueprint && Number.isFinite(blueprint.placementCost) && <Metric label="Build cost" value={formatGameMoney(blueprint.placementCost)} />}
+            {blueprint && Number.isFinite(blueprint.runningCost) && <Metric label="Running cost" value={formatGameMoney(blueprint.runningCost)} />}
         </ZooMetricSection>
 
         <ZooMetricSection eyebrow="Animals & habitats" title="Living collection">
@@ -268,7 +269,15 @@ const ZooOverview = ({ park, blueprint }) => {
     </div>;
 };
 
-const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', metadataError, customMediaReferences = [] }) => {
+const CreationMetadataPanel = ({
+    metadata,
+    filePath,
+    metadataStatus = 'ready',
+    metadataError,
+    customMediaReferences = [],
+    triggerLabel,
+    triggerClassName,
+}) => {
     const [isOpen, setIsOpen] = useState(false);
     const [preview, setPreview] = useState(null);
     const [previewLoading, setPreviewLoading] = useState(false);
@@ -357,22 +366,40 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
                                     {Number.isFinite(park.binCount) && <Metric label="Bins" value={formatNumber(park.binCount)} />}
                                 </>}
                                 {blueprint && <>
-                                    <Metric label="Build cost" value={formatGameMoney(blueprint.placementCost)} />
-                                    <Metric label="Running cost" value={formatGameMoney(blueprint.runningCost)} />
-                                    <Metric label="Loose scenery" value={formatNumber(blueprint.sceneryCount)} title="Count from the outer blueprint metadata; grouped building parts are represented separately." />
-                                    <Metric label="Buildings" value={formatNumber(blueprint.buildingCount)} />
-                                    <Metric label="Tracked rides" value={formatNumber(blueprint.trackedRideCount)} />
+                                    {Number.isFinite(blueprint.placementCost) && <Metric label="Build cost" value={formatGameMoney(blueprint.placementCost)} />}
+                                    {Number.isFinite(blueprint.runningCost) && <Metric label="Running cost" value={formatGameMoney(blueprint.runningCost)} />}
+                                    {Number.isFinite(blueprint.sceneryCount) && <Metric label="Loose scenery" value={formatNumber(blueprint.sceneryCount)} title="Count from the outer blueprint metadata; grouped building parts are represented separately." />}
+                                    {Number.isFinite(blueprint.buildingCount) && <Metric label="Buildings" value={formatNumber(blueprint.buildingCount)} />}
+                                    {Number.isFinite(blueprint.rideCount) && <Metric label="Rides" value={formatNumber(blueprint.rideCount)} />}
+                                    {Number.isFinite(blueprint.trackedRideCount) && <Metric label="Tracked rides" value={formatNumber(blueprint.trackedRideCount)} />}
                                     {trackedRideMetrics.map(category => <Metric key={category.key} label={category.label} value={formatNumber(category.count)} />)}
-                                    <Metric label="Flat rides" value={formatNumber(blueprint.flatRideCount)} />
+                                    {Number.isFinite(blueprint.flatRideCount) && <Metric label="Flat rides" value={formatNumber(blueprint.flatRideCount)} />}
                                     {Number.isFinite(blueprint.placedPartCount) && <Metric label="Construction parts" value={formatNumber(blueprint.placedPartCount)} />}
                                     {Number.isFinite(blueprint.sceneryPieceCount) && <Metric label="Piece entities" value={formatNumber(blueprint.sceneryPieceCount)} />}
+                                    {Number.isFinite(blueprint.serializedGroupCount) && <Metric label="Serialized groups" value={formatNumber(blueprint.serializedGroupCount)} />}
                                     {Number.isFinite(blueprint.railElementCount) && <Metric label="Rail elements" value={formatNumber(blueprint.railElementCount)} />}
+                                    {Number.isFinite(blueprint.trackedRideElementCount) && <Metric label="Tracked-ride elements" value={formatNumber(blueprint.trackedRideElementCount)} />}
+                                    {Number.isFinite(blueprint.binCount) && <Metric label="Bins" value={formatNumber(blueprint.binCount)} />}
+                                    {Number.isFinite(blueprint.poolCount) && <Metric label="Pools" value={formatNumber(blueprint.poolCount)} />}
                                 </>}
                             </div>
                             {park && Number.isFinite(park.placedPartCount) && <p className="mt-3 text-xs leading-relaxed text-gray-500">Construction parts already include grouped scenery, props and most effect objects. Rails, tracked-ride elements and some simulation objects are stored in separate managers, so they are shown separately instead of being combined into an unverified in-game selection total.</p>}
                         </section>}
 
                         {!isPlanetZoo && blueprint?.ratings && <section><p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-300">Stored blueprint rating</p><RatingMetrics ratings={blueprint.ratings} /></section>}
+                        {blueprint?.utilities && <section>
+                            <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-300">Utilities</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {Number.isFinite(blueprint.utilities.generatedPower) && <Metric label="Generated power" value={formatNumber(blueprint.utilities.generatedPower, 2)} />}
+                                {Number.isFinite(blueprint.utilities.requiredPower) && <Metric label="Required power" value={formatNumber(blueprint.utilities.requiredPower, 2)} />}
+                                {Number.isFinite(blueprint.utilities.generatedWater) && <Metric label="Generated water" value={formatNumber(blueprint.utilities.generatedWater, 2)} />}
+                                {Number.isFinite(blueprint.utilities.requiredWater) && <Metric label="Required water" value={formatNumber(blueprint.utilities.requiredWater, 2)} />}
+                            </div>
+                        </section>}
+                        {blueprint?.researchPacks?.length > 0 && <section className="rounded-2xl bg-gray-900/60 p-4">
+                            <h3 className="font-semibold text-white">Research packs</h3>
+                            <p className="mt-2 text-sm text-gray-300">{blueprint.researchPacks.join(', ')}</p>
+                        </section>}
                         <RideOverview
                             rides={rides}
                             showTraceNote={!isPlanetZoo}
@@ -412,9 +439,9 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
     );
 
     return <>
-        <button type="button" onClick={() => setIsOpen(true)} className="mt-3 inline-flex items-center gap-2 rounded-full border border-blue-500/50 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/20">
+        <button type="button" onClick={() => setIsOpen(true)} className={triggerClassName || 'mt-3 inline-flex items-center gap-2 rounded-full border border-blue-500/50 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/20'}>
             {metadataStatus === 'pending' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600 dark:bg-blue-300" />}
-            {metadataStatus === 'pending' ? 'Stats queued' : 'View stats'}
+            {triggerLabel || (metadataStatus === 'pending' ? 'Stats queued' : 'View stats')}
         </button>
         {modal}
     </>;
