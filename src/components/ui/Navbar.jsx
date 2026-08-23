@@ -56,6 +56,15 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
     const isAdmin = userProfile && userProfile.role === 'admin';
     const isModerator = userProfile && (userProfile.role === 'moderator' || userProfile.role === 'admin');
 
+    const handleDesktopModeSwitch = () => {
+        if (window.electronAPI?.switchDesktopMode) {
+            window.electronAPI.switchDesktopMode(isOfflineMode ? 'online' : 'offline')
+                .catch((error) => console.error('Could not switch desktop mode:', error));
+            return;
+        }
+        navigate(switchModePath);
+    };
+
     return (
         <header className={`bg-gray-800 shadow-md sticky top-0 z-40 ${className}`}>
             <div className="container mx-auto px-4 py-3 flex justify-between items-center">
@@ -66,12 +75,14 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
 
                 <nav className="flex items-center space-x-4">
                     {isElectron && (
-                        <PreloadLink to={switchModePath}>
-                            <button className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors">
-                                <Icon path={switchModeIcon} className="w-5 h-5" solid />
-                                <span>{switchModeText}</span>
-                            </button>
-                        </PreloadLink>
+                        <button
+                            type="button"
+                            onClick={handleDesktopModeSwitch}
+                            className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                        >
+                            <Icon path={switchModeIcon} className="w-5 h-5" solid />
+                            <span>{switchModeText}</span>
+                        </button>
                     )}
 
                     <span data-wizard-allow className="flex items-center">

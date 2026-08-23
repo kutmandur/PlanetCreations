@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { auth, db, isConfigured } from './firebase/config';
@@ -14,6 +14,7 @@ import { preloadCriticalComponents } from './utils/preload';
 import lazyWithReload from './utils/lazyWithReload';
 import { isSafeHttpUrl } from './utils/helpers';
 import { watchSystemTheme } from './utils/theme';
+import { getReportableContent } from './utils/contentReporting';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -60,6 +61,12 @@ import useInterestSync from './hooks/useInterestSync';
 import useMicroInteractionFeedback from './hooks/useMicroInteractionFeedback';
 import { loadGamesRegistry, getDefaultGameId, getGame } from './utils/gamesRegistry';
 import ClientDashboard from './components/pages/ClientDashboard';
+import {
+    COMMUNITY_GUIDELINES,
+    MINIMUM_AGE_NOTICE,
+    PRIVACY_POLICY,
+    TERMS_OF_SERVICE_FALLBACK,
+} from './content/legalContent';
 
 const HomePage = lazyWithReload(() => import('./components/pages/HomePage'));
 const AuthPage = lazyWithReload(() => import('./components/pages/AuthPage'));
@@ -107,6 +114,7 @@ registerQueryClient(queryClient);
 const AppContent = () => {
     const location = useLocation();
     const navigate = useNavigate();
+    const isStoreBuild = window.electronAPI?.isStoreBuild === true;
     const isGameOverlay = Boolean(window.electronAPI?.isGameOverlay);
     const isStreamManagement = Boolean(window.electronAPI?.isStreamManagement);
     const isAuxiliaryWindow = isGameOverlay || isStreamManagement;
@@ -326,8 +334,28 @@ const AppContent = () => {
 
     useEffect(() => {
         if (!window.electronAPI?.isHostedWebView) return;
-        window.electronAPI.reportHostedUiReady?.({ bridgeVersion: 1, gameOverlay: true }).catch(() => {});
+        const minimumBridgeVersion = 2;
+        window.electronAPI.reportHostedUiReady?.({
+            uiVersion: 2,
+            minimumBridgeVersion,
+            gameOverlay: true,
+            offlineManagerVersion: 1,
+            minimumOfflineManagerBridgeVersion: 3,
+        }).catch(() => {});
+        if (Number(window.electronAPI.bridgeVersion || 0) < minimumBridgeVersion) {
+            window.electronAPI.switchDesktopMode?.('bundled-online').catch(() => {
+                setModalMessage('This desktop client is too old for the current online interface. Please install the latest client update.');
+            });
+        }
     }, []);
+
+    useEffect(() => {
+        if (!isOfflineMode || isAuxiliaryWindow || !window.electronAPI?.isHostedWebView) return;
+        if (Number(window.electronAPI.hostedOfflineManagerVersion || 0) >= 1) return;
+        window.electronAPI.switchDesktopMode?.('offline').catch((error) => {
+            console.error('Could not hand off to the bundled Offline Manager:', error);
+        });
+    }, [isAuxiliaryWindow, isOfflineMode]);
 
     useEffect(() => {
         if (isOfflineMode) {
@@ -449,10 +477,10 @@ const AppContent = () => {
         });
 
         if (window.electronAPI) {
-            window.electronAPI.onUpdateInfoAvailable((info) => {
+            window.electronAPI.onUpdateInfoAvailable?.((info) => {
                 setUpdateInfo(info);
             });
-            window.electronAPI.onUpdateDownloaded(() => {
+            window.electronAPI.onUpdateDownloaded?.(() => {
                 setUpdateInfo(null);
                 setUpdateDownloaded(true);
             });
@@ -754,6 +782,7 @@ const AppContent = () => {
     }
 
     const showNewCreationButton = user && location.pathname === '/';
+    const reportableContent = getReportableContent(location.pathname);
     const showProfileWizard = Boolean(
         user && userProfile && !isOfflineMode && !isGameOverlay &&
         userProfile.needsProfileSetup && !profileWizardDismissed
@@ -767,6 +796,42 @@ const AppContent = () => {
         event.preventDefault();
         event.stopPropagation();
         setWizardLeaveSignal((value) => value + 1);
+    };
+
+    const handleReportCurrentContent = async () => {
+        if (!user) {
+            setModalMessage('You must be logged in to report content.');
+            return;
+        }
+        if (!reportableContent) return;
+        const markerRef = doc(db, 'users', user.uid, 'reportedItems', reportableContent.markerId);
+        if ((await getDoc(markerRef)).exists()) {
+            setModalMessage('You have already reported this content.');
+            return;
+        }
+        setReportModal({
+            ...reportableContent,
+            onConfirm: async (reason) => {
+                try {
+                    const batch = writeBatch(db);
+                    batch.set(doc(collection(db, 'reports')), {
+                        ...reportableContent,
+                        reason,
+                        reporterId: user.uid,
+                        timestamp: serverTimestamp(),
+                    });
+                    batch.set(markerRef, {
+                        reportedAt: serverTimestamp(),
+                        targetId: reportableContent.targetId,
+                        targetType: reportableContent.targetType,
+                    });
+                    await batch.commit();
+                    setModalMessage('Content reported successfully. Our moderation team will review it.');
+                } catch (error) {
+                    setModalMessage(`Error submitting report: ${error.message}`);
+                }
+            },
+        });
     };
 
     return (
@@ -809,7 +874,7 @@ const AppContent = () => {
                 />
             )}
             
-            {updateDownloaded ? (
+            {!isStoreBuild && (updateDownloaded ? (
                 <div className="bg-green-500 text-white p-3 text-center flex justify-center items-center flex-shrink-0">
                     <p className="font-semibold">Update downloaded. Restart now to install it.</p>
                     <button onClick={() => window.electronAPI.restartApp()} className="ml-4 bg-white text-green-700 font-bold py-1 px-3 rounded hover:bg-green-100">Restart</button>
@@ -824,7 +889,7 @@ const AppContent = () => {
                         Download now
                     </button>
                 </div>
-            )}
+            ))}
 
             {showProfileWizard ? (
                 <div className="flex-shrink-0" onClickCapture={handleHeaderGuard}>
@@ -868,7 +933,9 @@ const AppContent = () => {
                             <Route path="/communitys" element={<CommunitysPage user={user} userProfile={userProfile} communitysState={communitysState} setCommunitysState={setCommunitysState} setModalMessage={setModalMessage} />} />
                             <Route path="/community/:communityName" element={<CommunityDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
                             <Route path="/showcase/:showcaseId" element={<ShowcasePage />} />
-                            <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" setModalMessage={setModalMessage} />} />
+                            <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" fallbackContent={TERMS_OF_SERVICE_FALLBACK} requiredNotice={MINIMUM_AGE_NOTICE} setModalMessage={setModalMessage} />} />
+                            <Route path="/privacy" element={<LegalPage userProfile={userProfile} docId="privacyPolicy" title="Privacy Policy" fallbackContent={PRIVACY_POLICY} setModalMessage={setModalMessage} />} />
+                            <Route path="/community-guidelines" element={<LegalPage userProfile={userProfile} docId="communityGuidelines" title="Community Content Guidelines" fallbackContent={COMMUNITY_GUIDELINES} setModalMessage={setModalMessage} />} />
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
                             <Route path="/client-info" element={<ClientInfoPage />} />
@@ -914,9 +981,12 @@ const AppContent = () => {
             {!isOfflineMode && !showProfileWizard && (
                 <footer className="text-center px-4 py-3 text-gray-500 flex-shrink-0">
                     <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 text-sm">
-                        <span>&copy; 2025 PlanetCreations.net</span>
+                        <span>&copy; 2026 PlanetCreations.net</span>
                         <PreloadLink to="/terms-of-service" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Terms of Service</PreloadLink>
+                        <PreloadLink to="/privacy" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Privacy Policy</PreloadLink>
+                        <PreloadLink to="/community-guidelines" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Community Guidelines</PreloadLink>
                         <PreloadLink to="/impressum" className="hover:text-gray-800 dark:hover:text-gray-200 hover:underline whitespace-nowrap">Impressum / Legal Notice</PreloadLink>
+                        {reportableContent && <button type="button" onClick={handleReportCurrentContent} className="hover:text-red-600 hover:underline whitespace-nowrap">Report this content</button>}
                     </div>
                     <p className="mt-2 text-xs text-gray-400">We are not affiliated with or endorsed by Frontier Developments.</p>
                 </footer>

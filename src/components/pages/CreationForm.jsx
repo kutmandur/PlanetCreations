@@ -28,6 +28,7 @@ import {
     isParkCreationCategory,
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
+import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 
 const CREATION_FINALIZATION_NOTICE = Object.freeze({
     title: 'Finishing creation',
@@ -259,11 +260,15 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         if (!game) return;
         const fetchGameData = async () => {
             const catRef = doc(db, 'categories', game);
-            const dlcRef = doc(db, 'dlcs', game);
-            const [catSnap, dlcSnap] = await Promise.all([getDoc(catRef), getDoc(dlcRef)]);
+            const cachedCatalog = getCachedFrontierDlcCatalogs()[game];
+            const [catSnap, dlcSnap] = await Promise.all([
+                getDoc(catRef),
+                cachedCatalog ? Promise.resolve(null) : getDoc(doc(db, 'dlcs', game)),
+            ]);
             
             setCATEGORIES(prev => ({ ...prev, [game]: catSnap.exists() ? catSnap.data().names || [] : [] }));
-            setGameDlcs(dlcSnap.exists() ? dlcSnap.data().names || [] : []);
+            setGameDlcs(cachedCatalog?.entries?.map(entry => entry.name) ||
+                (dlcSnap?.exists() ? dlcSnap.data().names || [] : []));
         };
         fetchGameData();
     }, [game]);
@@ -517,6 +522,10 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             setModalMessage("This feature is only available in the desktop client.");
             return false;
         }
+        if (!window.electronAPI.uploadPreparedBackup) {
+            setModalMessage("This desktop client must be updated before it can upload local files.");
+            return false;
+        }
     
         setIsPreparingUpload(true);
     
@@ -542,30 +551,18 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 return false;
             }
     
-            setBackupInfo({ name: result.fileName, path: result.filePath, signed: result.isSigned });
-
-            const functions = getFunctions();
-            const getUploadUrl = httpsCallable(functions, 'getUploadUrl');
-            const { data } = await getUploadUrl({
-                fileName: result.fileName,
-                fileSize: result.fileSize,
-                ownershipConfirmed,
-                hostingAccepted,
-            });
-
-            const { uploadId, uploadUrl, contentType } = data;
+            setBackupInfo({ name: result.fileName, path: null, signed: result.isSigned });
 
             setIsPreparingUpload(false);
             setIsUploading(true);
             setUploadProgress(0);
-            const uploadResult = await window.electronAPI.uploadBackupFile(
-                result.filePath,
-                uploadUrl,
-                contentType,
+            const uploadResult = await window.electronAPI.uploadPreparedBackup(
+                result.uploadHandle,
+                idToken,
+                appCheckToken,
+                { ownershipConfirmed, hostingAccepted },
             );
             if (!uploadResult?.success) {
-                const abortBackupUpload = httpsCallable(functions, 'abortBackupUpload');
-                await abortBackupUpload({ uploadId }).catch(() => null);
                 throw new Error(uploadResult?.message || `File upload failed (${uploadResult?.status || 'network error'}).`);
             }
             // For edits, switch the local read-only preview only after the new
@@ -573,7 +570,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             // by finalizeBackupUpload when the Creation itself is saved.
             setSelectedSourceFile(file);
             setInGameTags(cleanSavegameTags(file.frontierMetadata));
-            setBackupUploadId(uploadId);
+            setBackupUploadId(uploadResult.uploadId);
             setRemoveExistingBackup(false);
             setUploadProgress(100);
             setIsUploading(false);

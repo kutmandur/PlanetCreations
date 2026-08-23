@@ -217,6 +217,17 @@ function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {
         const current = getSnapshot(saveOrBlueprintPath);
         const assets = [];
         const seen = new Set();
+        if (options.preserveExistingAssets) {
+            for (const asset of current?.assets || []) {
+                assets.push({
+                    logicalName: asset.logicalName,
+                    sha256: asset.sha256,
+                    size: asset.size,
+                    target: asset.target,
+                });
+                seen.add(asset.logicalName.toLowerCase());
+            }
+        }
         for (const mediaPath of mediaFilePaths || []) {
             if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
                 throw new Error(`Media file not found: ${path.basename(mediaPath)}`);
@@ -245,7 +256,7 @@ function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {
             format: MEDIA_MANIFEST_FORMAT,
             formatVersion: MEDIA_MANIFEST_VERSION,
             mediaSetId: current?.mediaSetId || crypto.randomUUID(),
-            gameId: getGameIdFromPath(saveOrBlueprintPath),
+            gameId: options.gameId || current?.gameId || getGameIdFromPath(saveOrBlueprintPath),
             localSavePath: saveOrBlueprintPath,
             assets,
             associationMode: options.associationMode || 'manual',
@@ -305,9 +316,11 @@ function getGameMediaPaths(gameName) {
     };
 }
 
-function discoverCreationMedia(saveOrBlueprintPath) {
-    const inspection = inspectFrontierFile(saveOrBlueprintPath, { includeMediaReferences: true });
-    const gameName = getGameName(getGameIdFromPath(saveOrBlueprintPath), saveOrBlueprintPath);
+function discoverCreationMedia(saveOrBlueprintPath, inspectionOverride = null) {
+    const inspection = inspectionOverride ||
+        inspectFrontierFile(saveOrBlueprintPath, { includeMediaReferences: true });
+    const gameId = inspection.metadata?.gameId || getGameIdFromPath(saveOrBlueprintPath);
+    const gameName = getGameName(gameId, saveOrBlueprintPath);
     const mediaPaths = getGameMediaPaths(gameName);
     const filesByName = new Map();
     for (const [target, directory] of Object.entries({ UserMedia: mediaPaths.userMedia, UserAudio: mediaPaths.userAudio })) {
@@ -338,6 +351,7 @@ function discoverCreationMedia(saveOrBlueprintPath) {
         references: inspection.mediaReferences || [],
         found,
         missing,
+        gameId,
         source: inspection.source,
     };
 }
@@ -353,35 +367,78 @@ function automaticSnapshotResult(status, snapshot, discovery = null) {
     };
 }
 
-function syncAutomaticMediaSnapshot(saveOrBlueprintPath) {
+function sameStringList(left = [], right = []) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameMediaAssets(left = [], right = []) {
+    if (left.length !== right.length) return false;
+    const assetKey = asset => `${String(asset.logicalName).toLowerCase()}:${asset.sha256}:${asset.size}`;
+    const leftKeys = left.map(assetKey).sort();
+    const rightKeys = right.map(assetKey).sort();
+    return leftKeys.every((value, index) => value === rightKeys[index]);
+}
+
+function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = null) {
     try {
         const existing = getSnapshot(saveOrBlueprintPath);
-        if (existing && existing.associationMode !== 'automatic') {
-            return automaticSnapshotResult('manual', existing);
-        }
-
         const stats = fs.statSync(saveOrBlueprintPath);
-        if (existing?.associationMode === 'automatic' && existing.discovery?.sourceSize === stats.size &&
-            existing.discovery?.sourceModifiedAtMs === stats.mtimeMs) {
-            return automaticSnapshotResult('unchanged', existing);
+        const saveSourceUnchanged = existing?.discovery?.sourceSize === stats.size &&
+            existing.discovery?.sourceModifiedAtMs === stats.mtimeMs;
+        const reusableInspection = !inspectionOverride && saveSourceUnchanged &&
+            Array.isArray(existing.discovery.references) ? {
+                metadata: { gameId: existing.gameId },
+                mediaReferences: existing.discovery.references,
+                source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+            } : inspectionOverride;
+        const discovery = discoverCreationMedia(saveOrBlueprintPath, reusableInspection);
+        const preserveExistingAssets = existing && existing.associationMode !== 'automatic';
+        const mediaFilePaths = [];
+        const selectedNames = new Set();
+        if (preserveExistingAssets) {
+            for (const asset of existing.assets || []) {
+                selectedNames.add(asset.logicalName.toLowerCase());
+            }
         }
-
-        const discovery = discoverCreationMedia(saveOrBlueprintPath);
+        let supplementedAssetCount = 0;
+        for (const item of discovery.found) {
+            const logicalName = item.logicalName.toLowerCase();
+            if (selectedNames.has(logicalName)) continue;
+            mediaFilePaths.push(item.path);
+            selectedNames.add(logicalName);
+            supplementedAssetCount += 1;
+        }
+        const effectiveDiscovery = {
+            ...discovery,
+            missing: discovery.missing.filter(fileName => !selectedNames.has(fileName.toLowerCase())),
+        };
         const discoveryRecord = {
             sourceSize: discovery.source.size,
             sourceModifiedAtMs: discovery.source.modifiedAtMs,
             references: discovery.references,
-            missing: discovery.missing,
+            missing: effectiveDiscovery.missing,
             detectedAt: new Date().toISOString(),
         };
         if (!createOrUpdateSnapshot(
             saveOrBlueprintPath,
-            discovery.found.map(item => item.path),
-            { associationMode: 'automatic', discovery: discoveryRecord },
+            mediaFilePaths,
+            {
+                associationMode: preserveExistingAssets ? existing.associationMode : 'automatic',
+                discovery: discoveryRecord,
+                gameId: discovery.gameId,
+                preserveExistingAssets,
+            },
         )) {
             return { success: false, status: 'error', message: 'Referenced media failed its integrity checks.' };
         }
-        return automaticSnapshotResult('synchronized', getSnapshot(saveOrBlueprintPath), discovery);
+        const updated = getSnapshot(saveOrBlueprintPath);
+        const unchanged = saveSourceUnchanged && (!preserveExistingAssets || supplementedAssetCount === 0) &&
+            sameMediaAssets(existing?.assets, updated?.assets) &&
+            sameStringList(existing?.discovery?.references, discovery.references) &&
+            sameStringList(existing?.discovery?.missing, effectiveDiscovery.missing);
+        const status = unchanged ? 'unchanged' :
+            (preserveExistingAssets && supplementedAssetCount > 0 ? 'supplemented' : 'synchronized');
+        return automaticSnapshotResult(status, updated, effectiveDiscovery);
     } catch (error) {
         console.error('[MediaManager] Failed to detect referenced media:', error);
         return { success: false, status: 'error', message: error.message, assetCount: 0, referenceCount: null, missing: [] };

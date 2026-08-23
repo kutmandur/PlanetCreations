@@ -236,6 +236,9 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                 setModalMessage('Collaboration updated.');
                 navigate(`/collaboration/${collaborationId}`);
             } else {
+                if (!window.electronAPI?.uploadPreparedBackup) {
+                    throw new Error('This desktop client must be updated before it can upload local files.');
+                }
                 setSubmissionStage('Preparing initial save…');
                 const [idToken, appCheckToken] = await Promise.all([
                     auth.currentUser.getIdToken(true),
@@ -250,22 +253,16 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                     throw new Error(prepared?.message || 'Could not prepare the initial save.');
                 }
                 setSubmissionStage('Uploading initial save…');
-                const getUploadUrl = httpsCallable(getFunctions(), 'getUploadUrl');
-                const { data: upload } = await getUploadUrl({
-                    fileName: prepared.fileName,
-                    fileSize: prepared.fileSize,
-                    ownershipConfirmed: true,
-                    hostingAccepted: true,
-                });
-                initialUploadId = upload.uploadId;
-                const uploadResult = await window.electronAPI.uploadBackupFile(
-                    prepared.filePath,
-                    upload.uploadUrl,
-                    upload.contentType,
+                const uploadResult = await window.electronAPI.uploadPreparedBackup(
+                    prepared.uploadHandle,
+                    idToken,
+                    appCheckToken,
+                    { ownershipConfirmed: true, hostingAccepted: true },
                 );
                 if (!uploadResult?.success) {
                     throw new Error(uploadResult?.message || 'Initial save upload failed.');
                 }
+                initialUploadId = uploadResult.uploadId;
                 setSubmissionStage('Creating collaboration…');
                 creationStarted = true;
                 const created = await createCollaboration(user.uid, {

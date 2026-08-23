@@ -94,3 +94,67 @@ test('automatically discovers referenced media and records missing files', () =>
     assert.equal(snapshot.assets[0].logicalName, 'screen.png');
     assert.equal(MediaManager.syncAutomaticMediaSnapshot(savePath).status, 'unchanged');
 });
+
+test('automatically associates Planet Zoo media from the sequential scan result', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Zoo');
+    const savePath = path.join(gameDirectory, '12345678901234567', 'Saves', 'automatic.zoo');
+    const audioPath = path.join(gameDirectory, 'UserAudio', 'habitat.ogg');
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+    fs.writeFileSync(savePath, 'zoo-save-placeholder');
+    fs.writeFileSync(audioPath, Buffer.concat([Buffer.from('OggS'), Buffer.from('zoo-audio')]));
+    const stats = fs.statSync(savePath);
+
+    const synchronized = MediaManager.syncAutomaticMediaSnapshot(savePath, {
+        metadata: { gameId: 'planet-zoo' },
+        mediaReferences: ['habitat.ogg', 'missing.png'],
+        source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+    });
+
+    assert.equal(synchronized.success, true);
+    assert.equal(synchronized.assetCount, 1);
+    assert.equal(synchronized.referenceCount, 2);
+    assert.deepEqual(synchronized.missing, ['missing.png']);
+    const snapshot = MediaManager.getSnapshot(savePath);
+    assert.equal(snapshot.gameId, 'planet-zoo');
+    assert.equal(snapshot.associationMode, 'automatic');
+    assert.deepEqual(snapshot.files, ['habitat.ogg']);
+
+    const missingPath = path.join(gameDirectory, 'UserMedia', 'missing.png');
+    fs.mkdirSync(path.dirname(missingPath), { recursive: true });
+    fs.writeFileSync(missingPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const completed = MediaManager.syncAutomaticMediaSnapshot(savePath);
+    assert.equal(completed.status, 'synchronized');
+    assert.equal(completed.assetCount, 2);
+    assert.deepEqual(completed.missing, []);
+});
+
+test('supplements a manual media package without replacing manual same-name assets', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Zoo');
+    const savePath = path.join(gameDirectory, '12345678901234567', 'Saves', 'manual.zoo');
+    const manualPath = path.join(testRoot, 'manual', 'habitat.ogg');
+    const liveImagePath = path.join(gameDirectory, 'UserMedia', 'education.png');
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(manualPath), { recursive: true });
+    fs.mkdirSync(path.dirname(liveImagePath), { recursive: true });
+    fs.writeFileSync(savePath, 'manual-zoo-save');
+    fs.writeFileSync(manualPath, Buffer.concat([Buffer.from('OggS'), Buffer.from('manual-version')]));
+    fs.writeFileSync(liveImagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    assert.equal(MediaManager.createOrUpdateSnapshot(savePath, [manualPath]), true);
+    const manualHash = MediaManager.getSnapshot(savePath).assets[0].sha256;
+    const stats = fs.statSync(savePath);
+
+    const synchronized = MediaManager.syncAutomaticMediaSnapshot(savePath, {
+        metadata: { gameId: 'planet-zoo' },
+        mediaReferences: ['habitat.ogg', 'education.png'],
+        source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+    });
+
+    assert.equal(synchronized.status, 'supplemented');
+    const snapshot = MediaManager.getSnapshot(savePath);
+    assert.equal(snapshot.associationMode, 'manual');
+    assert.deepEqual(snapshot.files.sort(), ['education.png', 'habitat.ogg']);
+    assert.equal(snapshot.assets.find(asset => asset.logicalName === 'habitat.ogg').sha256, manualHash);
+    assert.deepEqual(snapshot.discovery.references, ['habitat.ogg', 'education.png']);
+    assert.deepEqual(snapshot.discovery.missing, []);
+});

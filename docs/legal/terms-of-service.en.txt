@@ -10,9 +10,13 @@ PlanetCreations is not affiliated with, sponsored by, or endorsed by Frontier De
 
 These Terms govern the hosted website, community features and PlanetCreations desktop client. Any licence published with the source code applies only to the material covered by that licence. It does not automatically apply to the hosted Service, PlanetCreations names or logos, third-party material, or content submitted by users.
 
-By creating an account or using an account-based feature, you agree to these Terms. If you are not legally able to agree to them yourself, you may use the Service only with permission from your parent or legal guardian.
+By creating an account or using an account-based feature, you agree to these Terms.
+
+You must be at least 16 years old to create a PlanetCreations account, submit User Content or use any account-based feature. If the law that applies to you requires a higher minimum age for you to consent to data processing or enter into these Terms, that higher age applies. PlanetCreations does not permit account registration by anyone under 16, including with parental or guardian permission. Public pages that do not require an account may still be viewed where permitted by law.
 
 2. Accounts
+
+By registering, you confirm that you meet the minimum-age requirement in section 1.
 
 You must provide accurate account information, keep your login credentials secure and notify the Operator if you believe your account has been compromised. You are responsible for activity performed through your account unless it resulted from circumstances outside your reasonable control.
 

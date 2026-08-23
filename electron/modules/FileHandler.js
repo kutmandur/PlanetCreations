@@ -3,8 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
 const { inspectFrontierFile } = require('./FrontierSaveParser');
+const { resolveFrontierDlcRequirements } = require('./FrontierDlcResolver');
 
-const METADATA_CACHE_VERSION = 4;
+// Bump whenever normalized metadata changes so unchanged saves are reparsed
+// once after an update instead of keeping an older interpretation forever.
+const METADATA_CACHE_VERSION = 6;
+let latestDlcCatalogs = {};
 
 const GAME_CONFIG = {
     'Planet Coaster 2': {
@@ -137,6 +141,9 @@ function writeMetadataCache(cache) {
 }
 
 function indexGamesFromPath(basePath, options = {}) {
+    if (options.dlcCatalogs && typeof options.dlcCatalogs === 'object') {
+        latestDlcCatalogs = options.dlcCatalogs;
+    }
     const results = enumerateGamesFromPath(basePath);
     const cache = readMetadataCache();
     const pending = [];
@@ -144,7 +151,22 @@ function indexGamesFromPath(basePath, options = {}) {
         const cacheKey = path.resolve(fileRecord.path);
         const cached = cache.files[cacheKey];
         const isFresh = !options.forceMetadataRefresh && cached?.modifiedAtMs === fileRecord.modifiedAtMs;
-        if (cached?.metadata) fileRecord.frontierMetadata = cached.metadata;
+        if (cached?.metadata) {
+            const requirements = resolveFrontierDlcRequirements(
+                cached.metadata.gameId,
+                cached.metadata.requiredDlc,
+                cached.metadata.requiredDlcIdentifiers,
+                latestDlcCatalogs[cached.metadata.gameId],
+            );
+            fileRecord.frontierMetadata = {
+                ...cached.metadata,
+                requiredDlcs: requirements.requiredDlcs,
+                requiredDlcBits: requirements.requiredDlcBits,
+                unknownDlcBits: requirements.unknownDlcBits,
+                unknownDlcIdentifiers: requirements.unknownDlcIdentifiers,
+                dlcMappingVersion: requirements.mappingVersion,
+            };
+        }
         if (Array.isArray(cached?.mediaReferences)) fileRecord.customMediaReferences = cached.mediaReferences;
         if (isFresh) {
             fileRecord.frontierMetadataError = cached.error || undefined;
@@ -176,10 +198,10 @@ function saveMetadataInspection(cache, pendingFile, inspection, error = null) {
     return cache.files[pendingFile.cacheKey];
 }
 
-function inspectFrontierFileInWorker(filePath) {
+function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs) {
     return new Promise((resolve, reject) => {
         const worker = new Worker(path.join(__dirname, 'FrontierMetadataWorker.js'), {
-            workerData: { filePath },
+            workerData: { filePath, dlcCatalogs },
         });
         let settled = false;
         worker.once('message', message => {

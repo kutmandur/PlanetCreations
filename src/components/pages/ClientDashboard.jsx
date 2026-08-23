@@ -4,6 +4,7 @@ import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import useGames from '../../hooks/useGames';
 import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
+import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 
 // Import der ausgelagerten Komponenten
 import GlobalLoader from '../ui/GlobalLoader';
@@ -678,7 +679,36 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         });
     }, [scanResults, activeGame, activeTab, searchTerm, sortOption, snapshotStatus, mediaStatus]);
 
-    const checkStatuses = useCallback(async (files) => { if (!files || !window.electronAPI) return; setStatusLoading(true); const mediaStatusMap = {}, snapshotStatusMap = {}; for (const file of files) { const [media, snapshot] = await Promise.all([ window.electronAPI.getMediaStatus(file.path), window.electronAPI.hasMediaSnapshot(file.path) ]); mediaStatusMap[file.path] = media; snapshotStatusMap[file.path] = snapshot; } setMediaStatus(mediaStatusMap); setSnapshotStatus(snapshotStatusMap); setStatusLoading(false); }, []);
+    const checkStatuses = useCallback(async (files) => {
+        if (!files || !window.electronAPI) return;
+        setStatusLoading(true);
+        const mediaStatusMap = {};
+        const snapshotStatusMap = {};
+        const discoveryStatusMap = {};
+        for (const file of files) {
+            const [media, hasSnapshot, snapshot] = await Promise.all([
+                window.electronAPI.getMediaStatus(file.path),
+                window.electronAPI.hasMediaSnapshot(file.path),
+                window.electronAPI.getMediaSnapshot(file.path),
+            ]);
+            mediaStatusMap[file.path] = media;
+            snapshotStatusMap[file.path] = hasSnapshot;
+            if (snapshot?.discovery) {
+                discoveryStatusMap[file.path] = {
+                    success: true,
+                    status: 'synchronized',
+                    associationMode: snapshot.associationMode,
+                    assetCount: snapshot.assets?.length || 0,
+                    referenceCount: snapshot.discovery?.references?.length || 0,
+                    missing: snapshot.discovery?.missing || [],
+                };
+            }
+        }
+        setMediaStatus(mediaStatusMap);
+        setSnapshotStatus(snapshotStatusMap);
+        setMediaDiscoveryStatus(discoveryStatusMap);
+        setStatusLoading(false);
+    }, []);
     useEffect(() => { const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) { checkStatuses(currentFiles); } }, [scanResults, activeGame, activeTab, checkStatuses]);
     const synchronizeMedia = useCallback(async (file) => {
         const result = await window.electronAPI.syncAutomaticMediaSnapshot(file.path);
@@ -821,6 +851,8 @@ const ClientDashboard = ({ user }) => {
     const [loading, setLoading] = useState(true);
     const [scanProgress, setScanProgress] = useState({ completed: 0, total: 0, running: false });
     const [selectedPath, setSelectedPath] = useState(null);
+    const [selectingPath, setSelectingPath] = useState(false);
+    const [pathSelectionError, setPathSelectionError] = useState(null);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [globalLoader, setGlobalLoader] = useState({ isLoading: false, message: '' });
     const settingsRef = useRef(null);
@@ -871,6 +903,7 @@ const ClientDashboard = ({ user }) => {
             try {
                 const indexed = await window.electronAPI.scanGames(basePath, {
                     forceMetadataRefresh: options.forceMetadataRefresh === true,
+                    dlcCatalogs: getCachedFrontierDlcCatalogs(),
                 });
                 const { __metadataProgress: progress, ...filesByGame } = indexed || {};
                 let merged = filesByGame;
@@ -900,17 +933,23 @@ const ClientDashboard = ({ user }) => {
 
     useEffect(() => {
         const loadStoredPath = async () => {
-            if (window.electronAPI) {
+            try {
+                if (!window.electronAPI?.getStoredPath) {
+                    throw new Error('The local file bridge is unavailable. Please restart the desktop client.');
+                }
                 const path = await window.electronAPI.getStoredPath();
                 if (path) {
                     setSelectedPath(path);
-                    handleScan(path);
-                } else {
-                    setLoading(false);
+                    await handleScan(path);
                 }
+            } catch (error) {
+                console.error('Could not load the configured game folder:', error);
+                setPathSelectionError(error.message || 'The configured game folder could not be loaded.');
+            } finally {
+                setLoading(false);
             }
         };
-        loadStoredPath();
+        void loadStoredPath();
     }, [handleScan]);
 
     const handleBackupCreated = () => {
@@ -967,6 +1006,7 @@ const ClientDashboard = ({ user }) => {
     useEffect(() => {
         if (window.electronAPI?.onFileImportTriggered) {
             const unsubscribe = window.electronAPI.onFileImportTriggered(handleAutoImport);
+            window.electronAPI.reportClientDashboardReady?.().catch(() => {});
             return () => {
                 if (typeof unsubscribe === 'function') {
                     unsubscribe();
@@ -976,14 +1016,25 @@ const ClientDashboard = ({ user }) => {
     }, [handleAutoImport]);
     
     const handleSelectFolder = async () => {
-        if (window.electronAPI) {
-            const path = await window.electronAPI.selectFolder();
+        setIsSettingsOpen(false);
+        setPathSelectionError(null);
+        setSelectingPath(true);
+        try {
+            const selectFolder = window.electronAPI?.selectFrontierFolder || window.electronAPI?.selectFolder;
+            if (!selectFolder) {
+                throw new Error('The game-folder picker is unavailable. Please restart or update the desktop client.');
+            }
+            const path = await selectFolder();
             if (path) {
                 setSelectedPath(path);
-                handleScan(path);
+                await handleScan(path);
             }
+        } catch (error) {
+            console.error('Could not select the game folder:', error);
+            setPathSelectionError(error.message || 'The game folder could not be selected.');
+        } finally {
+            setSelectingPath(false);
         }
-        setIsSettingsOpen(false);
     };
     
     const handleOpenBackupFolder = () => {
@@ -1110,7 +1161,24 @@ const ClientDashboard = ({ user }) => {
             </div>
 
             <div className="flex-1 min-h-0 flex flex-col">
-                {renderActiveView()}
+                {loading ? (
+                    <div className="flex h-full items-center justify-center"><Spinner /></div>
+                ) : !selectedPath ? (
+                    <div className="flex h-full items-center justify-center p-6">
+                        <div className="max-w-xl rounded-2xl border border-gray-600 bg-gray-900 p-8 text-center shadow-xl">
+                            <Icon path={ICONS.database} className="mx-auto h-12 w-12 text-blue-300" />
+                            <h2 className="mt-4 text-xl font-bold">Choose your Frontier game folder</h2>
+                            <p className="mt-3 text-sm leading-6 text-gray-300">
+                                Select the <strong>Frontier Developments</strong> folder that contains your Planet Coaster 2 or Planet Zoo saves. It is normally located under <strong>Saved Games</strong>. The client only scans supported game and backup files inside this folder.
+                            </p>
+                            {pathSelectionError && <p role="alert" className="mt-4 rounded-lg bg-red-950/70 p-3 text-sm text-red-200">{pathSelectionError}</p>}
+                            <button type="button" onClick={handleSelectFolder} disabled={selectingPath} className={`mt-6 rounded-lg px-5 py-3 font-semibold text-white ${activeGameColor.bg} disabled:cursor-wait disabled:opacity-60`}>
+                                {selectingPath ? 'Opening folder picker…' : 'Select Game Files Path'}
+                            </button>
+                            <p className="mt-3 text-xs text-gray-400">Recommended: Saved Games\\Frontier Developments</p>
+                        </div>
+                    </div>
+                ) : renderActiveView()}
             </div>
         </div>
     );

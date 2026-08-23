@@ -35,6 +35,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [launchAtLogin, setLaunchAtLoginState] = useState(false);
     const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
+    const [launchAtLoginManagedBySystem, setLaunchAtLoginManagedBySystem] = useState(false);
     const [isUpdatingLaunchAtLogin, setIsUpdatingLaunchAtLogin] = useState(false);
     const [activeSettingsId, setActiveSettingsId] = useState('account');
     const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
@@ -70,7 +71,8 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 const result = await window.electronAPI.getLaunchAtLogin();
                 if (!cancelled) {
                     setLaunchAtLoginSupported(Boolean(result?.supported));
-                    setLaunchAtLoginState(Boolean(result?.enabled));
+                    setLaunchAtLoginManagedBySystem(result?.managedBySystem === true);
+                    if (typeof result?.enabled === 'boolean') setLaunchAtLoginState(result.enabled);
                 }
             } catch (error) {
                 console.error('Could not read launch-at-login setting:', error);
@@ -316,6 +318,15 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         }
     };
 
+    const handleOpenStartupSettings = async () => {
+        try {
+            const opened = await window.electronAPI?.openStartupAppSettings?.();
+            if (!opened) setModalMessage('Windows startup settings could not be opened.');
+        } catch (error) {
+            setModalMessage(`Could not open Windows startup settings: ${error.message}`);
+        }
+    };
+
     return (
         <div className="max-w-6xl mx-auto mt-10 p-4 sm:p-8" style={color.style}>
             <h1 className="text-4xl font-bold text-center text-gray-800 mb-8">Settings</h1>
@@ -469,14 +480,24 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
             {launchAtLoginSupported && (
                 <div className="bg-white p-6 rounded-lg shadow-md">
                     <h2 className="text-2xl font-bold mb-2">Desktop App</h2>
-                    <label className="flex items-start justify-between gap-6 cursor-pointer">
+                    <div className="flex items-start justify-between gap-6">
                         <span>
                             <span className="block text-lg font-semibold text-gray-800">Start with Windows</span>
                             <span className="block text-gray-600 mt-1">
-                                Open PlanetCreations when you sign in to Windows. Closing the window keeps the client running in the system tray for notifications and background tasks.
+                                {launchAtLoginManagedBySystem
+                                    ? 'The Microsoft Store version registers startup with Windows. You remain in control through Windows Startup Apps settings.'
+                                    : 'Open PlanetCreations when you sign in to Windows. Closing the window keeps the client running in the system tray for notifications and background tasks.'}
                             </span>
                         </span>
-                        <span className="flex items-center gap-3 shrink-0 mt-1">
+                        {launchAtLoginManagedBySystem ? (
+                            <button
+                                type="button"
+                                onClick={handleOpenStartupSettings}
+                                className="shrink-0 mt-1 rounded-lg bg-gray-800 px-4 py-2 text-sm font-bold text-white hover:bg-gray-700"
+                            >
+                                Open Windows settings
+                            </button>
+                        ) : <span className="flex items-center gap-3 shrink-0 mt-1">
                             <span className="text-sm font-semibold text-gray-600">
                                 {launchAtLogin ? 'Enabled' : 'Disabled'}
                             </span>
@@ -488,8 +509,8 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                                 className="h-5 w-5 accent-blue-600 disabled:opacity-50"
                                 aria-label="Start PlanetCreations with Windows"
                             />
-                        </span>
-                    </label>
+                        </span>}
+                    </div>
                 </div>
             )}
 

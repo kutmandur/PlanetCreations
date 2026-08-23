@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
-import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot, collection, getDocs, writeBatch, arrayUnion, setDoc, arrayRemove, query, where, getCountFromServer, orderBy, serverTimestamp, deleteField, FieldPath } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
@@ -13,6 +13,59 @@ import FeedWeightSliders from '../ui/FeedWeightSliders';
 import GamesManager from '../management/GamesManager';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
+
+const DLC_SEED_DATA = Object.freeze({
+    'planet-coaster': [
+        'Adventure Pack', 'Classic Rides Collection', 'Magnificent Rides Collection',
+        'World\'s Fair Pack', 'Vintage Pack', 'Studios Pack', 'Spooky Pack',
+        'Ghostbusters™', 'Knight Rider™ K.I.T.T. Construction Kit',
+        'Back to the Future™ Time Machine Construction Kit',
+        'The Munsters® Munster Koach Construction Kit',
+    ].map(name => ({ name, bit: null, identifiers: [] })),
+    'planet-coaster-2': [
+        ['Bonus Ride Collection', 1, ['PDLC_1']],
+        ['Vintage Funfair Ride Pack', 2, ['PDLC_2']],
+        ['Thrill-Seekers Ride Pack', 3, ['ContentPDLC1', 'Filter_PDLC_ThrillSeekersRidePack']],
+        ['Sorcery Pack', 4, ['ContentPDLC2', 'Filter_PDLC_Sorcery']],
+        ['Toybox Pack', 5, ['ContentPDLC3', 'Filter_PDLC_Toybox']],
+        ['Parades Pack', 6, ['ContentPDLC4', 'Filter_PDLC_ParadesArcades']],
+        ['Silver Screen Pack', 7, ['ContentPDLC5']],
+    ].map(([name, bit, identifiers]) => ({ name, bit, identifiers })),
+    'planet-zoo': [
+        ['Deluxe Upgrade Pack', 0, 'Deluxe'],
+        ['Arctic Pack', 1, 'Content1'],
+        ['South America Pack', 2, 'Content2'],
+        ['Australia Pack', 3, 'Content3'],
+        ['Aquatic Pack', 4, 'Content4'],
+        ['Southeast Asia Animal Pack', 5, 'Content5'],
+        ['Africa Pack', 6, 'Content6'],
+        ['North America Animal Pack', 7, 'Content7'],
+        ['Europe Pack', 8, 'Content8'],
+        ['Wetlands Animal Pack', 9, 'Content9'],
+        ['Conservation Pack', 10, 'Content10'],
+        ['Twilight Pack', 11, 'Content11'],
+        ['Grasslands Animal Pack', 12, 'Content12'],
+        ['Tropical Pack', 13, 'Content13'],
+        ['Arid Animal Pack', 14, 'Content14'],
+        ['Oceania Pack', 15, 'Content15'],
+        ['Eurasia Animal Pack', 16, 'Content16'],
+        ['Barnyard Animal Pack', 17, 'Content17'],
+        ['Zookeepers Animal Pack', 18, 'Content18'],
+        ['Americas Animal Pack', 19, 'Content19'],
+        ['Asia Animal Pack', 20, 'Content20'],
+    ].map(([name, bit, identifier]) => ({ name, bit, identifiers: [identifier] })),
+});
+
+const defaultDlcMapping = (gameId, name) => {
+    const entry = (DLC_SEED_DATA[gameId] || []).find(item => item.name === name);
+    return entry ? { bit: entry.bit, identifiers: entry.identifiers } :
+        { bit: null, identifiers: [] };
+};
+
+const mappingDraft = mapping => ({
+    bit: Number.isSafeInteger(mapping?.bit) ? String(mapping.bit) : '',
+    identifiers: Array.isArray(mapping?.identifiers) ? mapping.identifiers.join(', ') : '',
+});
 
 const StatCard = ({ title, value, colorClass = 'bg-blue-500', style }) => (
     <div className={`p-6 rounded-lg shadow-lg text-white ${colorClass}`} style={style}>
@@ -46,6 +99,8 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     
     const [newDlc, setNewDlc] = useState('');
     const [dlcs, setDlcs] = useState([]);
+    const [dlcMappingDrafts, setDlcMappingDrafts] = useState({});
+    const [savingDlcName, setSavingDlcName] = useState(null);
     const [loadingDlcs, setLoadingDlcs] = useState(false);
     const [seedingDlcs, setSeedingDlcs] = useState(false);
 
@@ -160,7 +215,15 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         const dlcRef = doc(db, 'dlcs', selectedGame);
         const unsubscribe = onSnapshot(dlcRef, (docSnap) => {
             if (isMounted) {
-                setDlcs(docSnap.exists() ? docSnap.data().names || [] : []);
+                const data = docSnap.exists() ? docSnap.data() : {};
+                const names = Array.isArray(data.names) ? data.names : [];
+                const mappings = data.saveMappings && typeof data.saveMappings === 'object' ?
+                    data.saveMappings : {};
+                setDlcs(names);
+                setDlcMappingDrafts(Object.fromEntries(names.map(name => [
+                    name,
+                    mappingDraft(mappings[name] || defaultDlcMapping(selectedGame, name)),
+                ])));
                 setLoadingDlcs(false);
             }
         });
@@ -290,10 +353,17 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     };
 
     const handleAddDlc = async () => {
-        if (!newDlc.trim()) return;
+        const name = newDlc.trim();
+        if (!name) return;
         setLoadingDlcs(true);
         try {
-            await setDoc(doc(db, 'dlcs', selectedGame), { names: arrayUnion(newDlc.trim()) }, { merge: true });
+            await setDoc(doc(db, 'dlcs', selectedGame), {
+                names: arrayUnion(name),
+                saveMappings: {
+                    [name]: { bit: null, identifiers: [] },
+                },
+                catalogVersion: Date.now(),
+            }, { merge: true });
             setNewDlc('');
         } catch (error) {
             setModalMessage(`Error adding DLC: ${error.message}`);
@@ -305,7 +375,12 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const handleDeleteDlc = async (dlcToDelete) => {
         setLoadingDlcs(true);
         try {
-            await updateDoc(doc(db, 'dlcs', selectedGame), { names: arrayRemove(dlcToDelete) });
+            await updateDoc(
+                doc(db, 'dlcs', selectedGame),
+                'names', arrayRemove(dlcToDelete),
+                new FieldPath('saveMappings', dlcToDelete), deleteField(),
+                'catalogVersion', Date.now(),
+            );
         } catch (error) {
             setModalMessage(`Error deleting DLC: ${error.message}`);
         } finally {
@@ -313,22 +388,61 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         }
     };
 
+    const handleDlcMappingDraftChange = (dlcName, field, value) => {
+        setDlcMappingDrafts(current => ({
+            ...current,
+            [dlcName]: { ...(current[dlcName] || mappingDraft()), [field]: value },
+        }));
+    };
+
+    const handleSaveDlcMapping = async dlcName => {
+        const draft = dlcMappingDrafts[dlcName] || mappingDraft();
+        const bitText = draft.bit.trim();
+        const bit = bitText === '' ? null : Number(bitText);
+        if (bit !== null && (!Number.isSafeInteger(bit) || bit < 0 || bit > 52)) {
+            setModalMessage('The save bit must be a whole number between 0 and 52.');
+            return;
+        }
+        const identifiers = [...new Set(draft.identifiers.split(/[,\n]/)
+            .map(value => value.trim())
+            .filter(Boolean))].slice(0, 20);
+        setSavingDlcName(dlcName);
+        try {
+            await updateDoc(
+                doc(db, 'dlcs', selectedGame),
+                new FieldPath('saveMappings', dlcName), { bit, identifiers },
+                'catalogVersion', Date.now(),
+            );
+        } catch (error) {
+            setModalMessage(`Error saving DLC mapping: ${error.message}`);
+        } finally {
+            setSavingDlcName(null);
+        }
+    };
+
     const handleSeedDlcs = async () => {
         setSeedingDlcs(true);
         try {
-            const allDlcs = {
-                'planet-coaster': ['Adventure Pack', 'Classic Rides Collection', 'Magnificent Rides Collection', 'World\'s Fair Pack', 'Vintage Pack', 'Studios Pack', 'Spooky Pack', 'Ghostbusters™', 'Knight Rider™ K.I.T.T. Construction Kit', 'Back to the Future™ Time Machine Construction Kit', 'The Munsters® Munster Koach Construction Kit'],
-                'planet-zoo': ['Deluxe Upgrade Pack', 'Arctic Pack', 'South America Pack', 'Australia Pack', 'Aquatic Pack', 'Southeast Asia Animal Pack', 'Africa Pack', 'North America Animal Pack', 'Europe Pack', 'Wetlands Animal Pack', 'Conservation Pack', 'Twilight Pack', 'Grasslands Animal Pack', 'Tropical Pack', 'Arid Animal Pack', 'Oceania Pack', 'Eurasia Animal Pack', 'Barnyard Animal Pack', 'Zookeepers Animal Pack', 'Americas Animal Pack', 'Asia Animal Pack'],
-                'planet-coaster-2': ['Thrill-Seekers Ride Pack', 'Vintage Funfair Ride Pack']
-            };
-
+            const games = Object.keys(DLC_SEED_DATA);
+            const snapshots = await Promise.all(games.map(game => getDoc(doc(db, 'dlcs', game))));
             const batch = writeBatch(db);
-            for (const [game, dlcList] of Object.entries(allDlcs)) {
+            games.forEach((game, index) => {
+                const existing = snapshots[index].exists() ? snapshots[index].data() : {};
+                const defaults = DLC_SEED_DATA[game];
+                const names = [...new Set([...(existing.names || []), ...defaults.map(entry => entry.name)])];
+                const defaultMappings = Object.fromEntries(defaults.map(entry => [
+                    entry.name,
+                    { bit: entry.bit, identifiers: entry.identifiers },
+                ]));
                 const docRef = doc(db, 'dlcs', game);
-                batch.set(docRef, { names: dlcList });
-            }
+                batch.set(docRef, {
+                    names,
+                    saveMappings: { ...defaultMappings, ...(existing.saveMappings || {}) },
+                    catalogVersion: Date.now(),
+                }, { merge: true });
+            });
             await batch.commit();
-            setModalMessage("Successfully seeded all DLCs to the database!");
+            setModalMessage('Missing DLC defaults and save mappings were added. Existing entries were preserved.');
         } catch (error) {
             setModalMessage(`Error seeding DLCs: ${error.message}`);
         } finally {
@@ -702,7 +816,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                 ))}
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <h3 className="text-xl font-bold mb-4">Manage Categories</h3>
                                 <div className="flex space-x-2 mb-4">
@@ -715,22 +829,59 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                                     )) : <p className="text-sm text-gray-500">No categories found.</p>}
                                 </div>
                             </div>
-                            <div className="bg-white p-6 rounded-lg shadow-md">
+                            <div className="bg-white p-6 rounded-lg shadow-md lg:col-span-2">
                                 <h3 className="text-xl font-bold mb-4">Manage DLCs</h3>
+                                <p className="mb-4 text-sm text-gray-500">The workshop name is matched to Frontier save metadata through its numeric bit and optional internal identifiers. Changes are mirrored into the game index automatically.</p>
                                 <div className="flex space-x-2 mb-4">
                                     <input type="text" value={newDlc} onChange={(e) => setNewDlc(e.target.value)} placeholder="New DLC name" className="flex-grow p-2 border rounded-lg" />
                                     <button onClick={handleAddDlc} disabled={loadingDlcs} className={`${color.bg} ${color.hoverBg} text-white font-bold py-2 px-4 rounded-lg`}>Add</button>
                                 </div>
-                                <div className="max-h-96 overflow-y-auto">
+                                <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
                                     {loadingDlcs ? <Spinner /> : dlcs.length > 0 ? dlcs.map(dlc => (
-                                        <div key={dlc} className="flex justify-between items-center p-2 border-b"><span className="truncate">{dlc}</span><button onClick={() => handleDeleteDlc(dlc)} className="text-red-500 hover:text-red-700 ml-2">Delete</button></div>
+                                        <div key={dlc} className="rounded-xl border border-gray-200 p-3">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <span className="font-semibold text-gray-800">{dlc}</span>
+                                                <button onClick={() => handleDeleteDlc(dlc)} className="text-sm text-red-500 hover:text-red-700">Delete</button>
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end">
+                                                <label className="block text-xs font-medium text-gray-600">
+                                                    Save bit
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max="52"
+                                                        value={dlcMappingDrafts[dlc]?.bit || ''}
+                                                        onChange={event => handleDlcMappingDraftChange(dlc, 'bit', event.target.value)}
+                                                        placeholder="e.g. 7"
+                                                        className="mt-1 w-full rounded-lg border p-2 text-sm"
+                                                    />
+                                                </label>
+                                                <label className="block text-xs font-medium text-gray-600">
+                                                    Internal names
+                                                    <input
+                                                        type="text"
+                                                        value={dlcMappingDrafts[dlc]?.identifiers || ''}
+                                                        onChange={event => handleDlcMappingDraftChange(dlc, 'identifiers', event.target.value)}
+                                                        placeholder="Content7, Filter_PDLC_Name"
+                                                        className="mt-1 w-full rounded-lg border p-2 text-sm"
+                                                    />
+                                                </label>
+                                                <button
+                                                    onClick={() => handleSaveDlcMapping(dlc)}
+                                                    disabled={savingDlcName === dlc}
+                                                    className={`${color.bg} ${color.hoverBg} rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50`}
+                                                >
+                                                    {savingDlcName === dlc ? 'Saving…' : 'Save mapping'}
+                                                </button>
+                                            </div>
+                                        </div>
                                     )) : <p className="text-sm text-gray-500">No DLCs found.</p>}
                                 </div>
                             </div>
                         </div>
                         <div className="mt-6 flex justify-center gap-4">
                             <button onClick={handleSeedDlcs} disabled={seedingDlcs} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
-                                {seedingDlcs ? <Spinner size="small" /> : 'Seed All DLCs to Database'}
+                                {seedingDlcs ? <Spinner size="small" /> : 'Add Missing DLC Defaults'}
                             </button>
                         </div>
                     </div>

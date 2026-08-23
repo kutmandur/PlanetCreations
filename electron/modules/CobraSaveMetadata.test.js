@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { parseCobraSaveMetadata, parsePoolCount, parseTrackedRideTestDataCache, readVarUInt } = require('./CobraSaveMetadata');
+const { parseCobraSaveMetadata, parsePlanetZooSaveMetadata, parsePoolCount, parseTrackedRideTestDataCache, readVarUInt } = require('./CobraSaveMetadata');
 const { resolveFrontierRideCategory } = require('./FrontierRideCategory');
 
 function varUInt(value) {
@@ -161,6 +161,70 @@ test('assigns outer EFN ratings only when exactly one ride exists', () => {
     ]);
     const result = parseCobraSaveMetadata(payload, 'blueprint', ratings);
     assert.deepEqual(result.rides[0].ratings, ratings);
+});
+
+test('extracts conservative Planet Zoo counts and transport-ride records', () => {
+    const strings = ['Transport_Monorail', 'Savannah Express'];
+    const payload = cobraBlueprint(strings, [
+        client('HabitatSerialisation', 7, 13),
+        client('AnimalSerialisation', 4, 93),
+        client('HabitatObject', 3, 428),
+        client('Facility', 8, 37),
+        client('StaffSerialisation', 6, 24),
+        client('FeedingStation', 2, 61),
+        client('KeeperHutSerialisation', 3, 5),
+        client('DonationBox', 4, 18),
+        client('AnimalTalkArea', 1, 3),
+        client('Lake', 2, 4),
+        client('Paths', 9, 1200),
+        client('PlacementPartData', 51, 10494),
+        client('Bins', 2, 22),
+        client('Benches', 2, 17),
+        client('Ride', 5, 1),
+        client('Station', 4, 2),
+        client('Track', 88, 1, Buffer.concat([
+            varUInt(0),
+            varUInt(1),
+            Buffer.from('c0c801010000f300', 'hex'),
+        ])),
+    ]);
+
+    const result = parsePlanetZooSaveMetadata(payload, 'park');
+    assert.equal(result.animalHabitatCount, 13);
+    assert.equal(result.habitatAnimalCount, 93);
+    assert.equal(result.habitatObjectCount, 428);
+    assert.equal(result.facilityCount, 37);
+    assert.equal(result.staffCount, 24);
+    assert.equal(result.feedingStationCount, 61);
+    assert.equal(result.keeperHutCount, 5);
+    assert.equal(result.donationBoxCount, 18);
+    assert.equal(result.animalTalkCount, 3);
+    assert.equal(result.lakeCount, 4);
+    assert.equal(result.pathSegmentCount, 1200);
+    assert.equal(result.placedPartCount, 10494);
+    assert.equal(result.binCount, 22);
+    assert.equal(result.benchCount, 17);
+    assert.equal(result.rideCount, 1);
+    assert.equal(result.stationCount, 2);
+    assert.equal(result.rides[0].typeId, 'Transport_Monorail');
+    assert.equal(result.rides[0].name, 'Savannah Express');
+    assert.equal(result.rides[0].category, 'Monorail');
+    assert.equal(result.rides[0].rideCategory, 'Transport Ride');
+});
+
+test('does not expose internal Planet Zoo scenario identifiers as ride names', () => {
+    const payload = cobraBlueprint(['Transport_Steam_Train', 'Scenario01_SteamTrain01'], [
+        client('Ride', 5, 1),
+        client('Track', 88, 1, Buffer.concat([
+            varUInt(0),
+            varUInt(1),
+            Buffer.from('c0c801010000f300', 'hex'),
+        ])),
+    ]);
+
+    const result = parsePlanetZooSaveMetadata(payload, 'park');
+    assert.equal(result.rides[0].typeId, 'Transport_Steam_Train');
+    assert.equal(result.rides[0].name, null);
 });
 
 test('reads inline legacy ride types and classifies Rage as a coaster', () => {

@@ -3,7 +3,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 
-const LegalPage = ({ userProfile, docId, title, setModalMessage }) => {
+const LegalPage = ({ userProfile, docId, title, setModalMessage, fallbackContent = '', requiredNotice = '' }) => {
     const [content, setContent] = useState('');
     const [editContent, setEditContent] = useState('');
     const [loading, setLoading] = useState(true);
@@ -15,18 +15,23 @@ const LegalPage = ({ userProfile, docId, title, setModalMessage }) => {
         const docRef = doc(db, 'meta', docId);
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
-                const fetchedContent = docSnap.data().content || '';
+                const fetchedContent = docSnap.data().content || fallbackContent;
                 setContent(fetchedContent);
                 setEditContent(fetchedContent); 
             } else {
-                setContent(`This page has not been configured yet. An administrator needs to add content.`);
-                setEditContent('');
+                const initialContent = fallbackContent || 'This page has not been configured yet.';
+                setContent(initialContent);
+                setEditContent(initialContent);
             }
+            setLoading(false);
+        }, () => {
+            setContent(fallbackContent || 'This page is temporarily unavailable.');
+            setEditContent(fallbackContent);
             setLoading(false);
         });
 
         return () => unsubscribe();
-    }, [docId]);
+    }, [docId, fallbackContent]);
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -46,15 +51,21 @@ const LegalPage = ({ userProfile, docId, title, setModalMessage }) => {
     }
 
     return (
-        <div className="max-w-4xl mx-auto mt-10 p-8 bg-white rounded-lg shadow-lg">
-            <h1 className="text-4xl font-bold text-center mb-8">{title}</h1>
+        <div className="max-w-4xl mx-auto mt-10 p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg">
+            <h1 className="text-4xl font-bold text-center text-gray-900 dark:text-white mb-8">{title}</h1>
+
+            {requiredNotice && (
+                <div className="mb-8 rounded-lg border border-blue-300 bg-blue-50 p-4 text-gray-900 dark:border-blue-700 dark:bg-blue-950 dark:text-gray-100">
+                    {requiredNotice}
+                </div>
+            )}
             
             {isAdmin ? (
                 <div>
                     <textarea
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
-                        className="w-full h-96 p-4 border rounded-md font-mono text-sm"
+                        className="w-full h-96 p-4 border rounded-md bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100 font-mono text-sm"
                         placeholder={`Enter the content for the ${title} page here...`}
                     />
                     <div className="flex justify-end mt-4">
@@ -68,8 +79,8 @@ const LegalPage = ({ userProfile, docId, title, setModalMessage }) => {
                     </div>
                 </div>
             ) : (
-                <div className="prose max-w-none whitespace-pre-wrap">
-                    <p>{content}</p>
+                <div className="prose max-w-none whitespace-pre-wrap text-gray-800 dark:text-gray-100">
+                    {content}
                 </div>
             )}
         </div>

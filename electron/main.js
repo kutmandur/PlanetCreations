@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
@@ -7,7 +7,6 @@ const os = require('os');
 const crypto = require('crypto');
 const mime = require('mime-types');
 const AdmZip = require('adm-zip');
-const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 
 const {
@@ -28,9 +27,14 @@ const {
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { responseToBuffer } = require('./modules/ResponseBuffer');
+const { getDistributionInfo } = require('./modules/DistributionChannel');
+const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
+const distributionInfo = getDistributionInfo();
+const isStoreBuild = distributionInfo.isStore;
+const autoUpdater = isStoreBuild ? null : require('electron-updater').autoUpdater;
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = isDev && process.argv.includes('--devtools');
 const forceRecaptchaAppCheckForTest = isDev && process.argv.includes('--force-recaptcha-app-check-for-test');
@@ -59,6 +63,7 @@ let overlaySettingsWriteTimer = null;
 let pendingOverlaySettingsPatch = null;
 let isGameOverlayExpanded = false;
 let pendingMainWebRefresh = false;
+let pendingBackupImportPath = null;
 let isQuitting = false;
 let hasShownTrayHint = false;
 let streamingIntegration = null;
@@ -75,6 +80,66 @@ const OVERLAY_MIN_SIZE = 56;
 const OVERLAY_MAX_SIZE = 640;
 const OVERLAY_DEFAULT_SIZE = 88;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const HOSTED_BRIDGE_VERSION = 3;
+const MINIMUM_HOSTED_UI_VERSION = 2;
+const MINIMUM_HOSTED_OFFLINE_MANAGER_VERSION = 1;
+const FIREBASE_CALLABLE_BASE_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net';
+const preparedUploads = new PreparedUploadRegistry();
+const authorizedUploadSources = new Map();
+const AUTHORIZED_SOURCE_TTL_MS = 15 * 60 * 1000;
+
+function deletePreparedTemporaryFile(entry) {
+    if (!entry?.deleteAfterUse || !entry.filePath) return;
+    try {
+        if (fs.existsSync(entry.filePath)) fs.unlinkSync(entry.filePath);
+    } catch (error) {
+        log.warn('Could not remove a temporary prepared upload:', error.message);
+    }
+}
+
+function pruneUploadAuthorizations() {
+    const now = Date.now();
+    for (const [filePath, expiresAt] of authorizedUploadSources) {
+        if (expiresAt <= now) authorizedUploadSources.delete(filePath);
+    }
+    preparedUploads.prune(deletePreparedTemporaryFile);
+}
+
+function authorizeUploadSource(filePath) {
+    pruneUploadAuthorizations();
+    authorizedUploadSources.set(path.resolve(filePath), Date.now() + AUTHORIZED_SOURCE_TTL_MS);
+}
+
+function consumeUploadSourceAuthorization(filePath) {
+    pruneUploadAuthorizations();
+    const resolvedPath = path.resolve(filePath);
+    const expiresAt = authorizedUploadSources.get(resolvedPath) || 0;
+    authorizedUploadSources.delete(resolvedPath);
+    return expiresAt > Date.now();
+}
+
+async function callPlanetCreationsCallable(functionName, data, idToken, appCheckToken = null) {
+    if (typeof idToken !== 'string' || idToken.length < 20) {
+        throw new Error('Your sign-in session is missing. Please sign in again.');
+    }
+    const response = await fetch(`${FIREBASE_CALLABLE_BASE_URL}/${functionName}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+            ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
+        },
+        body: JSON.stringify({ data }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) {
+        throw new Error(payload.error?.message || `PlanetCreations returned HTTP ${response.status}.`);
+    }
+    if (!payload.result || typeof payload.result !== 'object') {
+        throw new Error('PlanetCreations returned an invalid upload response.');
+    }
+    return payload.result;
+}
 function getBundledAppUrl() {
     return withLocalTestParameters(isDev ? devServerUrl : pathToFileURL(path.join(__dirname, '../build/index.html')).toString());
 }
@@ -136,6 +201,21 @@ function secureAppWindow(browserWindow) {
     });
 }
 
+function configureSessionSecurity() {
+    const allowedPermissions = new Set(['notifications']);
+    const isAllowedPermission = (webContents, permission, requestingOrigin) => {
+        if (!allowedPermissions.has(permission)) return false;
+        const sourceUrl = requestingOrigin || webContents?.getURL?.() || '';
+        return isAllowedAppUrl(sourceUrl);
+    };
+    session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => (
+        isAllowedPermission(webContents, permission, requestingOrigin)
+    ));
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+        callback(isAllowedPermission(webContents, permission, details?.requestingUrl));
+    });
+}
+
 function isTrustedIpcSender(event, allowHosted = false) {
     const senderUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || '';
     if (!isAllowedAppUrl(senderUrl)) return false;
@@ -146,7 +226,34 @@ function requireTrustedIpcSender(event, allowHosted = false) {
     if (!isTrustedIpcSender(event, allowHosted)) throw new Error('IPC request rejected for an untrusted page.');
 }
 
-function loadHostedAppWithFallback(browserWindow, hashRoute = '/', { requireOverlayCapability = false } = {}) {
+function loadBundledApp(browserWindow, hashRoute = '/client/dashboard') {
+    return browserWindow.loadURL(`${getBundledAppUrl()}#${hashRoute}`);
+}
+
+function queueLocalBackupImport(filePath) {
+    if (!mainWindow || mainWindow.isDestroyed() || !isPlanetCreationsFileArgument(filePath)) return false;
+    const resolvedPath = path.resolve(filePath);
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) return false;
+    pendingBackupImportPath = resolvedPath;
+    showMainWindow();
+    const currentUrl = mainWindow.webContents.getURL();
+    const isOfflineManagerOpen = currentUrl.includes('#/client/dashboard') &&
+        (currentUrl.startsWith(getBundledAppUrl()) || isHostedAppUrl(currentUrl));
+    if (!isOfflineManagerOpen) {
+        loadOfflineManager(mainWindow, '/client/dashboard')
+            .catch(error => log.error('Could not open the Offline Manager for package import:', error));
+    } else {
+        mainWindow.webContents.send('import-file-triggered', pendingBackupImportPath);
+        pendingBackupImportPath = null;
+    }
+    return true;
+}
+
+function loadHostedAppWithFallback(
+    browserWindow,
+    hashRoute = '/',
+    { requireOverlayCapability = false, requireOfflineManagerCapability = false } = {},
+) {
     const hostedUrl = `${getHostedAppUrl()}#${hashRoute}`;
     const fallbackUrl = `${getBundledAppUrl()}#${hashRoute}`;
     let usingFallback = false;
@@ -168,19 +275,64 @@ function loadHostedAppWithFallback(browserWindow, hashRoute = '/', { requireOver
     browserWindow.__hostedFallbackListener = handleLoadFailure;
     browserWindow.webContents.on('did-fail-load', handleLoadFailure);
     browserWindow.webContents.__hostedUiCapabilities = null;
-    if (requireOverlayCapability) {
-        browserWindow.webContents.once('did-finish-load', () => {
-            if (!isHostedAppUrl(browserWindow.webContents.getURL())) return;
-            capabilityTimer = setTimeout(() => {
-                if (browserWindow.webContents.__hostedUiCapabilities?.gameOverlay !== true) {
-                    loadFallback('hosted UI does not advertise overlay support');
-                }
-            }, 2500);
-        });
-    }
+    browserWindow.webContents.once('did-finish-load', () => {
+        if (!isHostedAppUrl(browserWindow.webContents.getURL())) return;
+        capabilityTimer = setTimeout(() => {
+            const capabilities = browserWindow.webContents.__hostedUiCapabilities;
+            if (!capabilities) {
+                loadFallback('hosted UI did not complete the compatibility handshake');
+                return;
+            }
+            if (capabilities.uiVersion < MINIMUM_HOSTED_UI_VERSION) {
+                loadFallback('hosted UI is older than this desktop client');
+                return;
+            }
+            if (capabilities.minimumBridgeVersion > HOSTED_BRIDGE_VERSION) {
+                loadFallback('hosted UI requires a newer desktop bridge');
+                return;
+            }
+            if (requireOverlayCapability && capabilities.gameOverlay !== true) {
+                loadFallback('hosted UI does not advertise overlay support');
+                return;
+            }
+            if (requireOfflineManagerCapability &&
+                Number(capabilities.offlineManagerVersion || 0) < MINIMUM_HOSTED_OFFLINE_MANAGER_VERSION) {
+                loadFallback('hosted UI does not advertise Offline Manager support');
+                return;
+            }
+            if (requireOfflineManagerCapability &&
+                Number(capabilities.minimumOfflineManagerBridgeVersion || 0) > HOSTED_BRIDGE_VERSION) {
+                loadFallback('hosted Offline Manager requires a newer desktop bridge');
+            }
+        }, 2500);
+    });
     const loadPromise = browserWindow.loadURL(hostedUrl);
     loadPromise.catch((error) => loadFallback(error.message));
     return loadPromise;
+}
+
+function loadOfflineManager(browserWindow, hashRoute = '/client/dashboard') {
+    return loadHostedAppWithFallback(browserWindow, hashRoute, {
+        requireOfflineManagerCapability: true,
+    });
+}
+
+function openRouteInMainWindow(route = '/') {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const safeRoute = typeof route === 'string' && route.startsWith('/') && !route.startsWith('//')
+        ? route.slice(0, 500)
+        : '/';
+    if (safeRoute.startsWith('/client')) {
+        loadOfflineManager(mainWindow, safeRoute)
+            .catch((error) => log.error('Could not open the Offline Manager:', error));
+        return true;
+    }
+    if (isHostedAppUrl(mainWindow.webContents.getURL())) {
+        mainWindow.webContents.send('navigate-to-route', safeRoute);
+        return true;
+    }
+    loadHostedAppWithFallback(mainWindow, safeRoute);
+    return true;
 }
 
 function getOverlaySettingsPath() {
@@ -237,21 +389,49 @@ function getStreamingSettingsPath() {
     return path.join(app.getPath('userData'), 'streaming-settings.json');
 }
 
+function decryptStreamingSecret(value) {
+    if (typeof value !== 'string' || !value) return '';
+    try {
+        if (!safeStorage.isEncryptionAvailable()) return '';
+        return safeStorage.decryptString(Buffer.from(value, 'base64'));
+    } catch (error) {
+        log.warn('Could not decrypt a locally stored streaming credential:', error.message);
+        return '';
+    }
+}
+
+function encryptStreamingSecret(value) {
+    if (typeof value !== 'string' || !value) return '';
+    if (!safeStorage.isEncryptionAvailable()) {
+        log.warn('Secure OS credential storage is unavailable; the streaming credential will not be persisted.');
+        return '';
+    }
+    return safeStorage.encryptString(value).toString('base64');
+}
+
 function readStreamingSettings() {
     const defaults = { provider: 'obs', enabled: false, obsPort: 4455, obsPassword: '', slHost: '127.0.0.1', slPort: 59650, slToken: '' };
     try {
         const stored = JSON.parse(fs.readFileSync(getStreamingSettingsPath(), 'utf8'));
         const validPort = (value, fallback) =>
             (Number.isInteger(value) && value > 0 && value <= 65535 ? value : fallback);
-        return {
+        const settings = {
             provider: stored.provider === 'streamlabs' ? 'streamlabs' : 'obs',
             enabled: stored.enabled === true,
             obsPort: validPort(stored.obsPort, defaults.obsPort),
-            obsPassword: typeof stored.obsPassword === 'string' ? stored.obsPassword : '',
+            obsPassword: decryptStreamingSecret(stored.obsPasswordEncrypted) ||
+                (typeof stored.obsPassword === 'string' ? stored.obsPassword : ''),
             slHost: typeof stored.slHost === 'string' && stored.slHost.trim() ? stored.slHost.trim() : defaults.slHost,
             slPort: validPort(stored.slPort, defaults.slPort),
-            slToken: typeof stored.slToken === 'string' ? stored.slToken : '',
+            slToken: decryptStreamingSecret(stored.slTokenEncrypted) ||
+                (typeof stored.slToken === 'string' ? stored.slToken : ''),
         };
+        // One-time migration from the legacy plaintext fields. The next write
+        // contains only OS-encrypted values (Windows DPAPI through safeStorage).
+        if (Object.hasOwn(stored, 'obsPassword') || Object.hasOwn(stored, 'slToken')) {
+            writeStreamingSettings(settings);
+        }
+        return settings;
     } catch (error) {
         return defaults;
     }
@@ -259,7 +439,17 @@ function readStreamingSettings() {
 
 function writeStreamingSettings(next) {
     try {
-        fs.writeFileSync(getStreamingSettingsPath(), JSON.stringify(next, null, 2));
+        const stored = {
+            schemaVersion: 2,
+            provider: next.provider === 'streamlabs' ? 'streamlabs' : 'obs',
+            enabled: next.enabled === true,
+            obsPort: next.obsPort,
+            obsPasswordEncrypted: encryptStreamingSecret(next.obsPassword),
+            slHost: next.slHost,
+            slPort: next.slPort,
+            slTokenEncrypted: encryptStreamingSecret(next.slToken),
+        };
+        fs.writeFileSync(getStreamingSettingsPath(), JSON.stringify(stored, null, 2), { mode: 0o600 });
     } catch (error) {
         log.warn('Could not save streaming settings:', error);
     }
@@ -726,9 +916,7 @@ function showSystemNotification(payload) {
     activeNotifications.add(notification);
     notification.on('click', () => {
         showMainWindow();
-        if (link && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('navigate-to-route', link);
-        }
+        if (link) openRouteInMainWindow(link);
     });
     notification.on('close', () => activeNotifications.delete(notification));
     notification.show();
@@ -738,6 +926,14 @@ function showSystemNotification(payload) {
 function getLaunchAtLoginStatus() {
     const supported = app.isPackaged && process.platform === 'win32';
     if (!supported) return { supported: false, enabled: false };
+    if (isStoreBuild) {
+        return {
+            supported: true,
+            enabled: null,
+            managedBySystem: true,
+            settingsPage: 'ms-settings:startupapps',
+        };
+    }
 
     const settings = app.getLoginItemSettings({
         path: process.execPath,
@@ -753,6 +949,7 @@ function setLaunchAtLogin(enabled) {
     if (!app.isPackaged || process.platform !== 'win32') {
         return { supported: false, enabled: false };
     }
+    if (isStoreBuild) return getLaunchAtLoginStatus();
 
     app.setLoginItemSettings({
         openAtLogin: enabled,
@@ -762,29 +959,41 @@ function setLaunchAtLogin(enabled) {
     return getLaunchAtLoginStatus();
 }
 
+function openStartupAppSettings() {
+    if (!isStoreBuild || process.platform !== 'win32') return false;
+    return shell.openExternal('ms-settings:startupapps').then(() => true, () => false);
+}
+
 function isPathInside(root, candidate) {
     if (!root || !candidate) return false;
     const relative = path.relative(path.resolve(root), path.resolve(candidate));
     return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
-// Protokoll-Handler registrieren
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('planetcreations', process.execPath, [path.resolve(process.argv[1])]);
-  }
-} else {
-  app.setAsDefaultProtocolClient('planetcreations');
+// AppX registers the protocol from its reviewed package manifest. Other desktop
+// channels keep the existing runtime registration.
+if (!isStoreBuild) {
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        app.setAsDefaultProtocolClient('planetcreations', process.execPath, [path.resolve(process.argv[1])]);
+      }
+    } else {
+      app.setAsDefaultProtocolClient('planetcreations');
+    }
 }
 
-
-// Konfiguriere electron-log für den Updater
-autoUpdater.logger = log;
-autoUpdater.logger.transports.file.level = 'info';
+// Microsoft Store builds are updated exclusively by Windows. Loading or
+// configuring electron-updater in that channel would create a second updater.
+if (autoUpdater) {
+    autoUpdater.logger = log;
+    autoUpdater.logger.transports.file.level = 'info';
+}
 log.info('App starting...');
+log.info(`Distribution channel: ${distributionInfo.channel}`);
 
 // --- UPDATE-LOGIK ---
 async function checkForUpdatesViaAPI() {
+    if (isStoreBuild) return;
     const owner = 'kutmandur';
     const repo = 'PlanetCreations';
     const currentVersion = app.getVersion();
@@ -814,7 +1023,7 @@ async function checkForUpdatesViaAPI() {
 }
 
 function startDailyUpdateChecks() {
-    if (isDev) return;
+    if (isDev || !autoUpdater) return;
     if (updateCheckTimer) clearInterval(updateCheckTimer);
     updateCheckTimer = setInterval(() => {
         log.info('Running scheduled daily update check...');
@@ -932,7 +1141,7 @@ async function handleUrlImport(urlToHandle) {
         const importResult = await importBackupFromFile(tempPath, 'Workshop');
 
         if (importResult.success) {
-            sendStatus('success', `Successfully imported '${fileName}' to Workshop!`);
+            sendStatus('success', `Successfully imported '${path.basename(tempPath)}' to Workshop!`);
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('backups-updated');
             }
@@ -957,6 +1166,10 @@ async function handleUrlImport(urlToHandle) {
 
 
 // --- LOGIK FÜR AUTO-IMPORT BEI DOPPELKLICK / PROTOKOLL ---
+function isPlanetCreationsFileArgument(argument) {
+    return typeof argument === 'string' && argument.toLowerCase().endsWith('.planetcreations');
+}
+
 // Development-only escape hatch for an isolated overlay preview while the installed
 // client is already running. Packaged builds always retain single-instance behavior.
 const isOverlayTestInstance = isDev && process.argv.includes('--overlay-test-instance');
@@ -966,15 +1179,13 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
     const url = commandLine.find((argument) =>
-        argument.startsWith('planetcreations://') || argument.endsWith('.PlanetCreations')
+        argument.startsWith('planetcreations://') || isPlanetCreationsFileArgument(argument)
     );
     showMainWindow();
     if (url && url.startsWith('planetcreations://')) {
         handleUrlImport(url);
-    } else if (url && url.endsWith('.PlanetCreations')) {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('import-file-triggered', url);
-        }
+    } else if (isPlanetCreationsFileArgument(url)) {
+        queueLocalBackupImport(url);
     }
   });
 }
@@ -1043,6 +1254,8 @@ function getClientIdentity() {
         displayName: identity.displayName,
         platform: process.platform,
         clientVersion: app.getVersion(),
+        distributionChannel: distributionInfo.channel,
+        updatesManagedBy: distributionInfo.updatesManagedBy,
     };
 }
 
@@ -1070,7 +1283,7 @@ function createWindow({ openOnline = false } = {}) {
     ipcMain.on('select-mode', (event, mode) => {
         if (!isTrustedIpcSender(event) || event.sender !== mainWindow?.webContents) return;
         if (mode === 'online') loadHostedAppWithFallback(mainWindow, '/');
-        else if (mode === 'offline') loadHostedAppWithFallback(mainWindow, '/client/dashboard');
+        else if (mode === 'offline') loadOfflineManager(mainWindow, '/client/dashboard');
     });
 
     if (shouldOpenDevTools) mainWindow.webContents.openDevTools();
@@ -1086,39 +1299,41 @@ function createWindow({ openOnline = false } = {}) {
     });
 
     mainWindow.once('ready-to-show', () => {
-        if (!isDev) {
+        if (!isDev && autoUpdater) {
             autoUpdater.checkForUpdates();
             startDailyUpdateChecks();
         }
     });
 
     const initialUrlOrFile = !isDev ? process.argv.slice(1).find((argument) =>
-        argument.startsWith('planetcreations://') || argument.endsWith('.PlanetCreations')
+        argument.startsWith('planetcreations://') || isPlanetCreationsFileArgument(argument)
     ) : null;
-    if (initialUrlOrFile) {
+    if (isPlanetCreationsFileArgument(initialUrlOrFile)) {
+        queueLocalBackupImport(initialUrlOrFile);
+    } else if (initialUrlOrFile) {
         mainWindow.webContents.once('did-finish-load', () => {
             if (initialUrlOrFile.startsWith('planetcreations://')) {
                 handleUrlImport(initialUrlOrFile);
-            } else if (initialUrlOrFile.endsWith('.PlanetCreations')) {
-                mainWindow.webContents.send('import-file-triggered', initialUrlOrFile);
             }
         });
     }
 }
 
 // --- AUTO-UPDATE EVENTS ---
-autoUpdater.on('error', (error) => {
-    log.error('Auto-update error:', error);
-    checkForUpdatesViaAPI();
-});
-autoUpdater.on('update-available', () => {
-    mainWindow.webContents.send('update-available');
-});
-autoUpdater.on('update-downloaded', () => {
-    mainWindow.webContents.send('update-downloaded');
-});
+if (autoUpdater) {
+    autoUpdater.on('error', (error) => {
+        log.error('Auto-update error:', error);
+        checkForUpdatesViaAPI();
+    });
+    autoUpdater.on('update-available', () => {
+        mainWindow?.webContents.send('update-available');
+    });
+    autoUpdater.on('update-downloaded', () => {
+        mainWindow?.webContents.send('update-downloaded');
+    });
+}
 ipcMain.on('restart-app', (event) => {
-    if (!isTrustedIpcSender(event, true)) return;
+    if (!isTrustedIpcSender(event, true) || !autoUpdater) return;
     isQuitting = true;
     autoUpdater.quitAndInstall();
 });
@@ -1129,9 +1344,27 @@ ipcMain.handle('open-external-link', (event, url) => {
     return openSafeExternalUrl(url);
 });
 
+ipcMain.handle('client-dashboard-ready', (event) => {
+    requireTrustedIpcSender(event, true);
+    if (!mainWindow || event.sender !== mainWindow.webContents || !pendingBackupImportPath) return false;
+    event.sender.send('import-file-triggered', pendingBackupImportPath);
+    pendingBackupImportPath = null;
+    return true;
+});
+
 ipcMain.handle('show-system-notification', (event, payload) => {
     requireTrustedIpcSender(event, true);
     return showSystemNotification(payload);
+});
+
+ipcMain.handle('switch-desktop-mode', (event, mode) => {
+    requireTrustedIpcSender(event, true);
+    const isMainRenderer = mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+    if (!isMainRenderer) throw new Error('Desktop mode can only be changed from the main window.');
+    if (mode === 'offline') return loadOfflineManager(mainWindow, '/client/dashboard').then(() => true);
+    if (mode === 'online') return loadHostedAppWithFallback(mainWindow, '/').then(() => true);
+    if (mode === 'bundled-online') return loadBundledApp(mainWindow, '/').then(() => true);
+    throw new Error('Unknown desktop mode.');
 });
 
 // Manueller Reload aus der Navbar: umgeht den HTTP-Cache, damit auch eine
@@ -1151,14 +1384,26 @@ ipcMain.handle('report-hosted-ui-ready', (event, capabilities) => {
     const senderUrl = event.senderFrame?.url || event.sender.getURL();
     if (!isHostedAppUrl(senderUrl)) return false;
     event.sender.__hostedUiCapabilities = {
-        bridgeVersion: Number.isInteger(capabilities?.bridgeVersion) ? capabilities.bridgeVersion : 0,
+        uiVersion: Number.isInteger(capabilities?.uiVersion) ? capabilities.uiVersion :
+            (Number.isInteger(capabilities?.bridgeVersion) ? capabilities.bridgeVersion : 0),
+        minimumBridgeVersion: Number.isInteger(capabilities?.minimumBridgeVersion) ?
+            capabilities.minimumBridgeVersion : 1,
         gameOverlay: capabilities?.gameOverlay === true,
+        offlineManagerVersion: Number.isInteger(capabilities?.offlineManagerVersion) ?
+            capabilities.offlineManagerVersion : 0,
+        minimumOfflineManagerBridgeVersion:
+            Number.isInteger(capabilities?.minimumOfflineManagerBridgeVersion) ?
+                capabilities.minimumOfflineManagerBridgeVersion : 0,
     };
     return true;
 });
 ipcMain.handle('set-launch-at-login', (event, enabled) => {
     requireTrustedIpcSender(event, true);
     return setLaunchAtLogin(enabled);
+});
+ipcMain.handle('open-startup-app-settings', (event) => {
+    requireTrustedIpcSender(event, true);
+    return openStartupAppSettings();
 });
 ipcMain.handle('get-obs-status', (event) => {
     requireTrustedIpcSender(event, true);
@@ -1236,7 +1481,7 @@ ipcMain.handle('open-overlay-notification-link', (event, link) => {
     requireTrustedIpcSender(event, true);
     const route = typeof link === 'string' && link.startsWith('/') && !link.startsWith('//') ? link.slice(0, 500) : '/';
     showMainWindow();
-    mainWindow?.webContents.send('navigate-to-route', route);
+    openRouteInMainWindow(route);
     pendingOverlayNotification = null;
     if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
     return true;
@@ -1364,6 +1609,7 @@ ipcMain.handle('select-collaboration-file', async (event, gameId) => {
         return { success: false, message: 'The selected file does not match the collaboration game.' };
     }
     const stats = fs.statSync(filePath);
+    authorizeUploadSource(filePath);
     return {
         success: true,
         filePath,
@@ -1463,48 +1709,89 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
     }
 });
 
-ipcMain.handle('install-workshop-package', async (_event, packagePath) =>
-    installWorkshopPackage(app, packagePath, getFrontierPathForInstall()));
-ipcMain.handle('uninstall-workshop-package', async (_event, packagePath) =>
-    uninstallWorkshopPackage(app, packagePath));
+ipcMain.handle('install-workshop-package', async (event, packagePath) => {
+    requireTrustedIpcSender(event, true);
+    return installWorkshopPackage(app, packagePath, getFrontierPathForInstall());
+});
+ipcMain.handle('uninstall-workshop-package', async (event, packagePath) => {
+    requireTrustedIpcSender(event, true);
+    return uninstallWorkshopPackage(app, packagePath);
+});
 
-ipcMain.handle('get-stored-path', () => getStoredPath());
+ipcMain.handle('get-stored-path', (event) => {
+    requireTrustedIpcSender(event, true);
+    return getStoredPath();
+});
 
-ipcMain.handle('select-folder', async () => {
-    const defaultPath = path.join(app.getPath('home'), 'Saved Games', 'Frontier Developments');
-    const result = await dialog.showOpenDialog({ 
+async function chooseFrontierFolder(event) {
+    requireTrustedIpcSender(event, true);
+    const detectedPath = getFrontierPathForInstall();
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+        title: 'Choose the Frontier Developments game folder',
+        message: 'Choose the Frontier Developments folder that contains Planet Coaster 2 or Planet Zoo.',
         properties: ['openDirectory'],
-        defaultPath: defaultPath
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    const selectedPath = result.filePaths[0];
+        defaultPath: fs.existsSync(detectedPath) ? detectedPath : app.getPath('documents'),
+    };
+    log.info('Frontier game-folder selection requested.');
+    if (ownerWindow && !ownerWindow.isDestroyed()) {
+        if (!ownerWindow.isVisible()) ownerWindow.show();
+        ownerWindow.focus();
+    }
+    const filePaths = ownerWindow && !ownerWindow.isDestroyed()
+        ? dialog.showOpenDialogSync(ownerWindow, options)
+        : dialog.showOpenDialogSync(options);
+    if (!filePaths?.length) {
+        log.info('Frontier game-folder selection canceled.');
+        return null;
+    }
+    const selectedPath = path.resolve(filePaths[0]);
+    if (!fs.existsSync(selectedPath) || !fs.statSync(selectedPath).isDirectory()) {
+        throw new Error('The selected game folder is not available.');
+    }
     setStoredPath(selectedPath);
+    log.info('Frontier game folder configured successfully.');
     return selectedPath;
+}
+
+ipcMain.handle('select-folder', async (event) => {
+    return chooseFrontierFolder(event);
+});
+
+ipcMain.handle('select-frontier-folder', async (event) => {
+    return chooseFrontierFolder(event);
 });
 
 ipcMain.handle('read-file-as-data-url', (event, filePath) => {
     try {
-        // Sicherheitsprüfung: Nur erlaubte Pfade zulassen
+        requireTrustedIpcSender(event, true);
         if (!filePath || typeof filePath !== 'string') return null;
 
-        const normalizedPath = path.normalize(filePath);
+        const normalizedPath = path.resolve(filePath);
         const allowedPaths = [
-            app.getPath('documents'),
-            app.getPath('userData'),
-            app.getPath('temp'),
-            path.join(app.getPath('home'), 'Saved Games')
-        ];
+            getStoredPath(),
+            path.join(app.getPath('documents'), 'PlanetCreations'),
+            path.join(app.getPath('documents'), 'Frontier Developments'),
+            path.join(app.getPath('home'), 'Saved Games'),
+        ].filter(Boolean);
 
         const isAllowed = allowedPaths.some(allowed => isPathInside(allowed, normalizedPath));
         if (!isAllowed) {
-            console.warn(`[Security] Blocked file read attempt: ${filePath}`);
+            log.warn(`[Security] Blocked preview outside configured content folders: ${filePath}`);
             return null;
         }
 
-        if (!fs.existsSync(filePath)) return null;
-        const data = fs.readFileSync(filePath);
+        const allowedExtensions = new Set([
+            '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+            '.mp4', '.webm', '.mov', '.avi', '.mkv',
+            '.mp3', '.wav', '.ogg', '.m4a',
+        ]);
+        if (!allowedExtensions.has(path.extname(normalizedPath).toLowerCase()) || !fs.existsSync(normalizedPath)) return null;
+        const stats = fs.statSync(normalizedPath);
+        if (!stats.isFile() || stats.size <= 0 || stats.size > 100 * 1024 * 1024) return null;
+        const data = fs.readFileSync(normalizedPath);
         const base64Data = data.toString('base64');
-        const mimeType = mime.lookup(filePath) || 'application/octet-stream';
+        const mimeType = mime.lookup(normalizedPath) || 'application/octet-stream';
         return `data:${mimeType};base64,${base64Data}`;
     } catch (error) {
         console.error(`Failed to read file as data URL: ${filePath}`, error);
@@ -1518,8 +1805,7 @@ ipcMain.handle('read-frontier-preview', (event, filePath) => {
     const resolvedPath = path.resolve(filePath);
     const allowedRoots = [
         getStoredPath(),
-        path.join(app.getPath('home'), 'Saved Games'),
-        app.getPath('documents'),
+        path.join(app.getPath('documents'), 'PlanetCreations'),
     ].filter(Boolean);
     if (!allowedRoots.some(root => isPathInside(root, resolvedPath))) {
         throw new Error('Preview path is outside the configured game folders.');
@@ -1540,13 +1826,15 @@ ipcMain.handle('inspect-frontier-file', async (event, filePath) => {
     return inspectFrontierFileInWorker(resolvedPath);
 });
 
-ipcMain.handle('open-backup-folder', () => {
+ipcMain.handle('open-backup-folder', (event) => {
+    requireTrustedIpcSender(event, true);
     const backupDir = path.join(app.getPath('documents'), 'PlanetCreations');
     fs.mkdirSync(backupDir, { recursive: true });
     shell.openPath(backupDir);
 });
 
-ipcMain.handle('load-external-backup', async () => {
+ipcMain.handle('load-external-backup', async (event) => {
+    requireTrustedIpcSender(event, true);
     const { canceled, filePaths } = await dialog.showOpenDialog({
         title: 'Select Backup File',
         defaultPath: app.getPath('downloads'),
@@ -1560,14 +1848,15 @@ ipcMain.handle('load-external-backup', async () => {
 });
 
 ipcMain.handle('import-backup-from-path', (event, filePath) => {
+    requireTrustedIpcSender(event, true);
     return importBackupFromFile(filePath);
 });
 
 ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
-    if (!storedPath) {
-        return {}; 
+    if (!storedPath || !fs.existsSync(storedPath)) {
+        return { __configurationRequired: true };
     }
 
     // The dashboard owns the sequential background scan. File pickers reuse its
@@ -1579,20 +1868,25 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     const creationBackups = flatBackups
         .filter(b => b.backupType !== 'media')
         .map(b => ({
-            name: path.basename(b.filePath),
+            name: b.originalFileName || path.basename(b.filePath),
             path: b.filePath,
             modifiedAt: b.backupDate,
+            gameId: b.gameId || null,
+            originalFileName: b.originalFileName || null,
+            isBackup: true,
         }));
 
     for (const backup of creationBackups) {
-        const originalFileName = backup.name.split('_')[0] + path.extname(backup.name.split('_')[0] || '.tmp');
-        const origExt = path.extname(originalFileName).toLowerCase();
-        let gameName = null;
+        const origExt = path.extname(backup.originalFileName || '').toLowerCase();
+        let gameName = backup.gameId === 'planet-coaster-2' ? 'Planet Coaster 2' :
+            (backup.gameId === 'planet-zoo' ? 'Planet Zoo' : null);
+        if (!gameName && ['.park2', '.blpr2', '.prkauto2'].includes(origExt)) gameName = 'Planet Coaster 2';
+        if (!gameName && ['.zoo', '.pzblueprint', '.zooauto'].includes(origExt)) gameName = 'Planet Zoo';
         
-        if (['.park2', '.blpr2', '.prkauto2'].includes(origExt)) gameName = 'Planet Coaster 2';
-        if (['.zoo', '.pzblueprint', '.zooauto'].includes(origExt)) gameName = 'Planet Zoo';
-        
-        if (gameName && gameFiles[gameName]) {
+        if (gameName) {
+            if (!gameFiles[gameName]) {
+                gameFiles[gameName] = { parks: [], blueprints: [], autosaves: [], backups: [] };
+            }
             if (!gameFiles[gameName].backups) {
                 gameFiles[gameName].backups = [];
             }
@@ -1612,115 +1906,143 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
 
 ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken, appCheckToken) => {
     requireTrustedIpcSender(event, true);
-    if (!filePath) {
+    if (!filePath || typeof filePath !== 'string') {
         return { success: false, message: 'No file path provided.' };
     }
 
-    const fileExt = path.extname(filePath).toLowerCase();
+    const resolvedSourcePath = path.resolve(filePath);
+    const fileExt = path.extname(resolvedSourcePath).toLowerCase();
 
     try {
+        if (!fs.existsSync(resolvedSourcePath) || !fs.statSync(resolvedSourcePath).isFile()) {
+            return { success: false, message: 'The selected file is no longer available.' };
+        }
         const storedPath = getStoredPath();
         const allowedSourceRoots = [
             storedPath,
+            path.join(app.getPath('home'), 'Saved Games', 'Frontier Developments'),
             path.join(app.getPath('documents'), 'Frontier Developments'),
             path.join(app.getPath('documents'), 'PlanetCreations'),
-            app.getPath('temp'),
         ].filter(Boolean);
-        if (!allowedSourceRoots.some(root => isPathInside(root, filePath))) {
+        const isConfiguredSource = allowedSourceRoots.some(root => isPathInside(root, resolvedSourcePath));
+        const wasExplicitlySelected = consumeUploadSourceAuthorization(resolvedSourcePath);
+        if (!isConfiguredSource && !wasExplicitlySelected) {
             return { success: false, message: 'The selected file is outside the configured game and backup folders.' };
         }
+        let preparedPath = resolvedSourcePath;
+        let deleteAfterUse = false;
+        let validation;
         if (fileExt === '.planetcreations') {
-            // Existierendes Backup: Vollständige Validierung durchführen
-            const validation = await validateBackupForUpload(filePath);
-
+            validation = await validateBackupForUpload(resolvedSourcePath);
             if (!validation.valid) {
                 return { success: false, message: validation.error };
             }
-
-            return {
-                success: true,
-                filePath: filePath,
-                fileName: path.basename(filePath),
-                isSigned: validation.isSigned,
-                fileSize: validation.fileSize,
-                metadata: validation.metadata,
-            };
         } else {
-            // Neues Backup aus Game-File erstellen
-            // Prüfe zuerst ob es ein gültiges Game-File ist
-            if (!isValidGameFile(filePath)) {
+            if (!isValidGameFile(resolvedSourcePath)) {
                 return {
                     success: false,
                     message: `Invalid file type. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be uploaded.`
                 };
             }
-
-            // Quelldatei-Größe wird nicht geprüft - die Datei wird komprimiert
-            // Die finale Backup-Größe wird nach dem Erstellen und serverseitig geprüft
-
-            const tempDir = app.getPath('temp');
-            const newBackupPath = await createBackup(
+            preparedPath = await createBackup(
                 app,
-                filePath,
+                resolvedSourcePath,
                 "Uploaded with creation",
                 true,
                 idToken,
-                tempDir,
+                app.getPath('temp'),
                 appCheckToken,
             );
-
-            if (!newBackupPath) {
+            if (!preparedPath) {
                 throw new Error("Backup creation function did not return a valid path.");
             }
-
-            // Validiere das erstellte Backup
-            const validation = await validateBackupForUpload(newBackupPath);
+            deleteAfterUse = true;
+            validation = await validateBackupForUpload(preparedPath);
             if (!validation.valid) {
-                // Lösche das fehlerhafte Backup
-                if (fs.existsSync(newBackupPath)) {
-                    fs.unlinkSync(newBackupPath);
-                }
+                if (fs.existsSync(preparedPath)) fs.unlinkSync(preparedPath);
                 return { success: false, message: validation.error };
             }
-
-            return {
-                success: true,
-                filePath: newBackupPath,
-                fileName: path.basename(newBackupPath),
-                isSigned: validation.isSigned,
-                fileSize: validation.fileSize,
-            };
         }
+
+        const preparedStats = fs.statSync(preparedPath);
+        const uploadHandle = preparedUploads.register({
+            filePath: path.resolve(preparedPath),
+            fileName: path.basename(preparedPath),
+            fileSize: validation.fileSize,
+            modifiedAtMs: preparedStats.mtimeMs,
+            isSigned: validation.isSigned,
+            deleteAfterUse,
+        });
+        return {
+            success: true,
+            uploadHandle,
+            fileName: path.basename(preparedPath),
+            isSigned: validation.isSigned,
+            fileSize: validation.fileSize,
+            metadata: validation.metadata,
+        };
     } catch (error) {
         console.error('Error in prepareBackupForUpload:', error);
         return { success: false, message: `An error occurred: ${error.message}` };
     }
 });
 
-ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentType) => {
+ipcMain.handle('upload-prepared-backup', async (event, uploadHandle, idToken, appCheckToken, consent) => {
     requireTrustedIpcSender(event, true);
+    const prepared = preparedUploads.take(uploadHandle);
+    if (!prepared) {
+        return { success: false, message: 'This prepared upload has expired or was already used. Please select the file again.' };
+    }
+    let uploadId = null;
     try {
+        if (consent?.ownershipConfirmed !== true || consent?.hostingAccepted !== true) {
+            return { success: false, message: 'Ownership and hosting consent are required before upload.' };
+        }
+        const filePath = prepared.filePath;
         if (!filePath || path.extname(filePath).toLowerCase() !== '.planetcreations' || !fs.existsSync(filePath)) {
             return { success: false, message: 'The prepared backup file is missing or invalid.' };
         }
         const resolvedPath = path.resolve(filePath);
-        const allowedRoots = [app.getPath('temp'), app.getPath('documents')].map(root => path.resolve(root));
-        const isAllowedPath = allowedRoots.some(root => isPathInside(root, resolvedPath));
-        if (!isAllowedPath) {
-            return { success: false, message: 'The prepared file is outside an allowed local folder.' };
-        }
-        const parsedUrl = new URL(uploadUrl);
-        if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.r2.cloudflarestorage.com')) {
-            return { success: false, message: 'The upload target could not be verified.' };
-        }
         const stats = fs.statSync(resolvedPath);
-        if (!stats.isFile() || stats.size <= 0 || stats.size > 300 * 1024 * 1024) {
-            return { success: false, message: 'The backup must be between 1 byte and 300 MB.' };
+        if (!stats.isFile() || stats.size !== prepared.fileSize || stats.mtimeMs !== prepared.modifiedAtMs ||
+            stats.size <= 0 || stats.size > 300 * 1024 * 1024) {
+            return { success: false, message: 'The prepared backup changed before upload. Please select it again.' };
         }
-        const response = await fetch(uploadUrl, {
+        const validation = await validateBackupForUpload(resolvedPath);
+        if (!validation.valid || validation.fileSize !== prepared.fileSize) {
+            return { success: false, message: validation.error || 'The prepared backup could not be verified.' };
+        }
+
+        const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+        const confirmation = await dialog.showMessageBox(parentWindow, {
+            type: 'question',
+            title: 'Upload to PlanetCreations',
+            message: `Upload “${prepared.fileName}” to PlanetCreations?`,
+            detail: 'The signed package will be stored on PlanetCreations and shared with the Creation or collaboration you are editing. Continue only if you own it or have permission to share it.',
+            buttons: ['Cancel', 'Upload'],
+            defaultId: 1,
+            cancelId: 0,
+            noLink: true,
+        });
+        if (confirmation.response !== 1) {
+            return { success: false, status: 'canceled', message: 'Upload canceled.' };
+        }
+
+        const upload = await callPlanetCreationsCallable('getUploadUrl', {
+            fileName: prepared.fileName,
+            fileSize: prepared.fileSize,
+            ownershipConfirmed: true,
+            hostingAccepted: true,
+        }, idToken, appCheckToken);
+        uploadId = upload.uploadId;
+        const parsedUrl = new URL(upload.uploadUrl);
+        if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.r2.cloudflarestorage.com')) {
+            throw new Error('PlanetCreations returned an untrusted upload target.');
+        }
+        const response = await fetch(parsedUrl.toString(), {
             method: 'PUT',
             headers: {
-                'Content-Type': contentType || 'application/zip',
+                'Content-Type': upload.contentType || 'application/zip',
                 'Content-Length': String(stats.size),
             },
             body: fs.createReadStream(resolvedPath),
@@ -1730,21 +2052,38 @@ ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentT
             duplex: 'half',
         });
         if (!response.ok) {
-            return { success: false, status: response.status, message: `The file server returned HTTP ${response.status}.` };
+            throw new Error(`The file server returned HTTP ${response.status}.`);
         }
-        return { success: true, status: response.status };
+        return { success: true, status: response.status, uploadId };
     } catch (error) {
         console.error('R2 backup upload failed:', error);
-        return { success: false, message: 'The file could not be uploaded. Please try again.' };
+        if (uploadId) {
+            await callPlanetCreationsCallable('abortBackupUpload', { uploadId }, idToken, appCheckToken)
+                .catch(abortError => log.warn('Could not abort failed upload session:', abortError.message));
+        }
+        return { success: false, message: error.message || 'The file could not be uploaded. Please try again.' };
+    } finally {
+        deletePreparedTemporaryFile(prepared);
     }
 });
 
 // --- Andere Kern-Funktionen ---
-ipcMain.handle('import-media-backup', () => importMediaBackup(app, dialog));
-ipcMain.handle('has-media-snapshot', (event, filePath) => hasMediaSnapshot(filePath));
-ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken) =>
-    backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken));
-ipcMain.handle('delete-creation-media', (event, filePath, mode) => deleteCreationMedia(filePath, mode));
+ipcMain.handle('import-media-backup', (event) => {
+    requireTrustedIpcSender(event, true);
+    return importMediaBackup(app, dialog);
+});
+ipcMain.handle('has-media-snapshot', (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    return hasMediaSnapshot(filePath);
+});
+ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken) => {
+    requireTrustedIpcSender(event, true);
+    return backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken);
+});
+ipcMain.handle('delete-creation-media', (event, filePath, mode) => {
+    requireTrustedIpcSender(event, true);
+    return deleteCreationMedia(filePath, mode);
+});
 ipcMain.handle('scan-games', (event, basePath, options = {}) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
@@ -1756,6 +2095,7 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
     const sender = event.sender;
     const indexed = indexGamesFromPath(basePath, {
         forceMetadataRefresh: options?.forceMetadataRefresh === true,
+        dlcCatalogs: options?.dlcCatalogs,
     });
     indexed.results.__metadataProgress = {
         completed: 0,
@@ -1770,7 +2110,14 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
             let inspection = null;
             let inspectionError = null;
             try {
-                inspection = await inspectFrontierFileInWorker(pendingFile.path);
+                inspection = await inspectFrontierFileInWorker(
+                    pendingFile.path,
+                    options?.dlcCatalogs,
+                );
+                const mediaSync = syncAutomaticMediaSnapshot(pendingFile.path, inspection);
+                if (!mediaSync.success) {
+                    log.warn(`Automatic custom-media association failed for ${pendingFile.path}: ${mediaSync.message}`);
+                }
             } catch (error) {
                 inspectionError = error;
             }
@@ -1794,10 +2141,16 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
 
     return indexed.results;
 });
-ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken) =>
-    createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken));
-ipcMain.handle('list-all-backups', () => listAllBackups(app));
+ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken) => {
+    requireTrustedIpcSender(event, true);
+    return createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken);
+});
+ipcMain.handle('list-all-backups', (event) => {
+    requireTrustedIpcSender(event, true);
+    return listAllBackups(app);
+});
 ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath) => {
+    requireTrustedIpcSender(event, true);
     let targetPath = originalFilePath;
     if (!targetPath || !fs.existsSync(path.dirname(targetPath))) {
         try {
@@ -1817,21 +2170,50 @@ ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath)
     }
     return restoreBackup(app, backupFilePath, targetPath);
 });
-ipcMain.handle('delete-backup', (event, filePath) => deleteBackup(app, filePath));
-ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken, appCheckToken, includeMediaPackages) =>
-    backupAllCreations(app, files, note, isSigned, idToken, appCheckToken, includeMediaPackages));
-ipcMain.handle('scan-all-media-files', () => scanAllMediaFiles(app));
-ipcMain.handle('create-media-snapshot', (event, savePath, mediaPaths) => createOrUpdateSnapshot(savePath, mediaPaths));
-ipcMain.handle('sync-automatic-media-snapshot', (event, savePath) => syncAutomaticMediaSnapshot(savePath));
-ipcMain.handle('get-media-snapshot', (event, savePath) => getSnapshot(savePath));
-ipcMain.handle('install-media', (event, savePath, options) => installMedia(savePath, options));
-ipcMain.handle('uninstall-media', (event, savePath) => uninstallMedia(savePath));
-ipcMain.handle('get-media-status', (event, savePath) => getMediaSetStatus(savePath));
+ipcMain.handle('delete-backup', (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    return deleteBackup(app, filePath);
+});
+ipcMain.handle('backup-all-creations', (event, files, note, isSigned, idToken, appCheckToken, includeMediaPackages) => {
+    requireTrustedIpcSender(event, true);
+    return backupAllCreations(app, files, note, isSigned, idToken, appCheckToken, includeMediaPackages);
+});
+ipcMain.handle('scan-all-media-files', (event) => {
+    requireTrustedIpcSender(event, true);
+    return scanAllMediaFiles(app);
+});
+ipcMain.handle('create-media-snapshot', (event, savePath, mediaPaths) => {
+    requireTrustedIpcSender(event, true);
+    return createOrUpdateSnapshot(savePath, mediaPaths);
+});
+ipcMain.handle('sync-automatic-media-snapshot', (event, savePath) => {
+    requireTrustedIpcSender(event, true);
+    return syncAutomaticMediaSnapshot(savePath);
+});
+ipcMain.handle('get-media-snapshot', (event, savePath) => {
+    requireTrustedIpcSender(event, true);
+    return getSnapshot(savePath);
+});
+ipcMain.handle('install-media', (event, savePath, options) => {
+    requireTrustedIpcSender(event, true);
+    return installMedia(savePath, options);
+});
+ipcMain.handle('uninstall-media', (event, savePath) => {
+    requireTrustedIpcSender(event, true);
+    return uninstallMedia(savePath);
+});
+ipcMain.handle('get-media-status', (event, savePath) => {
+    requireTrustedIpcSender(event, true);
+    return getMediaSetStatus(savePath);
+});
 
 app.whenReady().then(() => {
-    if (process.platform === 'win32') app.setAppUserModelId('com.planetcreations.app');
+    if (process.platform === 'win32' && !isStoreBuild) app.setAppUserModelId('com.planetcreations.app');
+    configureSessionSecurity();
     overlayForcedVisible = readOverlaySettings().forcedVisible;
     createTray();
+    // Normal launches always start with the explicit Online Workshop / Offline
+    // Manager choice. Only intentional background/dev launch modes bypass it.
     createWindow({ openOnline: isAutoStart || useHostedUiInDev || openLocalUiInDev });
     startGameProcessMonitor();
     streamingIntegration = createStreamingIntegration();

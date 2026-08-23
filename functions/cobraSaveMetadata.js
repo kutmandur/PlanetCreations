@@ -434,6 +434,106 @@ function fillMissingRides(rides, kind, count, tags) {
     return result;
 }
 
+function scanStringReferences(buffer, strings) {
+    const references = [];
+    for (let offset = 0; offset < buffer.length; offset += 1) {
+        const reference = readVarUInt(buffer, offset);
+        const value = stringAt(strings, reference);
+        if (value) {
+            references.push({
+                offset,
+                endOffset: reference.offset,
+                index: reference.value,
+                value,
+            });
+        }
+    }
+    return references;
+}
+
+function zooTransportRide(typeId, name = null) {
+    const category = humanizeRideType(
+        String(typeId || "").replace(/^Transport_/i, ""),
+        "Transport ride",
+    );
+    return {
+        kind: "tracked",
+        name: typeof name === "string" && name.trim() ?
+            name.trim().slice(0, 500) : null,
+        typeId: typeof typeId === "string" && typeId ?
+            typeId.slice(0, 500) : null,
+        category: category.slice(0, 500),
+        rideCategoryKey: "transport-ride",
+        rideCategory: "Transport Ride",
+        ratings: null,
+    };
+}
+
+function parsePlanetZooTransportRides(body, strings) {
+    const header = readClientHeader(body);
+    if (!header || header.count <= 0 || header.count > MAX_RIDES) return [];
+    // Zoo Track records do not share Planet Coaster's stable end marker across
+    // all save versions. Their declared string references are stable, though,
+    // and each logical transport contributes one Transport_* type reference.
+    const references = scanStringReferences(
+        body.subarray(header.dataOffset),
+        strings,
+    );
+    return references
+        .filter((reference) =>
+            /^Transport_[A-Za-z0-9_]+$/.test(reference.value))
+        .slice(0, header.count)
+        .map((transportReference) => {
+            const nameReference = references.find((reference) =>
+                reference.offset >= transportReference.endOffset &&
+                reference.offset - transportReference.endOffset <= 12 &&
+                reference.index === transportReference.index + 1 &&
+                reference.value !== transportReference.value &&
+                !/^(?:Transport_|station_|train_default$|Scenario\d+_)/i
+                    .test(reference.value));
+            return zooTransportRide(
+                transportReference.value,
+                nameReference?.value,
+            );
+        });
+}
+
+function parsePlanetZooSaveMetadata(payload, kind) {
+    const strings = parseStringTable(payload);
+    if (!strings) return null;
+    const clients = parseClients(payload);
+    const trackedRideCount = getClientCount(clients, "Track") ?? 0;
+    const rideCount = getClientCount(clients, "Ride") ?? trackedRideCount;
+    const parsedRides = (kind === "park" || kind === "autosave") &&
+        clients.has("Track") ?
+        parsePlanetZooTransportRides(clients.get("Track"), strings) : [];
+    return {
+        animalHabitatCount: getClientCount(clients, "HabitatSerialisation"),
+        habitatAnimalCount: getClientCount(clients, "AnimalSerialisation"),
+        habitatObjectCount: getClientCount(clients, "HabitatObject"),
+        facilityCount: getClientCount(clients, "Facility"),
+        staffCount: getClientCount(clients, "StaffSerialisation"),
+        feedingStationCount: getClientCount(clients, "FeedingStation"),
+        keeperHutCount: getClientCount(clients, "KeeperHutSerialisation"),
+        donationBoxCount: getClientCount(clients, "DonationBox"),
+        animalTalkCount: getClientCount(clients, "AnimalTalkArea"),
+        lakeCount: getClientCount(clients, "Lake"),
+        pathSegmentCount: getClientCount(clients, "Paths"),
+        placedPartCount: getClientCount(clients, "PlacementPartData"),
+        binCount: getClientCount(clients, "Bins"),
+        benchCount: getClientCount(clients, "Benches"),
+        rideCount,
+        trackedRideCount,
+        stationCount: getClientCount(clients, "Station"),
+        rides: fillMissingRides(
+            parsedRides,
+            "tracked",
+            trackedRideCount,
+            [],
+        ),
+    };
+}
+
 function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = []) {
     const strings = parseStringTable(payload);
     if (!strings) return null;
@@ -497,6 +597,7 @@ function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = []) {
 
 module.exports = {
     parseCobraSaveMetadata,
+    parsePlanetZooSaveMetadata,
     parsePoolCount,
     parseTrackedRideTestDataCache,
     readVarUInt,

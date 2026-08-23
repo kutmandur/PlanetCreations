@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
@@ -19,6 +19,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [username, setUsername] = useState('');
+    const [minimumAgeConfirmed, setMinimumAgeConfirmed] = useState(false);
     const [loading, setLoading] = useState(false);
     const color = getGameColor(activeTab);
 
@@ -91,6 +92,9 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                 const email = emailOrUsername.trim();
                 const finalUsername = username.trim();
 
+                if (!minimumAgeConfirmed) {
+                    throw new Error('You must confirm that you are at least 16 and accept the Terms of Service.');
+                }
                 if (containsBlacklistedWord(finalUsername, blacklist)) {
                     throw new Error("Username contains a forbidden word.");
                 }
@@ -124,7 +128,13 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                 const batch = writeBatch(db);
 
                 const userDocRef = doc(db, 'users', user.uid);
-                batch.set(userDocRef, { role: 'user', createdAt: serverTimestamp() });
+                batch.set(userDocRef, {
+                    role: 'user',
+                    createdAt: serverTimestamp(),
+                    minimumAgeConfirmedAt: serverTimestamp(),
+                    termsAcceptedAt: serverTimestamp(),
+                    termsVersion: '2026-08-23',
+                });
 
                 const profileDocRef = doc(db, 'profiles', user.uid);
                 batch.set(profileDocRef, {
@@ -213,6 +223,24 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                                 className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${color.ring}`}
                                 required
                             />
+                        </div>
+                    )}
+                    {authAction === 'register' && (
+                        <div className="flex items-start gap-3 text-sm text-gray-700">
+                            <input
+                                id="minimumAgeConfirmed"
+                                type="checkbox"
+                                checked={minimumAgeConfirmed}
+                                onChange={(event) => setMinimumAgeConfirmed(event.target.checked)}
+                                className="mt-1 h-4 w-4 accent-blue-600"
+                                required
+                            />
+                            <label htmlFor="minimumAgeConfirmed">
+                                I confirm that I am at least 16 years old, agree to the{' '}
+                                <Link to="/terms-of-service" className={`${color.text} hover:underline`}>Terms of Service</Link>
+                                {' '}and acknowledge the{' '}
+                                <Link to="/privacy" className={`${color.text} hover:underline`}>Privacy Policy</Link>.
+                            </label>
                         </div>
                     )}
                     <button 

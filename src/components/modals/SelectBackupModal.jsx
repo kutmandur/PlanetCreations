@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 import { getGameColor, ICONS } from '../../utils/helpers';
@@ -7,6 +7,7 @@ import { getGameDisplayName, getGames } from '../../utils/gamesRegistry';
 const EMPTY_FILES = { parks: [], blueprints: [], autosaves: [], backups: [] };
 
 function fileKindLabel(file) {
+    if (file?.isBackup) return 'PlanetCreations backup';
     const kind = file?.frontierMetadata?.kind;
     if (kind === 'park') return 'Park save';
     if (kind === 'blueprint') return 'Blueprint';
@@ -31,38 +32,53 @@ const SelectBackupModal = ({
     const [previewLoading, setPreviewLoading] = useState(false);
     const [metadataLoading, setMetadataLoading] = useState(false);
     const [metadataError, setMetadataError] = useState(null);
+    const [configurationError, setConfigurationError] = useState(null);
 
     const effectiveGameId = allowGameSelection ? selectedGameId : game;
     const color = getGameColor(effectiveGameId || game);
 
-    useEffect(() => {
-        if (!isOpen) return;
-        const fetchFiles = async () => {
-            setLoading(true);
-            setSelectedFile(null);
-            setPreview(null);
-            setMetadataError(null);
-            setActiveTab('parks');
-            setSelectedGameId(game);
-            try {
-                const files = await window.electronAPI.listAllLocalCreationsAndBackups();
-                setLocalFiles(files);
-                if (allowGameSelection) {
-                    const options = getGames().filter(entry => {
-                        const groups = files?.[entry.name];
-                        return groups && Object.values(groups).some(items => Array.isArray(items) && items.length > 0);
-                    });
-                    if (!options.some(entry => entry.id === game)) setSelectedGameId(options[0]?.id || game);
-                }
-            } catch (error) {
-                console.error('Failed to fetch local files:', error);
-                setLocalFiles({});
-            } finally {
-                setLoading(false);
+    const fetchFiles = useCallback(async () => {
+        setLoading(true);
+        setSelectedFile(null);
+        setPreview(null);
+        setMetadataError(null);
+        setConfigurationError(null);
+        setActiveTab('parks');
+        setSelectedGameId(game);
+        try {
+            const files = await window.electronAPI.listAllLocalCreationsAndBackups();
+            setLocalFiles(files);
+            if (allowGameSelection) {
+                const options = getGames().filter(entry => {
+                    const groups = files?.[entry.name];
+                    return groups && Object.values(groups).some(items => Array.isArray(items) && items.length > 0);
+                });
+                if (!options.some(entry => entry.id === game)) setSelectedGameId(options[0]?.id || game);
             }
-        };
-        fetchFiles();
-    }, [allowGameSelection, game, isOpen]);
+        } catch (error) {
+            console.error('Failed to fetch local files:', error);
+            setLocalFiles({});
+        } finally {
+            setLoading(false);
+        }
+    }, [allowGameSelection, game]);
+
+    useEffect(() => {
+        if (isOpen) void fetchFiles();
+    }, [fetchFiles, isOpen]);
+
+    const handleChooseGameFolder = async () => {
+        if (!window.electronAPI?.selectFrontierFolder) {
+            setConfigurationError('Please update the desktop client, then choose your game folder again.');
+            return;
+        }
+        try {
+            const selectedPath = await window.electronAPI.selectFrontierFolder();
+            if (selectedPath) await fetchFiles();
+        } catch (error) {
+            setConfigurationError(error.message || 'The game folder could not be configured.');
+        }
+    };
 
     const gameOptions = useMemo(() => getGames().filter(entry => {
         if (!allowGameSelection) return entry.id === game;
@@ -92,19 +108,20 @@ const SelectBackupModal = ({
     useEffect(() => {
         const filePath = selectedFile?.path;
         if (!filePath) return undefined;
+        const isBackup = selectedFile.isBackup || String(filePath).toLowerCase().endsWith('.planetcreations');
         let cancelled = false;
         setPreview(null);
-        setPreviewLoading(Boolean(window.electronAPI?.readFrontierPreview));
+        setPreviewLoading(!isBackup && Boolean(window.electronAPI?.readFrontierPreview));
         setMetadataError(selectedFile.frontierMetadataError || null);
 
-        if (window.electronAPI?.readFrontierPreview) {
+        if (!isBackup && window.electronAPI?.readFrontierPreview) {
             window.electronAPI.readFrontierPreview(filePath)
                 .then(value => { if (!cancelled) setPreview(value || null); })
                 .catch(() => { if (!cancelled) setPreview(null); })
                 .finally(() => { if (!cancelled) setPreviewLoading(false); });
         }
 
-        if (!selectedFile.frontierMetadata && window.electronAPI?.inspectFrontierFile) {
+        if (!isBackup && !selectedFile.frontierMetadata && window.electronAPI?.inspectFrontierFile) {
             setMetadataLoading(true);
             window.electronAPI.inspectFrontierFile(filePath)
                 .then(inspection => {
@@ -150,6 +167,15 @@ const SelectBackupModal = ({
 
                 {loading ? (
                     <div className="flex flex-grow items-center justify-center p-12"><Spinner /></div>
+                ) : localFiles?.__configurationRequired ? (
+                    <div className="grid flex-grow place-items-center p-8 text-center">
+                        <div className="max-w-lg rounded-2xl border border-gray-200 bg-gray-50 p-8 dark:border-gray-700 dark:bg-gray-950">
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-white">Choose your game folder first</h3>
+                            <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">The desktop client needs the Frontier Developments folder that contains your local Planet Coaster 2 or Planet Zoo saves. The folder remains on this device.</p>
+                            {configurationError && <p className="mt-3 text-sm text-red-600 dark:text-red-300">{configurationError}</p>}
+                            <button type="button" onClick={handleChooseGameFolder} className={`mt-5 rounded-lg px-5 py-2.5 font-semibold text-white ${color.bg} ${color.hoverBg}`}>Choose Game Folder</button>
+                        </div>
+                    </div>
                 ) : (
                     <>
                         {allowGameSelection && gameOptions.length > 1 && (

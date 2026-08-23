@@ -11,9 +11,11 @@ const {
 } = require("./frontierMetadata");
 const {
     parseCobraSaveMetadata,
+    parsePlanetZooSaveMetadata,
     parsePoolCount,
     parseTrackedRideTestDataCache,
 } = require("./cobraSaveMetadata");
+const {normalizeFrontierDlcCatalog} = require("./frontierDlcResolver");
 
 function wrapFrontierMetadata(value) {
     const payload = Buffer.from(JSON.stringify(value));
@@ -144,6 +146,43 @@ test("normalizes the public park and blueprint metadata schema", () => {
     assert.deepEqual(result.requiredDlcBits, [2]);
 });
 
+test("resolves Planet Zoo DLC names while preserving future unknown bits", () => {
+    const result = normalizeFrontierMetadata({
+        nRequiredDLC: 7 + (2 ** 21),
+        tDLCNames: ["Deluxe", "Content1", "Content2", "Content21"],
+        tSave: {sParkName: "Future Zoo"},
+    }, "Future Zoo.zoo");
+
+    assert.deepEqual(result.requiredDlcs, [
+        "Deluxe Upgrade Pack",
+        "Arctic Pack",
+        "South America Pack",
+    ]);
+    assert.deepEqual(result.requiredDlcBits, [0, 1, 2, 21]);
+    assert.deepEqual(result.unknownDlcBits, [21]);
+    assert.equal(result.dlcMappingVersion, 2);
+});
+
+test("server metadata normalization prefers the current DLC catalog", () => {
+    const dlcCatalog = normalizeFrontierDlcCatalog("planet-zoo", {
+        names: ["Future Animal Pack"],
+        catalogVersion: 123,
+        saveMappings: {
+            "Future Animal Pack": {bit: 21, identifiers: ["Content21"]},
+        },
+    });
+    const result = normalizeFrontierMetadata({
+        nRequiredDLC: 2 ** 21,
+        tDLCNames: ["Content21"],
+        tSave: {sParkName: "Future Zoo"},
+    }, "Future Zoo.zoo", {dlcCatalog});
+
+    assert.deepEqual(result.requiredDlcs, ["Future Animal Pack"]);
+    assert.deepEqual(result.unknownDlcBits, []);
+    assert.deepEqual(result.unknownDlcIdentifiers, []);
+    assert.equal(result.dlcMappingVersion, 123);
+});
+
 test("extracts metadata only when signed identity and extension agree", () => {
     const payload = makeFrontierFile({
         sName: "Server Parsed Blueprint",
@@ -216,6 +255,98 @@ test("securely extracts per-ride metadata from the signed CobraSav payload", () 
     assert.ok(result.blueprint.rides.every((ride) => ride.ratings === null));
     assert.ok(result.blueprint.rides.every((ride) =>
         ride.rideCategory === "Water Slide"));
+});
+
+test("securely extracts Planet Zoo park, habitat and transport metadata", () => {
+    const cobraPayload = cobraBlueprint(
+        ["Transport_Steam_Train", "Goodwin Railway"],
+        [
+            cobraClient("HabitatSerialisation", 7, 6),
+            cobraClient("AnimalSerialisation", 4, 35),
+            cobraClient("HabitatObject", 3, 210),
+            cobraClient("Facility", 8, 18),
+            cobraClient("StaffSerialisation", 6, 12),
+            cobraClient("PlacementPartData", 51, 3684),
+            cobraClient("Paths", 9, 640),
+            cobraClient("Ride", 5, 1),
+            cobraClient("Station", 4, 2),
+            cobraClient("Track", 88, 1, Buffer.concat([
+                varUInt(0),
+                varUInt(1),
+                Buffer.from("c0c801010000f300", "hex"),
+            ])),
+        ],
+    );
+    const zip = new AdmZip();
+    zip.addFile("metadata", wrapFrontierMetadata({
+        sName: "Goodwin House",
+        nRequiredDLC: 18,
+        tDLCNames: ["Content1", "Content4"],
+        tSave: {
+            sParkName: "Goodwin House",
+            sGameMode: "Career",
+            sGeome: "Temperate",
+            sGameDifficulty: "Medium",
+            nGuestCount: 847,
+            nAnimalCount: 45,
+            nParkRating: 0.91,
+            nGuestHappiness: 0.82,
+            nCash: 12500500,
+            tStars: [true, true, false],
+        },
+    }));
+    zip.addFile("parkdata", wrapFrontierEntry(cobraPayload));
+
+    const result = extractFrontierMetadata(zip.toBuffer(), {
+        originalFileName: "Goodwin House.zoo",
+        expectedGameId: "planet-zoo",
+        expectedFileKind: "park",
+    });
+    assert.equal(result.gameId, "planet-zoo");
+    assert.equal(result.park.animalCount, 45);
+    assert.equal(result.park.animalHabitatCount, 6);
+    assert.equal(result.park.habitatAnimalCount, 35);
+    assert.equal(result.park.facilityCount, 18);
+    assert.equal(result.park.staffCount, 12);
+    assert.equal(result.park.placedPartCount, 3684);
+    assert.equal(result.park.pathSegmentCount, 640);
+    assert.equal(result.park.rides[0].typeId, "Transport_Steam_Train");
+    assert.equal(result.park.rides[0].name, "Goodwin Railway");
+    assert.deepEqual(result.requiredDlcs, ["Arctic Pack", "Aquatic Pack"]);
+    assert.deepEqual(result.requiredDlcBits, [1, 4]);
+    assert.deepEqual(result.unknownDlcBits, []);
+    assert.equal(result.dlcMappingVersion, 2);
+    assert.deepEqual(result.requiredDlcIdentifiers, ["Content1", "Content4"]);
+});
+
+test("Planet Zoo parser exposes only conservative manager counts", () => {
+    const payload = cobraBlueprint([], [
+        cobraClient("HabitatSerialisation", 7, 3),
+        cobraClient("AnimalSerialisation", 4, 12),
+        cobraClient("ExhibitSerialisation", 4, 999999),
+    ]);
+    const result = parsePlanetZooSaveMetadata(payload, "park");
+    assert.equal(result.animalHabitatCount, 3);
+    assert.equal(result.habitatAnimalCount, 12);
+    assert.equal(result.exhibitCount, undefined);
+    assert.equal(result.species, undefined);
+});
+
+test("Planet Zoo parser hides internal scenario identifiers used as ride names", () => {
+    const payload = cobraBlueprint(
+        ["Transport_Steam_Train", "Scenario01_SteamTrain01"],
+        [
+            cobraClient("Ride", 5, 1),
+            cobraClient("Track", 88, 1, Buffer.concat([
+                varUInt(0),
+                varUInt(1),
+                Buffer.from("c0c801010000f300", "hex"),
+            ])),
+        ],
+    );
+    const result = parsePlanetZooSaveMetadata(payload, "park");
+    assert.equal(result.rides[0].typeId, "Transport_Steam_Train");
+    assert.equal(result.rides[0].name, null);
 });
 
 test("extracts a logical pool instead of counting its serialized segments", () => {

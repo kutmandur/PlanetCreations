@@ -54,6 +54,43 @@ test('normalizes useful park and blueprint metadata including fixed-point costs'
     assert.equal(autosave.kind, 'autosave');
 });
 
+test('normalizes Planet Zoo park metadata and Frontier content identifiers', () => {
+    const normalized = normalizeFrontierMetadata({
+        sName: 'Goodwin House',
+        nRequiredDLC: 18,
+        tDLCNames: ['Content1', 'Content4'],
+        tSave: {
+            sParkName: 'Goodwin House',
+            sGameMode: 'Career',
+            sGeome: 'Temperate',
+            sGameDifficulty: 'Medium',
+            nGuestCount: 847,
+            nAnimalCount: 45,
+            nParkRating: 0.91,
+            nGuestHappiness: 0.82,
+            nCash: 12500500,
+            tStars: [true, true, false],
+        },
+    }, 'Goodwin House.zoo');
+
+    assert.equal(normalized.gameId, 'planet-zoo');
+    assert.equal(normalized.kind, 'park');
+    assert.equal(normalized.park.animalCount, 45);
+    assert.equal(normalized.park.parkRating, 0.91);
+    assert.equal(normalized.park.cash, 12500.5);
+    assert.equal(normalized.park.scenarioStarsEarned, 2);
+    assert.equal(normalized.isModded, null);
+    assert.equal(normalized.complexityLimitDisabled, null);
+    assert.equal(normalized.park.containsCustomContent, null);
+    assert.equal(normalized.park.isUserGeneratedPark, null);
+    assert.equal(normalized.park.isDiorama, null);
+    assert.deepEqual(normalized.requiredDlcs, ['Arctic Pack', 'Aquatic Pack']);
+    assert.deepEqual(normalized.requiredDlcBits, [1, 4]);
+    assert.deepEqual(normalized.unknownDlcBits, []);
+    assert.equal(normalized.dlcMappingVersion, 2);
+    assert.deepEqual(normalized.requiredDlcIdentifiers, ['Content1', 'Content4']);
+});
+
 test('extracts only safe supported custom-media base names', () => {
     const payload = Buffer.concat([
         Buffer.from('CobraSav\0screen.png\0ride.webm\0music.mp3\0türen.png\0/usr/docs/UserAudio/ride music.mp3\0'),

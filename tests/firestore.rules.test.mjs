@@ -11,6 +11,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  serverTimestamp,
   setDoc,
   updateDoc,
   writeBatch,
@@ -706,5 +707,48 @@ describe("scalable map-index Firestore rules", { concurrency: false }, () => {
         shardId: "forged",
       }));
     }
+  });
+});
+
+describe("content report Firestore rules", { concurrency: false }, () => {
+  test("users can submit a bounded generic content report and moderators can read it", async () => {
+    const reporterDb = authenticatedFirestore(OWNER_ID);
+    const moderatorDb = authenticatedFirestore(MODERATOR_ID, {role: "moderator"});
+    const reportRef = doc(reporterDb, "reports", "event-report");
+    await assertSucceeds(setDoc(reportRef, {
+      markerId: "event%3Arules-event",
+      reason: "This event contains inappropriate user-generated content.",
+      reporterId: OWNER_ID,
+      targetId: "rules-event",
+      targetPath: "/event/rules-event",
+      targetTitle: "Event content",
+      targetType: "event",
+      timestamp: serverTimestamp(),
+    }));
+    await assertFails(getDoc(reportRef));
+    await assertSucceeds(getDoc(doc(moderatorDb, "reports", "event-report")));
+  });
+
+  test("reports reject forged reporters, unknown target types and extra fields", async () => {
+    const reporterDb = authenticatedFirestore(OWNER_ID);
+    const baseReport = {
+      reason: "A sufficiently clear moderation reason.",
+      reporterId: OWNER_ID,
+      targetId: "rules-event",
+      targetType: "event",
+      timestamp: serverTimestamp(),
+    };
+    await assertFails(setDoc(doc(reporterDb, "reports", "forged-reporter"), {
+      ...baseReport,
+      reporterId: OUTSIDER_ID,
+    }));
+    await assertFails(setDoc(doc(reporterDb, "reports", "unknown-target"), {
+      ...baseReport,
+      targetType: "arbitrary-collection",
+    }));
+    await assertFails(setDoc(doc(reporterDb, "reports", "extra-field"), {
+      ...baseReport,
+      moderatorDecision: "forged",
+    }));
   });
 });

@@ -153,6 +153,9 @@ const CollaborationChangelogModal = ({
         let uploadId = null;
         let finalizationStarted = false;
         try {
+            if (!window.electronAPI?.uploadPreparedBackup) {
+                throw new Error('This desktop client must be updated before it can upload local files.');
+            }
             const [idToken, appCheckToken] = await Promise.all([
                 auth.currentUser.getIdToken(true),
                 getAppCheckTokenIfAvailable(),
@@ -166,21 +169,14 @@ const CollaborationChangelogModal = ({
                 throw new Error(prepared?.message || 'Could not prepare the newest save.');
             }
 
-            const getUploadUrl = httpsCallable(getFunctions(), 'getUploadUrl');
-            const { data } = await getUploadUrl({
-                fileName: prepared.fileName,
-                fileSize: prepared.fileSize,
-                ownershipConfirmed: true,
-                hostingAccepted: true,
-            });
-            uploadId = data.uploadId;
-
-            const result = await window.electronAPI.uploadBackupFile(
-                prepared.filePath,
-                data.uploadUrl,
-                data.contentType,
+            const result = await window.electronAPI.uploadPreparedBackup(
+                prepared.uploadHandle,
+                idToken,
+                appCheckToken,
+                { ownershipConfirmed: true, hostingAccepted: true },
             );
             if (!result?.success) throw new Error(result?.message || 'Upload failed.');
+            uploadId = result.uploadId;
 
             finalizationStarted = true;
             const finalized = await finalizeCollaborationVersion(

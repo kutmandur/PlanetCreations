@@ -20,6 +20,20 @@ function humanize(value) {
     return String(value || '').replace(/^(Filter_|Menu_|Coaster_)/, '').replaceAll('_', ' ').trim();
 }
 
+function formatPercent(value) {
+    return Number.isFinite(value) ? `${formatNumber(value * 100, 1)}%` : 'N/A';
+}
+
+function formatDlcIdentifier(value) {
+    return String(value || '').replace(/^Content(\d+)$/i, 'Content $1');
+}
+
+function planetZooDlcIdentifierBit(value) {
+    if (String(value).toLowerCase() === 'deluxe') return 0;
+    const match = /^Content(\d+)$/i.exec(String(value));
+    return match ? Number(match[1]) : null;
+}
+
 const Metric = ({ label, value, title, accent = '', compact = false }) => (
     <div className={`${compact ? 'rounded-lg px-2 py-1.5' : 'rounded-xl px-3 py-2.5'} border border-white/5 bg-gray-900/75`} title={title}>
         <p className={`${compact ? 'text-[8px] tracking-wide' : 'text-[10px] tracking-wider'} truncate uppercase text-gray-500`}>{label}</p>
@@ -162,15 +176,15 @@ const RideTestStats = ({ stats }) => {
     );
 };
 
-const RideOverview = ({ rides = [] }) => {
+const RideOverview = ({ rides = [], showTraceNote = true, eyebrow = 'Rides', title = 'Per-ride overview' }) => {
     const groups = useMemo(() => groupedRides(rides), [rides]);
     if (groups.length === 0) return null;
     return (
         <section className="space-y-4">
             <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-blue-300">Rides</p>
-                <h3 className="mt-1 text-xl font-semibold text-white">Per-ride overview</h3>
-                <p className="mt-1 text-[11px] text-gray-500">Calculated EFN trace values are retained for future improvements, but intentionally hidden until the calculation is reliable.</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-blue-300">{eyebrow}</p>
+                <h3 className="mt-1 text-xl font-semibold text-white">{title}</h3>
+                {showTraceNote && <p className="mt-1 text-[11px] text-gray-500">Calculated EFN trace values are retained for future improvements, but intentionally hidden until the calculation is reliable.</p>}
             </div>
             {groups.map(group => (
                 <div key={group.key} className="space-y-2">
@@ -189,7 +203,7 @@ const RideOverview = ({ rides = [] }) => {
                                     <span className={`rounded-full px-2 py-0.5 text-[10px] ${RIDE_CATEGORY_STYLES[group.key] || RIDE_CATEGORY_STYLES['tracked-ride']}`}>{group.label}</span>
                                 </div>
                                 {ride.ratings && <div className="mt-2"><p className="mb-1 text-[9px] uppercase tracking-wide text-gray-500">Final rating stored in blueprint metadata</p><RatingMetrics compact ratings={ride.ratings} /></div>}
-                                {ride.kind === 'tracked' && <RideTestStats stats={ride.testStats} />}
+                                {ride.kind === 'tracked' && showTraceNote && <RideTestStats stats={ride.testStats} />}
                             </article>
                         ))}
                     </div>
@@ -197,6 +211,61 @@ const RideOverview = ({ rides = [] }) => {
             ))}
         </section>
     );
+};
+
+const ZooMetricSection = ({ eyebrow, title, children }) => (
+    <section>
+        <div className="mb-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-emerald-300">{eyebrow}</p>
+            {title && <h3 className="mt-1 text-lg font-semibold text-white">{title}</h3>}
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">{children}</div>
+    </section>
+);
+
+const ZooOverview = ({ park, blueprint }) => {
+    const zoo = park || blueprint;
+    if (!zoo) return null;
+    return <div className="space-y-7">
+        <ZooMetricSection eyebrow="Zoo overview">
+            {park?.gameMode && <Metric label="Mode" value={humanize(park.gameMode)} />}
+            {park?.biome && <Metric label="Biome" value={humanize(park.biome)} />}
+            {park?.difficulty && <Metric label="Difficulty" value={humanize(park.difficulty)} />}
+            {Number.isFinite(park?.guestCount) && <Metric label="Guests" value={formatNumber(park.guestCount)} />}
+            {Number.isFinite(park?.animalCount) && <Metric label="Animals" value={formatNumber(park.animalCount)} title="Total animals stored by Planet Zoo, including habitat and exhibit animals." />}
+            {Number.isFinite(park?.parkRating) && <Metric label="Park rating" value={formatPercent(park.parkRating)} />}
+            {Number.isFinite(park?.guestHappiness) && <Metric label="Guest happiness" value={formatPercent(park.guestHappiness)} />}
+            {Number.isFinite(park?.cash) && <Metric label="Balance" value={formatGameMoney(park.cash)} />}
+            {Number.isFinite(park?.scenarioStarsTotal) && <Metric label="Scenario stars" value={`${formatNumber(park.scenarioStarsEarned)} / ${formatNumber(park.scenarioStarsTotal)}`} />}
+            {park?.isDiorama === true && <Metric label="Park type" value="Diorama" />}
+            {blueprint && Number.isFinite(blueprint.placementCost) && <Metric label="Build cost" value={formatGameMoney(blueprint.placementCost)} />}
+        </ZooMetricSection>
+
+        <ZooMetricSection eyebrow="Animals & habitats" title="Living collection">
+            {Number.isFinite(zoo.animalHabitatCount) && <Metric label="Habitats" value={formatNumber(zoo.animalHabitatCount)} />}
+            {Number.isFinite(zoo.habitatAnimalCount) && <Metric label="Habitat animals" value={formatNumber(zoo.habitatAnimalCount)} title="Animals serialized by the habitat-animal manager; exhibit animals are not included in this value." />}
+            {Number.isFinite(zoo.habitatObjectCount) && <Metric label="Habitat objects" value={formatNumber(zoo.habitatObjectCount)} />}
+            {Number.isFinite(zoo.feedingStationCount) && <Metric label="Feeding stations" value={formatNumber(zoo.feedingStationCount)} />}
+            {Number.isFinite(zoo.animalTalkCount) && <Metric label="Animal talks" value={formatNumber(zoo.animalTalkCount)} />}
+        </ZooMetricSection>
+
+        <ZooMetricSection eyebrow="Zoo operations" title="Facilities & staff">
+            {Number.isFinite(zoo.facilityCount) && <Metric label="Facilities" value={formatNumber(zoo.facilityCount)} />}
+            {Number.isFinite(zoo.staffCount) && <Metric label="Staff" value={formatNumber(zoo.staffCount)} />}
+            {Number.isFinite(zoo.keeperHutCount) && <Metric label="Keeper huts" value={formatNumber(zoo.keeperHutCount)} />}
+            {Number.isFinite(zoo.donationBoxCount) && <Metric label="Donation boxes" value={formatNumber(zoo.donationBoxCount)} />}
+            {Number.isFinite(zoo.binCount) && <Metric label="Bins" value={formatNumber(zoo.binCount)} />}
+            {Number.isFinite(zoo.benchCount) && <Metric label="Benches" value={formatNumber(zoo.benchCount)} />}
+        </ZooMetricSection>
+
+        <ZooMetricSection eyebrow="Construction & transport" title="Built environment">
+            {Number.isFinite(zoo.placedPartCount) && <Metric label="Construction parts" value={formatNumber(zoo.placedPartCount)} title="Serialized placement parts, including scenery and building pieces." />}
+            {Number.isFinite(zoo.pathSegmentCount) && <Metric label="Path segments" value={formatNumber(zoo.pathSegmentCount)} />}
+            {Number.isFinite(zoo.lakeCount) && <Metric label="Lakes" value={formatNumber(zoo.lakeCount)} />}
+            {Number.isFinite(zoo.rideCount) && <Metric label="Transport rides" value={formatNumber(zoo.rideCount)} />}
+            {Number.isFinite(zoo.stationCount) && <Metric label="Ride stations" value={formatNumber(zoo.stationCount)} />}
+        </ZooMetricSection>
+    </div>;
 };
 
 const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', metadataError, customMediaReferences = [] }) => {
@@ -228,12 +297,25 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
     const rides = park?.rides || blueprint?.rides || [];
     const trackedRideMetrics = trackedRideCategoryMetrics(rides, park?.trackedRideCount ?? blueprint?.trackedRideCount);
     const requiredDlcs = metadata?.requiredDlcs || [];
+    const requiredDlcIdentifiers = metadata?.requiredDlcIdentifiers || [];
+    const requiredDlcBits = metadata?.requiredDlcBits || [];
     const unknownDlcBits = metadata?.unknownDlcBits || [];
+    const unknownDlcIdentifiers = metadata?.unknownDlcIdentifiers;
+    const isPlanetZoo = metadata?.gameId === 'planet-zoo';
+    const unresolvedDlcIdentifiers = Array.isArray(unknownDlcIdentifiers) ? unknownDlcIdentifiers :
+        (isPlanetZoo ? requiredDlcIdentifiers.filter(identifier => {
+        const bit = planetZooDlcIdentifierBit(identifier);
+        return bit === null || !requiredDlcBits.includes(bit) || unknownDlcBits.includes(bit);
+    }) : requiredDlcIdentifiers);
+    const identifiedUnknownBits = new Set(unresolvedDlcIdentifiers
+        .map(planetZooDlcIdentifierBit)
+        .filter(Number.isSafeInteger));
+    const displayedUnknownDlcBits = unknownDlcBits.filter(bit => !identifiedUnknownBits.has(bit));
 
     const modal = isOpen && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-2 backdrop-blur-sm sm:p-3" onMouseDown={event => { if (event.target === event.currentTarget) setIsOpen(false); }}>
             <div role="dialog" aria-modal="true" aria-label="Creation stats" className="flex max-h-[calc(100vh-1rem)] w-full max-w-none flex-col overflow-hidden rounded-3xl border border-gray-700 bg-gray-950 shadow-2xl sm:max-h-[calc(100vh-1.5rem)]">
-                <header className="relative min-h-48 overflow-hidden bg-gradient-to-br from-blue-950 via-gray-900 to-purple-950">
+                <header className={`relative min-h-48 overflow-hidden bg-gradient-to-br ${isPlanetZoo ? 'from-emerald-950 via-gray-900 to-lime-950' : 'from-blue-950 via-gray-900 to-purple-950'}`}>
                     {preview && <img src={preview} alt="In-game save preview" className="absolute inset-0 h-full w-full object-cover opacity-65" />}
                     <div className="absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/35 to-black/10" />
                     {previewLoading && <p className="absolute left-6 top-6 text-xs text-white/70">Loading save image…</p>}
@@ -241,7 +323,7 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
                     <div className="absolute inset-x-0 bottom-0 p-5 sm:p-7">
                         <div className="flex flex-wrap items-end justify-between gap-3">
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">{blueprint ? 'Blueprint' : park ? 'Park save' : 'Creation'}</p>
+                                <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${isPlanetZoo ? 'text-emerald-300' : 'text-blue-300'}`}>{isPlanetZoo ? (blueprint ? 'Zoo blueprint' : park ? 'Zoo save' : 'Planet Zoo creation') : (blueprint ? 'Blueprint' : park ? 'Park save' : 'Creation')}</p>
                                 <h2 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{metadata?.name || park?.parkName || 'Creation analysis'}</h2>
                             </div>
                             {metadataStatus === 'pending' && <span className="rounded-full bg-blue-500/20 px-3 py-1 text-xs text-blue-200">Analysis queued</span>}
@@ -254,7 +336,7 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
                     {!metadata && metadataStatus === 'pending' && <div className="rounded-2xl bg-gray-900 p-6 text-sm text-gray-300">This file is waiting for its turn in the sequential metadata scan. The view updates automatically.</div>}
                     {metadataError && <div className="mb-5 rounded-xl border border-amber-800 bg-amber-950/40 p-3 text-sm text-amber-200">{metadataError}</div>}
                     {metadata && <div className="space-y-8">
-                        <section>
+                        {isPlanetZoo ? <ZooOverview park={park} blueprint={blueprint} /> : <section>
                             <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-300">Overview</p>
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                                 {park && <>
@@ -288,19 +370,25 @@ const CreationMetadataPanel = ({ metadata, filePath, metadataStatus = 'ready', m
                                 </>}
                             </div>
                             {park && Number.isFinite(park.placedPartCount) && <p className="mt-3 text-xs leading-relaxed text-gray-500">Construction parts already include grouped scenery, props and most effect objects. Rails, tracked-ride elements and some simulation objects are stored in separate managers, so they are shown separately instead of being combined into an unverified in-game selection total.</p>}
-                        </section>
+                        </section>}
 
-                        {blueprint?.ratings && <section><p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-300">Stored blueprint rating</p><RatingMetrics ratings={blueprint.ratings} /></section>}
-                        <RideOverview rides={rides} />
+                        {!isPlanetZoo && blueprint?.ratings && <section><p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-300">Stored blueprint rating</p><RatingMetrics ratings={blueprint.ratings} /></section>}
+                        <RideOverview
+                            rides={rides}
+                            showTraceNote={!isPlanetZoo}
+                            eyebrow={isPlanetZoo ? 'Transport' : 'Rides'}
+                            title={isPlanetZoo ? 'Transport ride overview' : 'Per-ride overview'}
+                        />
 
                         <section className="grid gap-4 lg:grid-cols-2">
                             <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4">
                                 <h3 className="font-semibold text-white">Required DLC</h3>
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {requiredDlcs.map(dlc => <span key={dlc} className="rounded-full bg-purple-900/70 px-2.5 py-1 text-xs text-purple-200">{dlc}</span>)}
+                                    {unresolvedDlcIdentifiers.map(identifier => <span key={identifier} title="Frontier content identifier without a known DLC mapping" className="rounded-full bg-amber-900/60 px-2.5 py-1 text-xs text-amber-200">Unknown DLC ({formatDlcIdentifier(identifier)})</span>)}
                                     {metadata.requiredDlc === null && <span className="text-sm text-gray-400">DLC metadata unavailable</span>}
-                                    {metadata.requiredDlc !== null && requiredDlcs.length === 0 && unknownDlcBits.length === 0 && <span className="text-sm text-gray-400">No DLC detected</span>}
-                                    {unknownDlcBits.map(bit => <span key={bit} className="rounded-full bg-amber-900/60 px-2.5 py-1 text-xs text-amber-200">Unknown bit {bit}</span>)}
+                                    {metadata.requiredDlc !== null && requiredDlcs.length === 0 && unresolvedDlcIdentifiers.length === 0 && displayedUnknownDlcBits.length === 0 && <span className="text-sm text-gray-400">No DLC detected</span>}
+                                    {displayedUnknownDlcBits.map(bit => <span key={bit} className="rounded-full bg-amber-900/60 px-2.5 py-1 text-xs text-amber-200">Unknown DLC (Bit {bit})</span>)}
                                 </div>
                             </div>
                             <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4 text-sm text-gray-300">

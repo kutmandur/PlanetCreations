@@ -147,3 +147,49 @@ test('keeps calculated EFN hidden while showing conservative stored test-trace f
     expect(screen.queryByText(/2[.,]5/)).not.toBeInTheDocument();
     expect(screen.queryByText('Final ride rating')).not.toBeInTheDocument();
 });
+
+test('renders a dedicated Planet Zoo overview with safe counts and transport rides', () => {
+    render(<CreationMetadataPanel customMediaReferences={['habitat-screen.png']} metadata={{
+        gameId: 'planet-zoo',
+        kind: 'park',
+        name: 'Goodwin House',
+        requiredDlc: 18,
+        requiredDlcs: ['Arctic Pack', 'Aquatic Pack'],
+        requiredDlcBits: [1, 4],
+        requiredDlcIdentifiers: ['Content1', 'Content4'],
+        unknownDlcBits: [],
+        park: {
+            gameMode: 'Career', biome: 'Temperate', difficulty: 'Medium',
+            guestCount: 847, animalCount: 45, parkRating: 0.91, guestHappiness: 0.82,
+            cash: 12500.5, scenarioStarsEarned: 2, scenarioStarsTotal: 3,
+            animalHabitatCount: 6, habitatAnimalCount: 35, habitatObjectCount: 210,
+            feedingStationCount: 22, animalTalkCount: 2, facilityCount: 18,
+            staffCount: 12, keeperHutCount: 3, donationBoxCount: 14,
+            binCount: 17, benchCount: 11, placedPartCount: 3684,
+            pathSegmentCount: 640, lakeCount: 4, rideCount: 1, stationCount: 2,
+            rides: [{
+                kind: 'tracked', name: 'Goodwin Railway', category: 'Steam Train',
+                typeId: 'Transport_Steam_Train', rideCategoryKey: 'transport-ride',
+                rideCategory: 'Transport Ride', ratings: null,
+            }],
+        },
+        blueprint: null,
+    }} />);
+
+    fireEvent.click(screen.getByText('View stats'));
+    expect(screen.getByText('Zoo save')).toBeInTheDocument();
+    expect(screen.getByText('Animals & habitats')).toBeInTheDocument();
+    expect(screen.getByText('Zoo operations')).toBeInTheDocument();
+    expect(screen.getByText('Construction & transport')).toBeInTheDocument();
+    expect(screen.getByText('Park rating')).toBeInTheDocument();
+    expect(screen.getByText('91%')).toBeInTheDocument();
+    expect(screen.getByText('Habitats')).toBeInTheDocument();
+    expect(screen.getByText('Habitat animals')).toBeInTheDocument();
+    expect(screen.getByText('Goodwin Railway')).toBeInTheDocument();
+    expect(screen.getByText('Arctic Pack')).toBeInTheDocument();
+    expect(screen.getByText('Aquatic Pack')).toBeInTheDocument();
+    expect(screen.queryByText('Content 1')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unknown DLC/)).not.toBeInTheDocument();
+    expect(screen.getByText('habitat-screen.png')).toBeInTheDocument();
+    expect(screen.queryByText(/No completed ride-test trace/)).not.toBeInTheDocument();
+});
