@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const baseBuild = require('./package.json').build;
 
@@ -12,10 +13,13 @@ const storeValue = (name, fallback) => {
 const identityName = storeValue('STORE_IDENTITY_NAME', 'DonReichau.PlanetCreationsClient');
 const publisher = storeValue('STORE_PUBLISHER', 'CN=8EA44CF3-DC41-47A9-8F85-4E91ECB404D5');
 const publisherDisplayName = storeValue('STORE_PUBLISHER_DISPLAY_NAME', 'Don Reichau');
+const installedElectronDist = path.join(__dirname, 'node_modules/electron/dist');
+const electronExecutable = path.join(installedElectronDist, 'electron.exe');
+const electronDist = fs.existsSync(electronExecutable) ? installedElectronDist : null;
 
 module.exports = {
     ...baseBuild,
-    electronDist: path.join(__dirname, 'node_modules/electron/dist'),
+    ...(electronDist ? { electronDist } : {}),
     publish: null,
     directories: {
         ...baseBuild.directories,
