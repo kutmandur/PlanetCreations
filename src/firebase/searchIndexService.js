@@ -1,4 +1,5 @@
 import { fetchScalableMapIndex } from './scalableIndexService';
+import { cacheFrontierDlcCatalog } from '../utils/frontierDlcCatalogCache';
 
 // Größenbasierter Suchindex: ein State-Dokument und beliebig viele Shards pro
 // Spiel, gepflegt vom Cloud-Function-Trigger syncCreationToSearchIndex.
@@ -47,6 +48,7 @@ export async function fetchSearchIndex(game) {
         shardCollection: 'searchIndexShards',
         stateCollection: 'searchIndexState',
     });
+    cacheFrontierDlcCatalog(game, scalableIndex?.metadata?.dlcCatalog);
     const entries = scalableIndex?.entries || {};
     return Object.entries(entries).map(([id, entry]) => entryToCreation(id, entry));
 }

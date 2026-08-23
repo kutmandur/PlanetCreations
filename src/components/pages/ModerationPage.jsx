@@ -10,7 +10,7 @@ import TagManager from '../management/TagManager';
 import CollaborationManager from '../management/CollaborationManager';
 
 const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPasswordConfirm, setConfirmation, blacklist }) => {
-    const TABS = useRef(['Reported Creations', 'Reported Users', 'Collaborations', 'Blacklist', 'Tag Library']).current;
+    const TABS = useRef(['Reported Creations', 'Reported Users', 'Reported Content', 'Collaborations', 'Blacklist', 'Tag Library']).current;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -40,18 +40,19 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     }, [activeTab, TABS]);
     
     useEffect(() => {
-        if (activeTab !== 'Reported Creations' && activeTab !== 'Reported Users') return;
+        if (!activeTab.startsWith('Reported')) return;
         let isMounted = true;
         setLoadingReports(true);
         const q = query(collection(db, 'reports'));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const allReports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             const grouped = allReports.reduce((acc, report) => {
-                const { targetId, targetType, targetTitle, reason, timestamp, reporterId } = report;
-                if (!acc[targetId]) {
-                    acc[targetId] = { id: targetId, type: targetType, title: targetTitle, reports: [] };
+                const { targetId, targetType, targetTitle, targetPath, markerId, reason, timestamp, reporterId } = report;
+                const groupKey = `${targetType}:${targetId}`;
+                if (!acc[groupKey]) {
+                    acc[groupKey] = { id: targetId, type: targetType, title: targetTitle, targetPath, reports: [] };
                 }
-                acc[targetId].reports.push({ reason, timestamp, reporterId });
+                acc[groupKey].reports.push({ reason, timestamp, reporterId, markerId });
                 return acc;
             }, {});
             if (isMounted) {
@@ -94,9 +95,11 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
             const reportsQuery = query(collection(db, 'reports'), where('targetId', '==', targetId));
             const reportsSnapshot = await getDocs(reportsQuery);
             reportsSnapshot.forEach(reportDoc => {
-                const reporterId = reportDoc.data().reporterId;
+                const report = reportDoc.data();
+                if (report.targetType !== targetType) return;
+                const reporterId = report.reporterId;
                 if (reporterId) {
-                    const reportMarkerRef = doc(db, 'users', reporterId, 'reportedItems', targetId);
+                    const reportMarkerRef = doc(db, 'users', reporterId, 'reportedItems', report.markerId || targetId);
                     batch.delete(reportMarkerRef);
                 }
                 batch.delete(reportDoc.ref);
@@ -184,8 +187,10 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     const renderContent = () => {
         if (activeTab.startsWith('Reported')) {
             if (loadingReports) return <Spinner />;
-            const filterType = activeTab === 'Reported Creations' ? 'creation' : 'user';
-            const filteredReports = reports.filter(item => item.type === filterType);
+            const filterType = activeTab === 'Reported Creations' ? 'creation' :
+                (activeTab === 'Reported Users' ? 'user' : 'content');
+            const filteredReports = reports.filter(item => filterType === 'content' ?
+                !['creation', 'user'].includes(item.type) : item.type === filterType);
             if (filteredReports.length === 0) {
                 return <p className="text-center text-gray-500 mt-10">No reported {filterType}s found.</p>;
             }

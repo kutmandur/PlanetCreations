@@ -62,6 +62,7 @@ const {
     buildCreationMetadataUpdate,
     extractFrontierMetadata,
 } = require("./frontierMetadata");
+const {normalizeFrontierDlcCatalog} = require("./frontierDlcResolver");
 const {
     getEffectiveCommunityPermissionKeys,
     hashCommunityPassword,
@@ -607,11 +608,47 @@ function validateBackupBuffer(fileBuffer, publicKey, allowedExtensions = ALLOWED
     }
 }
 
-function buildVerifiedGameMetadata(validation) {
+const frontierDlcCatalogCache = new Map();
+const FRONTIER_DLC_CATALOG_CACHE_MS = 60 * 1000;
+
+async function getServerFrontierDlcCatalog(gameId) {
+    const cached = frontierDlcCatalogCache.get(gameId);
+    if (cached?.expiresAt > Date.now()) return cached.catalog;
+    try {
+        const snapshot = await db.doc(`dlcs/${gameId}`).get();
+        const catalog = normalizeFrontierDlcCatalog(
+            gameId,
+            snapshot.exists ? snapshot.data() : null,
+        );
+        frontierDlcCatalogCache.set(gameId, {
+            catalog,
+            expiresAt: Date.now() + FRONTIER_DLC_CATALOG_CACHE_MS,
+        });
+        return catalog;
+    } catch (error) {
+        console.warn(`Could not load the ${gameId} DLC catalog; using fallback:`, error.message);
+        return normalizeFrontierDlcCatalog(gameId, null);
+    }
+}
+
+function getPublicFrontierDlcCatalog(catalog) {
+    return {
+        version: catalog.version,
+        entries: catalog.entries.map((entry) => ({
+            name: entry.name,
+            bit: Number.isSafeInteger(entry.bit) ? entry.bit : null,
+            identifiers: Array.isArray(entry.identifiers) ? entry.identifiers : [],
+        })),
+    };
+}
+
+async function buildVerifiedGameMetadata(validation) {
+    const dlcCatalog = await getServerFrontierDlcCatalog(validation.metadata.gameId);
     const metadata = extractFrontierMetadata(validation.payloadBuffer, {
         originalFileName: validation.metadata.originalFileName,
         expectedGameId: validation.metadata.gameId,
         expectedFileKind: validation.metadata.fileKind,
+        dlcCatalog,
     });
     return {
         schemaVersion: VERIFIED_METADATA_SCHEMA_VERSION,
@@ -1111,7 +1148,7 @@ exports.finalizeBackupUpload = onCallWith(
             if (validation.metadata.gameId !== creationSnap.data().game) {
                 throw new Error("The game in the package does not match the creation.");
             }
-            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
             const metadataUpdate = buildCreationMetadataUpdate(
                 creationSnap.data().requiredDlcs,
                 verifiedGameMetadata,
@@ -1266,7 +1303,7 @@ exports.refreshCreationGameMetadata = onCallWith(
                 throw new Error("The stored package identity does not match the creation.");
             }
 
-            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
             const metadataUpdate = buildCreationMetadataUpdate(
                 creation.requiredDlcs,
                 verifiedGameMetadata,
@@ -3727,6 +3764,30 @@ const buildIndexEntry = (data) => ({
 });
 
 /**
+ * Mirrors the small DLC resolver catalog into the search-index state document.
+ * Workshop clients already read this document, so this adds no client read.
+ */
+exports.syncDlcCatalogToSearchIndex = documentWritten(
+    'dlcs/{gameId}',
+    async (change, context) => {
+        const gameId = context.params.gameId;
+        const catalog = normalizeFrontierDlcCatalog(
+            gameId,
+            change.after.exists ? change.after.data() : null,
+        );
+        frontierDlcCatalogCache.set(gameId, {
+            catalog,
+            expiresAt: Date.now() + FRONTIER_DLC_CATALOG_CACHE_MS,
+        });
+        await db.doc(`searchIndexState/${gameId}`).set({
+            m: {dlcCatalog: getPublicFrontierDlcCatalog(catalog)},
+            updatedAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
+        return null;
+    },
+);
+
+/**
  * Hält den skalierbaren Spiel-Suchindex mit der creations-Collection synchron.
  * Bewusst eigener Trigger: leichtgewichtig und ohne R2-Kopplung oder das
  * 1GB/300s-Profil der expliziten ZIP-Finalisierung.
@@ -4565,7 +4626,7 @@ exports.createCollaboration = onCallWith({
                     "The game in the initial save does not match the collaboration.",
                 );
             }
-            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
 
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
@@ -6454,7 +6515,7 @@ exports.finalizeCollaborationVersion = onCallWith(
             if (validation.metadata.gameId !== collabSnap.data().game) {
                 throw new Error("The game in the package does not match the collaboration.");
             }
-            const verifiedGameMetadata = buildVerifiedGameMetadata(validation);
+            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
 
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
@@ -7992,7 +8053,10 @@ app.get("/rebuildSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (r
         // Generationssicherer Rebuild: neue Shards werden vollständig geschrieben,
         // bevor das kleine State-Dokument auf sie umgeschaltet wird.
         for (const [game, entries] of Object.entries(perGame)) {
-            await replaceMapIndex(db, 'search', game, entries);
+            const dlcCatalog = await getServerFrontierDlcCatalog(game);
+            await replaceMapIndex(db, 'search', game, entries, {
+                metadata: {dlcCatalog: getPublicFrontierDlcCatalog(dlcCatalog)},
+            });
         }
         // Verwaiste State-/Shard-Generationen entfernter Spiele abräumen.
         const existingStates = await db.collection('searchIndexState').get();

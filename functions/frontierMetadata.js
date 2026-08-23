@@ -2,11 +2,14 @@
 
 const path = require("path");
 const AdmZip = require("adm-zip");
-const {resolveFrontierDlcMask} = require("./frontierDlcResolver");
-const {parseCobraSaveMetadata} = require("./cobraSaveMetadata");
+const {resolveFrontierDlcRequirements} = require("./frontierDlcResolver");
+const {
+    parseCobraSaveMetadata,
+    parsePlanetZooSaveMetadata,
+} = require("./cobraSaveMetadata");
 
 const FRONTIER_WRAPPER_MAGIC = "ff00fe01";
-const VERIFIED_METADATA_SCHEMA_VERSION = 3;
+const VERIFIED_METADATA_SCHEMA_VERSION = 4;
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_CREATION_PAYLOAD_BYTES = 512 * 1024 * 1024;
 const GAME_BY_EXTENSION = new Map([
@@ -70,7 +73,7 @@ function unwrapFrontierEntry(buffer, maximumPayloadBytes = MAX_METADATA_BYTES) {
     return buffer.subarray(16);
 }
 
-function normalizeFrontierMetadata(rawMetadata, originalFileName) {
+function normalizeFrontierMetadata(rawMetadata, originalFileName, options = {}) {
     if (!rawMetadata || typeof rawMetadata !== "object" || Array.isArray(rawMetadata)) {
         throw new Error("The Frontier metadata root must be an object.");
     }
@@ -91,9 +94,13 @@ function normalizeFrontierMetadata(rawMetadata, originalFileName) {
     const placementCostRaw = integer(blueprint?.nPlacementCost);
     const runningCostRaw = integer(blueprint?.nRunningCost);
     const requiredDlc = integer(rawMetadata.nRequiredDLC);
-    const dlcRequirements = resolveFrontierDlcMask(
-        GAME_BY_EXTENSION.get(extension),
+    const gameId = GAME_BY_EXTENSION.get(extension);
+    const requiredDlcIdentifiers = stringArray(rawMetadata.tDLCNames, 100, 100);
+    const dlcRequirements = resolveFrontierDlcRequirements(
+        gameId,
         requiredDlc,
+        requiredDlcIdentifiers,
+        options.dlcCatalog || null,
     );
     if (kind === "blueprint" && !blueprint) {
         throw new Error("The Frontier blueprint metadata section is missing.");
@@ -103,6 +110,7 @@ function normalizeFrontierMetadata(rawMetadata, originalFileName) {
     }
 
     const normalized = {
+        gameId,
         kind,
         name: stringValue(rawMetadata.sName, 500) ||
             stringValue(save?.sParkName, 500),
@@ -116,7 +124,9 @@ function normalizeFrontierMetadata(rawMetadata, originalFileName) {
         requiredDlcs: dlcRequirements.requiredDlcs,
         requiredDlcBits: dlcRequirements.requiredDlcBits,
         unknownDlcBits: dlcRequirements.unknownDlcBits,
+        unknownDlcIdentifiers: dlcRequirements.unknownDlcIdentifiers,
         dlcMappingVersion: dlcRequirements.mappingVersion,
+        requiredDlcIdentifiers,
         loadCriticalDlc: integer(rawMetadata.nLoadCriticalDLC),
         tags: stringArray(rawMetadata.tTags),
         park: save ? {
@@ -130,6 +140,23 @@ function normalizeFrontierMetadata(rawMetadata, originalFileName) {
             complexity: finiteNumber(save.nComplexity),
             containsCustomContent: booleanValue(save.bContainsUGC),
             isUserGeneratedPark: booleanValue(save.bIsUGCPark),
+            ...(gameId === "planet-zoo" ? {
+                animalCount: integer(save.nAnimalCount),
+                parkRating: finiteNumber(save.nParkRating),
+                guestHappiness: finiteNumber(save.nGuestHappiness),
+                cashRaw: integer(save.nCash),
+                cash: integer(save.nCash) === null ? null : save.nCash / 1000,
+                difficulty: stringValue(save.sGameDifficulty, 200),
+                continentId: integer(save.nContinentEnum),
+                latitude: finiteNumber(save.nLatitude),
+                longitude: finiteNumber(save.nLongitude),
+                scenarioCode: stringValue(save.sScenarioCode, 500),
+                scenarioStarsEarned: Array.isArray(save.tStars) ?
+                    save.tStars.filter(Boolean).length : null,
+                scenarioStarsTotal: Array.isArray(save.tStars) ?
+                    save.tStars.length : null,
+                isDiorama: booleanValue(save.bIsDiorama),
+            } : {}),
         } : null,
         blueprint: blueprint ? {
             placementCost: placementCostRaw === null ?
@@ -209,26 +236,32 @@ function extractFrontierMetadata(payloadBuffer, options) {
     } catch {
         throw new Error("The Frontier metadata entry is not valid JSON.");
     }
-    const normalized = normalizeFrontierMetadata(rawMetadata, originalFileName);
-    if (expectedGameForExtension === "planet-coaster-2") {
-        const creationEntry = archive.getEntry(expectedKindForExtension === "blueprint" ?
-            "blueprint" : "parkdata");
-        if (creationEntry && !creationEntry.isDirectory &&
-            Number.isSafeInteger(creationEntry.header.size) &&
-            creationEntry.header.size <= MAX_CREATION_PAYLOAD_BYTES + 16) {
-            try {
-                const creationPayload = unwrapFrontierEntry(
-                    creationEntry.getData(),
-                    MAX_CREATION_PAYLOAD_BYTES,
-                );
-                const inner = parseCobraSaveMetadata(
+    const normalized = normalizeFrontierMetadata(rawMetadata, originalFileName, options);
+    const creationEntry = archive.getEntry(expectedKindForExtension === "blueprint" ?
+        "blueprint" : "parkdata");
+    if (creationEntry && !creationEntry.isDirectory &&
+        Number.isSafeInteger(creationEntry.header.size) &&
+        creationEntry.header.size <= MAX_CREATION_PAYLOAD_BYTES + 16) {
+        try {
+            const creationPayload = unwrapFrontierEntry(
+                creationEntry.getData(),
+                MAX_CREATION_PAYLOAD_BYTES,
+            );
+            const inner = expectedGameForExtension === "planet-coaster-2" ?
+                parseCobraSaveMetadata(
                     creationPayload,
                     expectedKindForExtension,
                     normalized.blueprint?.ratings,
                     normalized.tags,
+                ) : parsePlanetZooSaveMetadata(
+                    creationPayload,
+                    expectedKindForExtension,
                 );
-                if (inner && normalized.park) Object.assign(normalized.park, inner);
-                if (inner && normalized.blueprint) {
+            if (inner && normalized.park) Object.assign(normalized.park, inner);
+            if (inner && normalized.blueprint) {
+                if (expectedGameForExtension === "planet-zoo") {
+                    Object.assign(normalized.blueprint, inner);
+                } else {
                     normalized.blueprint.rideCount = inner.rideCount;
                     normalized.blueprint.rides = inner.rides;
                     normalized.blueprint.placedPartCount = inner.placedPartCount;
@@ -240,9 +273,9 @@ function extractFrontierMetadata(payloadBuffer, options) {
                     normalized.blueprint.binCount = inner.binCount;
                     normalized.blueprint.poolCount = inner.poolCount;
                 }
-            } catch {
-                // Preserve verified outer metadata if the optional internal layout is newer.
             }
+        } catch {
+            // Preserve verified outer metadata if the optional internal layout is newer.
         }
     }
     return normalized;

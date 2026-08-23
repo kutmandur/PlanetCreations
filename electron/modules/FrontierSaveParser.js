@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
-const { resolveFrontierDlcMask } = require('./FrontierDlcResolver');
-const { parseCobraSaveMetadata } = require('./CobraSaveMetadata');
+const { resolveFrontierDlcRequirements } = require('./FrontierDlcResolver');
+const { parseCobraSaveMetadata, parsePlanetZooSaveMetadata } = require('./CobraSaveMetadata');
 
 const FRONTIER_WRAPPER_MAGIC = 'ff00fe01';
 const CLIENT_DATA_MARKER = Buffer.from('<<ClientClient>>\xf3', 'latin1');
@@ -27,6 +27,10 @@ function integer(value) {
     return Number.isSafeInteger(value) ? value : null;
 }
 
+function booleanValue(value) {
+    return typeof value === 'boolean' ? value : null;
+}
+
 function stringValue(value) {
     return typeof value === 'string' && value.length > 0 ? value : null;
 }
@@ -46,7 +50,7 @@ function unwrapFrontierEntry(buffer, maximumPayloadBytes) {
     };
 }
 
-function normalizeFrontierMetadata(rawMetadata, filePath = '') {
+function normalizeFrontierMetadata(rawMetadata, filePath = '', options = {}) {
     if (!rawMetadata || typeof rawMetadata !== 'object' || Array.isArray(rawMetadata)) return null;
     const save = rawMetadata.tSave && typeof rawMetadata.tSave === 'object' ? rawMetadata.tSave : null;
     const blueprint = rawMetadata.tBlueprint && typeof rawMetadata.tBlueprint === 'object' ? rawMetadata.tBlueprint : null;
@@ -61,21 +65,32 @@ function normalizeFrontierMetadata(rawMetadata, filePath = '') {
     const placementCostRaw = integer(blueprint?.nPlacementCost);
     const runningCostRaw = integer(blueprint?.nRunningCost);
     const requiredDlc = integer(rawMetadata.nRequiredDLC);
-    const dlcRequirements = resolveFrontierDlcMask(gameId, requiredDlc);
+    const requiredDlcIdentifiers = Array.isArray(rawMetadata.tDLCNames) ?
+        rawMetadata.tDLCNames.filter(value => typeof value === 'string' && value.length > 0).slice(0, 100) : [];
+    const dlcCatalog = options.dlcCatalog || options.dlcCatalogs?.[gameId] || null;
+    const dlcRequirements = resolveFrontierDlcRequirements(
+        gameId,
+        requiredDlc,
+        requiredDlcIdentifiers,
+        dlcCatalog,
+    );
 
     return {
+        gameId,
         kind,
         name: stringValue(rawMetadata.sName) || stringValue(save?.sParkName) || null,
         description: typeof rawMetadata.sDescription === 'string' ? rawMetadata.sDescription : '',
         gameVersion: stringValue(rawMetadata.sGameVersion),
         saveFormatVersion: integer(rawMetadata.nVersion),
-        isModded: rawMetadata.bIsModded === true,
-        complexityLimitDisabled: rawMetadata.bComplexityLimitDisabledWhenSaved === true,
+        isModded: booleanValue(rawMetadata.bIsModded),
+        complexityLimitDisabled: booleanValue(rawMetadata.bComplexityLimitDisabledWhenSaved),
         requiredDlc,
         requiredDlcs: dlcRequirements.requiredDlcs,
         requiredDlcBits: dlcRequirements.requiredDlcBits,
         unknownDlcBits: dlcRequirements.unknownDlcBits,
+        unknownDlcIdentifiers: dlcRequirements.unknownDlcIdentifiers,
         dlcMappingVersion: dlcRequirements.mappingVersion,
+        requiredDlcIdentifiers,
         loadCriticalDlc: integer(rawMetadata.nLoadCriticalDLC),
         tags: Array.isArray(rawMetadata.tTags) ? rawMetadata.tTags.filter(tag => typeof tag === 'string').slice(0, 200) : [],
         park: save ? {
@@ -86,8 +101,23 @@ function normalizeFrontierMetadata(rawMetadata, filePath = '') {
             guestCount: integer(save.nGuestCount),
             guestCap: integer(save.nGuestCap),
             complexity: finiteNumber(save.nComplexity),
-            containsCustomContent: save.bContainsUGC === true,
-            isUserGeneratedPark: save.bIsUGCPark === true,
+            containsCustomContent: booleanValue(save.bContainsUGC),
+            isUserGeneratedPark: booleanValue(save.bIsUGCPark),
+            ...(gameId === 'planet-zoo' ? {
+                animalCount: integer(save.nAnimalCount),
+                parkRating: finiteNumber(save.nParkRating),
+                guestHappiness: finiteNumber(save.nGuestHappiness),
+                cashRaw: integer(save.nCash),
+                cash: integer(save.nCash) === null ? null : save.nCash / 1000,
+                difficulty: stringValue(save.sGameDifficulty),
+                continentId: integer(save.nContinentEnum),
+                latitude: finiteNumber(save.nLatitude),
+                longitude: finiteNumber(save.nLongitude),
+                scenarioCode: stringValue(save.sScenarioCode),
+                scenarioStarsEarned: Array.isArray(save.tStars) ? save.tStars.filter(Boolean).length : null,
+                scenarioStarsTotal: Array.isArray(save.tStars) ? save.tStars.length : null,
+                isDiorama: booleanValue(save.bIsDiorama),
+            } : {}),
         } : null,
         blueprint: blueprint ? {
             placementCost: placementCostRaw === null ? null : placementCostRaw / 1000,
@@ -123,7 +153,7 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
     }
     const { payload } = unwrapFrontierEntry(entry.getData(), MAX_METADATA_BYTES);
     const raw = JSON.parse(payload.toString('utf8'));
-    const normalized = normalizeFrontierMetadata(raw, filePath);
+    const normalized = normalizeFrontierMetadata(raw, filePath, options);
     const extension = path.extname(filePath).toLowerCase();
     const creationEntry = archive.getEntry(normalized.kind === 'blueprint' ? 'blueprint' : 'parkdata');
     let creationPayload = null;
@@ -137,25 +167,30 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
             creationPayload = null;
         }
     }
-    if (creationPayload && ['.park2', '.blpr2', '.prkauto2'].includes(extension)) {
+    if (creationPayload) {
         try {
-            const inner = parseCobraSaveMetadata(
-                creationPayload,
-                normalized.kind,
-                normalized.blueprint?.ratings,
-                normalized.tags,
-            );
+            const inner = ['.park2', '.blpr2', '.prkauto2'].includes(extension) ?
+                parseCobraSaveMetadata(
+                    creationPayload,
+                    normalized.kind,
+                    normalized.blueprint?.ratings,
+                    normalized.tags,
+                ) : parsePlanetZooSaveMetadata(creationPayload, normalized.kind);
             if (inner && normalized.park) Object.assign(normalized.park, inner);
             if (inner && normalized.blueprint) {
-                normalized.blueprint.rideCount = inner.rideCount;
-                normalized.blueprint.rides = inner.rides;
-                normalized.blueprint.placedPartCount = inner.placedPartCount;
-                normalized.blueprint.sceneryPieceCount = inner.sceneryPieceCount;
-                normalized.blueprint.serializedGroupCount = inner.buildingCount;
-                normalized.blueprint.railElementCount = inner.railElementCount;
-                normalized.blueprint.trackedRideElementCount = inner.trackedRideElementCount;
-                normalized.blueprint.binCount = inner.binCount;
-                normalized.blueprint.poolCount = inner.poolCount;
+                if (normalized.gameId === 'planet-zoo') {
+                    Object.assign(normalized.blueprint, inner);
+                } else {
+                    normalized.blueprint.rideCount = inner.rideCount;
+                    normalized.blueprint.rides = inner.rides;
+                    normalized.blueprint.placedPartCount = inner.placedPartCount;
+                    normalized.blueprint.sceneryPieceCount = inner.sceneryPieceCount;
+                    normalized.blueprint.serializedGroupCount = inner.buildingCount;
+                    normalized.blueprint.railElementCount = inner.railElementCount;
+                    normalized.blueprint.trackedRideElementCount = inner.trackedRideElementCount;
+                    normalized.blueprint.binCount = inner.binCount;
+                    normalized.blueprint.poolCount = inner.poolCount;
+                }
             }
         } catch {
             // Outer metadata remains useful when Frontier changes the internal CobraSav layout.

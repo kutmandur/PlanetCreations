@@ -2,30 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https: wss:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://www.google.com https://recaptcha.google.com; worker-src 'self' blob:; manifest-src 'self'; form-action 'self' https:;" />
     <link rel="icon" href="%BASE_URL%favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script>
-      // Restore the user's chosen view mode before React loads.
-      (function () {
-        try {
-          if (localStorage.getItem('pcViewMode') === 'desktop') {
-            var viewport = document.querySelector('meta[name="viewport"]');
-            if (viewport) viewport.setAttribute('content', 'width=1280');
-          }
-        } catch (error) {}
-      })();
-      // Apply the selected or system theme before React mounts.
-      (function () {
-        try {
-          var theme = localStorage.getItem('pcTheme');
-          var dark = theme === 'dark' ||
-            (!theme && window.matchMedia &&
-              window.matchMedia('(prefers-color-scheme: dark)').matches);
-          if (dark) document.documentElement.classList.add('dark');
-          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-        } catch (error) {}
-      })();
-    </script>
+    <script type="module" src="/src/earlyBootstrap.js"></script>
     <meta name="theme-color" content="#000000" />
     <meta
       name="description"

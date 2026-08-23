@@ -634,7 +634,24 @@ service cloud.firestore {
     }
     match /reports/{reportId} {
       allow create: if isLoggedIn() &&
+          request.resource.data.keys().hasOnly([
+            'markerId', 'reason', 'reporterId', 'targetId', 'targetPath',
+            'targetTitle', 'targetType', 'timestamp'
+          ]) &&
           request.resource.data.reporterId == request.auth.uid &&
+          request.resource.data.targetId is string &&
+          request.resource.data.targetId.size() > 0 &&
+          request.resource.data.targetId.size() <= 500 &&
+          request.resource.data.targetType in [
+            'creation', 'user', 'community', 'event', 'showcase', 'collaboration'
+          ] &&
+          request.resource.data.get('targetTitle', '') is string &&
+          request.resource.data.get('targetTitle', '').size() <= 500 &&
+          request.resource.data.get('targetPath', '') is string &&
+          request.resource.data.get('targetPath', '').size() <= 1000 &&
+          request.resource.data.get('markerId', '') is string &&
+          request.resource.data.get('markerId', '').size() <= 1000 &&
+          request.resource.data.timestamp == request.time &&
           request.resource.data.reason is string &&
           request.resource.data.reason.size() > 0 &&
           request.resource.data.reason.size() <= 2000;

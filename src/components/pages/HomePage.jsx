@@ -12,6 +12,7 @@ import { rankCreations, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
 import { getGame } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
+import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import UserSearchResultCard from '../cards/UserSearchResultCard';
@@ -379,15 +380,11 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     }, [activeTab]);
     
     useEffect(() => {
-        const dlcRef = doc(db, 'dlcs', activeTab);
-        const unsubscribe = onSnapshot(dlcRef, (docSnap) => {
-            const dlcs = docSnap.exists() ? docSnap.data().names || [] : [];
-            setGameDlcs(dlcs);
-            setSelectedDlcs([]);
-            setDlcFilterMode('all');
-        });
-        return () => unsubscribe();
-    }, [activeTab]);
+        const catalog = getCachedFrontierDlcCatalogs()[activeTab];
+        setGameDlcs(catalog?.entries?.map(entry => entry.name) || []);
+        setSelectedDlcs([]);
+        setDlcFilterMode('all');
+    }, [activeTab, indexCreations]);
 
     // Extract unique tags from loaded creations for suggestions
     // (aus dem Suchindex, wenn geladen — der deckt alle Creations des Spiels ab)

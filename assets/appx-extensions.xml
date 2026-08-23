@@ -1,0 +1,3 @@
+        <desktop:Extension Category="windows.startupTask" Executable="app\PlanetCreations Client.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="PlanetCreationsStartup" Enabled="false" DisplayName="PlanetCreations Client" />
+        </desktop:Extension>

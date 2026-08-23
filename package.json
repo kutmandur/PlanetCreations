@@ -1,6 +1,6 @@
 {
   "name": "planet-creation-net",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "description": "PlanetCreations Desktop Client",
   "author": "PlanetCreations",
   "private": true,
@@ -21,18 +21,20 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.1",
+    "react-router-dom": "^7.18.2",
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@firebase/rules-unit-testing": "^5.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^6.0.4",
     "concurrently": "^9.2.4",
-    "electron": "^43.2.0",
+    "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
+    "firebase-tools": "^15.28.1",
     "jsdom": "^30.0.0",
     "tailwindcss": "^4.3.3",
     "vite": "^8.1.5",
@@ -50,7 +52,14 @@
     "test:watch": "vitest",
     "deploy:ionos": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-ionos.ps1",
     "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",
-    "package": "npm run build && electron-builder"
+    "package": "npm run build && electron-builder",
+    "package:store": "npm run build && npm run package:store:artifact",
+    "package:store:artifact": "electron-builder --config electron-builder.store.cjs --publish never",
+    "verify:store-package": "node scripts/verify-store-package.cjs",
+    "generate:appx-assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-appx-assets.ps1"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.1"
   },
   "build": {
     "extends": null,
@@ -104,9 +113,17 @@
     },
     "fileAssociations": [
       {
-        "ext": "PlanetCreations",
+        "ext": "planetcreations",
         "name": "PlanetCreations Backup",
         "description": "Backup file for PlanetCreations Client"
+      }
+    ],
+    "protocols": [
+      {
+        "name": "PlanetCreations Link",
+        "schemes": [
+          "planetcreations"
+        ]
       }
     ]
   }
