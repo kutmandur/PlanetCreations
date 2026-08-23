@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom'; 
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
     addDoc, collection, doc, getDoc, getDocs, serverTimestamp, writeBatch, arrayUnion, query, where, documentId, Timestamp
 } from 'firebase/firestore';
@@ -29,6 +29,7 @@ import {
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
+import { wasOpenedFromCreationDetail } from '../../utils/creationNavigation';
 
 const CREATION_FINALIZATION_NOTICE = Object.freeze({
     title: 'Finishing creation',
@@ -192,6 +193,7 @@ const CreationCommunityCard = ({ community, selected, onSelect, customData, setC
 const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blacklist }) => {
     const { id: creationToEditId } = useParams(); 
     const navigate = useNavigate();
+    const location = useLocation();
     const isNewDesktopCreation = !creationToEditId && Boolean(window.electronAPI?.isElectron);
     
     const [game, setGame] = useState(creationToEditId ? '' : initialGame || getDefaultGameId());
@@ -805,7 +807,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
                 setModalMessage(backupUploadId ? null : "Creation updated successfully!");
                 scheduleDataRefresh();
-                navigate(`/creation/${creationToEditId}`);
+                if (wasOpenedFromCreationDetail(location.state, creationToEditId)) {
+                    navigate(-1);
+                } else {
+                    navigate(`/creation/${creationToEditId}`, { replace: true });
+                }
 
             } else {
                 const profileDoc = await getDoc(doc(db, 'profiles', user.uid));
