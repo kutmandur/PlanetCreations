@@ -27,6 +27,11 @@ test('hosted Offline Manager compatibility is negotiated before local capabiliti
     assert.match(appSource, /hostedOfflineManagerVersion \|\| 0\) >= 1/);
 });
 
+test('the hosted Workshop stays compatible with the established pre-counter bridge', () => {
+    assert.match(appSource, /const minimumBridgeVersion = 1/);
+    assert.match(appSource, /bridgeVersion \?\? 1/);
+});
+
 test('Store and GitHub channels use the same versioned hosted Offline Manager bridge', () => {
     assert.match(preloadSource, /HOSTED_OFFLINE_MANAGER_VERSION = 1/);
     assert.match(preloadSource, /hostedOfflineManagerVersion:\s*HOSTED_OFFLINE_MANAGER_VERSION/);

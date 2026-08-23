@@ -9,6 +9,10 @@ import {
 import { ICONS, isSafeHttpUrl } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
+import {
+    supportsDesktopBackupUpload,
+    uploadPreparedDesktopBackup,
+} from '../../utils/desktopBackupUpload';
 
 const formatBytes = (bytes) => {
     if (!bytes) return '0 MB';
@@ -153,7 +157,7 @@ const CollaborationChangelogModal = ({
         let uploadId = null;
         let finalizationStarted = false;
         try {
-            if (!window.electronAPI?.uploadPreparedBackup) {
+            if (!supportsDesktopBackupUpload(window.electronAPI)) {
                 throw new Error('This desktop client must be updated before it can upload local files.');
             }
             const [idToken, appCheckToken] = await Promise.all([
@@ -169,12 +173,14 @@ const CollaborationChangelogModal = ({
                 throw new Error(prepared?.message || 'Could not prepare the newest save.');
             }
 
-            const result = await window.electronAPI.uploadPreparedBackup(
-                prepared.uploadHandle,
+            const result = await uploadPreparedDesktopBackup({
+                api: window.electronAPI,
+                preparedBackup: prepared,
                 idToken,
                 appCheckToken,
-                { ownershipConfirmed: true, hostingAccepted: true },
-            );
+                ownershipConfirmed: true,
+                hostingAccepted: true,
+            });
             if (!result?.success) throw new Error(result?.message || 'Upload failed.');
             uploadId = result.uploadId;
 

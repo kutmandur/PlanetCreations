@@ -9,6 +9,10 @@ import { recordInstalledCollaborationVersion } from '../../utils/collaborationVe
 import SelectBackupModal from '../modals/SelectBackupModal';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
+import {
+    supportsDesktopBackupUpload,
+    uploadPreparedDesktopBackup,
+} from '../../utils/desktopBackupUpload';
 
 const GAMES = [
     { id: 'planet-coaster-2', name: 'Planet Coaster 2' },
@@ -236,7 +240,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                 setModalMessage('Collaboration updated.');
                 navigate(`/collaboration/${collaborationId}`);
             } else {
-                if (!window.electronAPI?.uploadPreparedBackup) {
+                if (!supportsDesktopBackupUpload(window.electronAPI)) {
                     throw new Error('This desktop client must be updated before it can upload local files.');
                 }
                 setSubmissionStage('Preparing initial save…');
@@ -253,12 +257,14 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                     throw new Error(prepared?.message || 'Could not prepare the initial save.');
                 }
                 setSubmissionStage('Uploading initial save…');
-                const uploadResult = await window.electronAPI.uploadPreparedBackup(
-                    prepared.uploadHandle,
+                const uploadResult = await uploadPreparedDesktopBackup({
+                    api: window.electronAPI,
+                    preparedBackup: prepared,
                     idToken,
                     appCheckToken,
-                    { ownershipConfirmed: true, hostingAccepted: true },
-                );
+                    ownershipConfirmed: true,
+                    hostingAccepted: true,
+                });
                 if (!uploadResult?.success) {
                     throw new Error(uploadResult?.message || 'Initial save upload failed.');
                 }

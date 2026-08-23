@@ -30,6 +30,10 @@ import {
 } from '../../utils/parkRidePresentation';
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 import { wasOpenedFromCreationDetail } from '../../utils/creationNavigation';
+import {
+    supportsDesktopBackupUpload,
+    uploadPreparedDesktopBackup,
+} from '../../utils/desktopBackupUpload';
 
 const CREATION_FINALIZATION_NOTICE = Object.freeze({
     title: 'Finishing creation',
@@ -524,7 +528,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             setModalMessage("This feature is only available in the desktop client.");
             return false;
         }
-        if (!window.electronAPI.uploadPreparedBackup) {
+        if (!supportsDesktopBackupUpload(window.electronAPI)) {
             setModalMessage("This desktop client must be updated before it can upload local files.");
             return false;
         }
@@ -558,12 +562,14 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             setIsPreparingUpload(false);
             setIsUploading(true);
             setUploadProgress(0);
-            const uploadResult = await window.electronAPI.uploadPreparedBackup(
-                result.uploadHandle,
+            const uploadResult = await uploadPreparedDesktopBackup({
+                api: window.electronAPI,
+                preparedBackup: result,
                 idToken,
                 appCheckToken,
-                { ownershipConfirmed, hostingAccepted },
-            );
+                ownershipConfirmed,
+                hostingAccepted,
+            });
             if (!uploadResult?.success) {
                 throw new Error(uploadResult?.message || `File upload failed (${uploadResult?.status || 'network error'}).`);
             }

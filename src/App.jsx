@@ -334,7 +334,10 @@ const AppContent = () => {
 
     useEffect(() => {
         if (!window.electronAPI?.isHostedWebView) return;
-        const minimumBridgeVersion = 2;
+        // Clients released before the explicit bridge counter already provide the
+        // online Workshop capabilities. Treat that established bridge as v1 and
+        // negotiate newer native features individually instead of blocking the UI.
+        const minimumBridgeVersion = 1;
         window.electronAPI.reportHostedUiReady?.({
             uiVersion: 2,
             minimumBridgeVersion,
@@ -342,7 +345,8 @@ const AppContent = () => {
             offlineManagerVersion: 1,
             minimumOfflineManagerBridgeVersion: 3,
         }).catch(() => {});
-        if (Number(window.electronAPI.bridgeVersion || 0) < minimumBridgeVersion) {
+        const availableBridgeVersion = Number(window.electronAPI.bridgeVersion ?? 1);
+        if (availableBridgeVersion < minimumBridgeVersion) {
             window.electronAPI.switchDesktopMode?.('bundled-online').catch(() => {
                 setModalMessage('This desktop client is too old for the current online interface. Please install the latest client update.');
             });
