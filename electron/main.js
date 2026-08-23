@@ -1711,7 +1711,7 @@ ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentT
         }
         const parsedUrl = new URL(uploadUrl);
         if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.r2.cloudflarestorage.com')) {
-            return { success: false, message: 'The upload target is not a Cloudflare R2 endpoint.' };
+            return { success: false, message: 'The upload target could not be verified.' };
         }
         const stats = fs.statSync(resolvedPath);
         if (!stats.isFile() || stats.size <= 0 || stats.size > 300 * 1024 * 1024) {
@@ -1730,12 +1730,12 @@ ipcMain.handle('upload-backup-file', async (event, filePath, uploadUrl, contentT
             duplex: 'half',
         });
         if (!response.ok) {
-            return { success: false, status: response.status, message: `Cloudflare R2 returned HTTP ${response.status}.` };
+            return { success: false, status: response.status, message: `The file server returned HTTP ${response.status}.` };
         }
         return { success: true, status: response.status };
     } catch (error) {
         console.error('R2 backup upload failed:', error);
-        return { success: false, message: error.message };
+        return { success: false, message: 'The file could not be uploaded. Please try again.' };
     }
 });
 

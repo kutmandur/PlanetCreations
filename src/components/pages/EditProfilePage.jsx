@@ -18,6 +18,7 @@ import Spinner from '../ui/Spinner';
 import Icon from '../ui/Icon';
 import InfoBox from '../ui/InfoBox';
 import ProfileImage from '../ui/ProfileImage';
+import DesktopProfileAppearancePreview from '../profile/DesktopProfileAppearancePreview';
 
 const inputClass = [
     'w-full rounded-xl border border-gray-300 bg-white px-3.5 py-3 text-gray-900',
@@ -452,38 +453,13 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                             title="Profile"
                             description="Your public appearance, introduction and location."
                         >
-                            <div
-                                className="relative min-h-48 overflow-hidden rounded-2xl border border-gray-200 shadow-sm dark:border-gray-700"
-                                style={{
-                                    background: `linear-gradient(135deg, ${color.hex}, ${color.hoverHex})`,
-                                }}
-                            >
-                                {profileBannerUrl && !profileBannerFailed && (
-                                    <img
-                                        src={profileBannerUrl}
-                                        alt=""
-                                        onError={() => setProfileBannerFailed(true)}
-                                        className="absolute inset-0 h-full w-full object-cover"
-                                    />
-                                )}
-                                <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/40 to-black/55" />
-                                <div className="relative flex min-h-48 items-end gap-4 p-5 text-white">
-                                    <ProfileImage
-                                        src={profileImageUrl}
-                                        alt="Profile preview"
-                                        className="h-20 w-20 flex-shrink-0 rounded-2xl border-4 bg-white object-cover shadow-lg"
-                                        style={{ borderColor: color.hex }}
-                                    />
-                                    <div className="min-w-0">
-                                        <p className="truncate text-xl font-bold">
-                                            {profileData.username || 'Your profile'}
-                                        </p>
-                                        <p className="mt-1 text-sm text-white/75">
-                                            Profile appearance preview
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
+                            <DesktopProfileAppearancePreview
+                                appearance={color}
+                                bannerUrl={profileBannerUrl && !profileBannerFailed ? profileBannerUrl : ''}
+                                imageUrl={profileImageUrl}
+                                onBannerError={() => setProfileBannerFailed(true)}
+                                profile={profileData}
+                            />
 
                             <Field
                                 label="Profile color"

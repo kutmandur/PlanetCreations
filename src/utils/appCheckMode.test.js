@@ -21,9 +21,10 @@ test('recovers a poisoned Electron App Check provider with one programmatic relo
         removeItem: (key) => values.delete(key),
     };
     const reload = vi.fn();
+    const getToken = vi.fn().mockRejectedValue({ code: 'appCheck/initial-throttle' });
     const result = await recoverElectronAppCheck({
         appCheckInstance: {},
-        getToken: vi.fn().mockRejectedValue({ code: 'appCheck/initial-throttle' }),
+        getToken,
         isDev: false,
         userAgent: 'PlanetCreations/1.0.31 Electron/43',
         origin: 'https://www.planetcreations.net',
@@ -32,6 +33,7 @@ test('recovers a poisoned Electron App Check provider with one programmatic relo
         reload,
     });
     expect(result).toBe('reloading');
+    expect(getToken).toHaveBeenCalledWith({}, true);
     expect(values.get(ELECTRON_APP_CHECK_RECOVERY_KEY)).toBe('1');
     expect(reload).toHaveBeenCalledOnce();
 
@@ -100,6 +102,11 @@ test('reloads a production Electron page once after the canonical redirect poiso
     })).toBe(true);
     expect(shouldReloadElectronAfterAppCheckFailure({
         ...base,
+        errorCode: 'appCheck/throttled',
+    })).toBe(true);
+    expect(shouldReloadElectronAfterAppCheckFailure({
+        ...base,
+        origin: 'https://planetcreations.net',
         errorCode: 'appCheck/throttled',
     })).toBe(true);
 });

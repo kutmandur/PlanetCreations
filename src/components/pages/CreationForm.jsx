@@ -15,6 +15,7 @@ import Icon from '../ui/Icon';
 import HighlightableTextarea from '../ui/HighlightableTextarea';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import InfoBox from '../ui/InfoBox';
+import MediaPreviewTile from '../ui/MediaPreviewTile';
 import SelectBackupModal from '../modals/SelectBackupModal';
 import ParkRidesAreasEditor from '../creation/ParkRidesAreasEditor';
 import {
@@ -27,6 +28,15 @@ import {
     isParkCreationCategory,
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
+
+const CREATION_FINALIZATION_NOTICE = Object.freeze({
+    title: 'Finishing creation',
+    message: 'Your data is being verified and the creation is being finalized.',
+    detail: 'This window will close automatically when everything is complete.',
+    dismissible: false,
+    progress: true,
+    progressLabel: 'Verifying creation data',
+});
 
 // --- Sub-component: DlcSelector ---
 const DlcSelector = ({ gameDlcs, selectedDlcs, onDlcChange, color }) => {
@@ -173,26 +183,6 @@ const CreationCommunityCard = ({ community, selected, onSelect, customData, setC
                     <CommunityCustomFields communities={[community]} customData={customData} setCustomData={setCustomData} embedded />
                 </div>
             )}
-        </div>
-    );
-};
-
-// --- Sub-component: MediaPreview ---
-const MediaPreview = ({ item, onRemove, provided }) => {
-    const getYoutubeThumbnail = (url) => {
-        if (!url) return null;
-        const videoId = url.split('v=')[1]?.split('&')[0] || url.split('/').pop();
-        return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
-    };
-    const isVideo = item.type === 'video';
-    const thumbnailUrl = isVideo ? getYoutubeThumbnail(item.url) : item.url;
-    return (
-        <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} className="w-40 h-24 rounded-lg overflow-hidden relative group flex-shrink-0">
-            <img src={thumbnailUrl} alt="Media preview" className="w-full h-full object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x225/333333/ffffff?text=Error'; }}/>
-            <div className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center">
-                <Icon path={isVideo ? ICONS.video : ICONS.image} className="w-8 h-8 text-white" />
-            </div>
-            <button type="button" onClick={() => onRemove(item.id, item.type)} className="absolute top-1 right-1 w-6 h-6 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors opacity-0 group-hover:opacity-100">&times;</button>
         </div>
     );
 };
@@ -576,10 +566,10 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             if (!uploadResult?.success) {
                 const abortBackupUpload = httpsCallable(functions, 'abortBackupUpload');
                 await abortBackupUpload({ uploadId }).catch(() => null);
-                throw new Error(uploadResult?.message || `R2 upload failed (${uploadResult?.status || 'network error'}).`);
+                throw new Error(uploadResult?.message || `File upload failed (${uploadResult?.status || 'network error'}).`);
             }
             // For edits, switch the local read-only preview only after the new
-            // file reached R2 successfully. The authoritative copy is replaced
+            // file reached temporary storage successfully. The authoritative copy is replaced
             // by finalizeBackupUpload when the Creation itself is saved.
             setSelectedSourceFile(file);
             setInGameTags(cleanSavegameTags(file.frontierMetadata));
@@ -808,7 +798,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 savedCreationId = creationToEditId;
 
                 if (backupUploadId) {
-                    setModalMessage("Verifying and attaching the R2 backup...");
+                    setModalMessage(CREATION_FINALIZATION_NOTICE);
                     const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
                     await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
                 } else if (removeExistingBackup && hadExistingBackup) {
@@ -816,9 +806,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     await removeCreationBackup({ creationId: savedCreationId });
                 }
 
-                setModalMessage(backupUploadId
-                    ? "Creation and verified savefile metadata updated successfully!"
-                    : "Creation updated successfully!");
+                setModalMessage(backupUploadId ? null : "Creation updated successfully!");
                 scheduleDataRefresh();
                 navigate(`/creation/${creationToEditId}`);
 
@@ -851,11 +839,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     await linkBatch.commit();
                 }
                 if (backupUploadId) {
-                    setModalMessage("Verifying and attaching the R2 backup...");
+                    setModalMessage(CREATION_FINALIZATION_NOTICE);
                     const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
                     await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
                 }
-                setModalMessage("Creation submitted successfully!");
+                setModalMessage(backupUploadId ? null : "Creation submitted successfully!");
                 scheduleDataRefresh();
                 navigate('/');
             }
@@ -1306,7 +1294,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                     {imageItems.map((item, index) => (
                                         <Draggable key={item.id} draggableId={item.id} index={index}>
                                             {(provided) => (
-                                                <MediaPreview item={item} onRemove={handleRemoveMedia} provided={provided} />
+                                                <MediaPreviewTile item={item} onRemove={handleRemoveMedia} provided={provided} />
                                             )}
                                         </Draggable>
                                     ))}
@@ -1338,7 +1326,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                     {videoItems.map((item, index) => (
                                         <Draggable key={item.id} draggableId={item.id} index={index}>
                                             {(provided) => (
-                                                <MediaPreview item={item} onRemove={handleRemoveMedia} provided={provided} />
+                                                <MediaPreviewTile item={item} onRemove={handleRemoveMedia} provided={provided} />
                                             )}
                                         </Draggable>
                                     ))}

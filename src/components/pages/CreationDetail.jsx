@@ -670,8 +670,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 <img src={activeMedia?.url} alt="Creation preview" className="max-h-[60vh] object-contain" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/800x450/333333/ffffff?text=Not+found'; }}/>
                             )}
                             {mediaItems.length > 1 && (<>
-                                <button onClick={prevMedia} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronLeft} /></button>
-                                <button onClick={nextMedia} className="absolute right-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronRight} /></button>
+                                <button onClick={prevMedia} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronLeft} /></button>
+                                <button onClick={nextMedia} className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronRight} /></button>
                             </>)}
                         </div>
                         {mediaItems.length > 1 && (
@@ -713,7 +713,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                     <a key={index} href={video.url} target="_blank" rel="noopener noreferrer" className="block w-48 flex-shrink-0 group">
                                         <div className="relative">
                                             <img src={getYoutubeThumbnail(video.url)} alt={`Showcase from ${video.sourceName}`} className="w-full h-28 object-cover rounded-lg shadow-md" />
-                                            <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <Icon path={ICONS.video} className="w-10 h-10 text-white" />
                                             </div>
                                         </div>
