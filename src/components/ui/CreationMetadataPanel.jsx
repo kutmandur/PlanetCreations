@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { ICONS } from '../../utils/helpers';
+import { getPlanetCoaster2ResearchPack } from '../../utils/planetCoaster2ResearchPacks';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const moneyFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -156,6 +157,30 @@ const RatingMetrics = ({ ratings, prefix = '', compact = false }) => ratings && 
         <Metric compact={compact} label={`${prefix}Nausea`} value={formatNumber(ratings.nausea, 2)} accent="text-red-300" />
     </div>
 );
+
+const ResearchPackList = ({ researchPacks = [] }) => {
+    const rewards = [...new Set(researchPacks.filter(Number.isSafeInteger))]
+        .map(getPlanetCoaster2ResearchPack);
+    if (rewards.length === 0) return null;
+    return (
+        <section className="rounded-2xl bg-gray-900/60 p-4">
+            <h3 className="font-semibold text-white">Research packs</h3>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500">Unlock rewards required by objects in this blueprint. They do not represent the creator's research progress.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+                {rewards.map(reward => (
+                    <span
+                        key={reward.id}
+                        title={`${reward.category} · Frontier reward ID ${reward.id}`}
+                        className={`rounded-xl border px-3 py-2 ${reward.known ? 'border-blue-800/60 bg-blue-950/45 text-blue-100' : 'border-amber-800/60 bg-amber-950/45 text-amber-100'}`}
+                    >
+                        <span className="block text-sm font-semibold">{reward.label}</span>
+                        <span className={`mt-0.5 block text-[10px] ${reward.known ? 'text-blue-300/75' : 'text-amber-300/75'}`}>{reward.category} · #{reward.id}</span>
+                    </span>
+                ))}
+            </div>
+        </section>
+    );
+};
 
 const RideTestStats = ({ stats }) => {
     if (!stats) return <p className="mt-3 text-xs text-gray-500">No completed ride-test trace stored.</p>;
@@ -396,10 +421,7 @@ const CreationMetadataPanel = ({
                                 {Number.isFinite(blueprint.utilities.requiredWater) && <Metric label="Required water" value={formatNumber(blueprint.utilities.requiredWater, 2)} />}
                             </div>
                         </section>}
-                        {blueprint?.researchPacks?.length > 0 && <section className="rounded-2xl bg-gray-900/60 p-4">
-                            <h3 className="font-semibold text-white">Research packs</h3>
-                            <p className="mt-2 text-sm text-gray-300">{blueprint.researchPacks.join(', ')}</p>
-                        </section>}
+                        <ResearchPackList researchPacks={blueprint?.researchPacks} />
                         <RideOverview
                             rides={rides}
                             showTraceNote={!isPlanetZoo}
