@@ -41,6 +41,9 @@ test('renders normalized blueprint costs, counts and ride ratings', () => {
     expect(screen.getByText(/13[.,]815[.,]50/)).toBeInTheDocument();
     expect(screen.getByText(/1[.,]221/)).toBeInTheDocument();
     expect(screen.getByText(/4[.,]92/)).toBeInTheDocument();
+    expect(screen.getByText('Vector · Swinging Mine Train')).toBeInTheDocument();
+    expect(screen.getByText('Coasters & blueprints · #2621')).toBeInTheDocument();
+    expect(screen.getByText(/do not represent the creator's research progress/i)).toBeInTheDocument();
     expect(screen.getByText('Vintage Funfair Ride Pack')).toBeInTheDocument();
     expect(screen.getByText('Custom media')).toBeInTheDocument();
     expect(screen.getByText('Referenced files')).toBeInTheDocument();

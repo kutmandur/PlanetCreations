@@ -92,7 +92,7 @@ test('shows verified blueprint costs and EFN values in compact stat cards', () =
             generatedPower: 12.5,
             requiredPower: 8,
         },
-        researchPacks: [3, 7],
+        researchPacks: [2621, 9999],
     } }} />);
 
     const stats = screen.getByTestId('verified-blueprint-stats');
@@ -114,7 +114,8 @@ test('shows verified blueprint costs and EFN values in compact stat cards', () =
     expect(dialog).toHaveTextContent('Generated power');
     expect(dialog).toHaveTextContent('Required power');
     expect(dialog).toHaveTextContent('Research packs');
-    expect(dialog).toHaveTextContent('3, 7');
+    expect(dialog).toHaveTextContent('Vector · Swinging Mine Train');
+    expect(dialog).toHaveTextContent('Unknown research reward #9999');
 });
 
 test('applies user visibility and offers animated Areas and Types views', () => {
