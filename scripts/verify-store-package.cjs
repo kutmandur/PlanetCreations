@@ -8,10 +8,11 @@ const asar = require('@electron/asar');
 const storeConfig = require('../electron-builder.store.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
-const storeDirectory = path.join(projectRoot, 'dist', 'store');
+const requestedDirectory = process.argv[2] || 'dist/store';
+const storeDirectory = path.resolve(projectRoot, requestedDirectory);
 const appxFiles = fs.readdirSync(storeDirectory).filter((name) => name.endsWith('.appx'));
 if (appxFiles.length !== 1) {
-    throw new Error(`Expected one AppX in dist/store, found ${appxFiles.length}.`);
+    throw new Error(`Expected one AppX in ${requestedDirectory}, found ${appxFiles.length}.`);
 }
 
 const packagePath = path.join(storeDirectory, appxFiles[0]);
