@@ -1,9 +1,13 @@
 export const ELECTRON_APP_CHECK_RECOVERY_KEY =
-    'planetcreations:electron-app-check-canonical-reload-v1';
+    'planetcreations:electron-app-check-canonical-reload-v2';
 
 const RECOVERABLE_APP_CHECK_ERRORS = new Set([
     'appCheck/initial-throttle',
     'appCheck/throttled',
+]);
+const ELECTRON_WEB_ORIGINS = new Set([
+    'https://planetcreations.net',
+    'https://www.planetcreations.net',
 ]);
 
 export function shouldForceRecaptchaForElectronTest({ isDev, search, userAgent }) {
@@ -21,7 +25,7 @@ export function shouldReloadElectronAfterAppCheckFailure({
 }) {
     return !isDev &&
         String(userAgent || '').toLowerCase().includes('electron') &&
-        origin === 'https://www.planetcreations.net' &&
+        ELECTRON_WEB_ORIGINS.has(origin) &&
         isGameOverlay !== true &&
         recoveryAttempted !== true &&
         RECOVERABLE_APP_CHECK_ERRORS.has(String(errorCode || ''));
@@ -38,14 +42,17 @@ export async function recoverElectronAppCheck({
     reload,
 }) {
     const isElectron = String(userAgent || '').toLowerCase().includes('electron');
-    if (isDev || !isElectron || origin !== 'https://www.planetcreations.net' ||
+    if (isDev || !isElectron || !ELECTRON_WEB_ORIGINS.has(origin) ||
         isGameOverlay === true) return 'skipped';
 
     const recoveryAttempted = sessionStorage.getItem(
         ELECTRON_APP_CHECK_RECOVERY_KEY,
     ) === '1';
     try {
-        await getToken(appCheckInstance, false);
+        // A cached token can still look locally valid while Firebase Auth has
+        // already rejected it. Electron therefore performs a real attestation
+        // on startup instead of accepting IndexedDB state from an older build.
+        await getToken(appCheckInstance, true);
         if (recoveryAttempted) {
             sessionStorage.removeItem(ELECTRON_APP_CHECK_RECOVERY_KEY);
         }

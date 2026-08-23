@@ -421,8 +421,8 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                                         <img src={activeMedia} alt="Event preview" className="max-h-[60vh] object-contain" />
                                     )}
                                     {mediaItems.length > 1 && (<>
-                                        <button onClick={prevMedia} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronLeft} /></button>
-                                        <button onClick={nextMedia} className="absolute right-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronRight} /></button>
+                                        <button onClick={prevMedia} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronLeft} /></button>
+                                        <button onClick={nextMedia} className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Icon path={ICONS.chevronRight} /></button>
                                     </>)}
                                 </div>
                                 {mediaItems.length > 1 && (

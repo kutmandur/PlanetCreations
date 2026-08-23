@@ -3,6 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
+import {
+    runFirebaseAuthWithAppCheckRecovery,
+    waitForElectronAppCheck,
+} from '../../firebase/appCheck';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
 import Spinner from '../ui/Spinner';
@@ -37,7 +41,8 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
         e.preventDefault();
         setLoading(true);
         try {
-            await sendPasswordResetEmail(auth, emailOrUsername);
+            await runFirebaseAuthWithAppCheckRecovery(() =>
+                sendPasswordResetEmail(auth, emailOrUsername));
             setModalMessage("If an account with that email exists, a password reset link has been sent.");
             setAuthAction('login');
         } catch (error) {
@@ -55,6 +60,9 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
             const consent = localStorage.getItem('cookie_consent');
             const persistence = consent === 'accepted' ? browserLocalPersistence : browserSessionPersistence;
             await setPersistence(auth, persistence);
+            // The Electron release performs a fresh App Check attestation at
+            // startup. Wait for it before username lookups or Auth requests.
+            await waitForElectronAppCheck();
 
             if (authAction === 'login') {
                 let finalEmail = emailOrUsername.trim();
@@ -75,7 +83,8 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                         throw new Error("User not found. Please check your username or email.");
                     }
                 }
-                await signInWithEmailAndPassword(auth, finalEmail, password);
+                await runFirebaseAuthWithAppCheckRecovery(() =>
+                    signInWithEmailAndPassword(auth, finalEmail, password));
                 navigate(redirectTo);
 
             } else { // Registration logic
@@ -105,10 +114,11 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     throw new Error("This username is already taken. Please choose another one.");
                 }
 
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const userCredential = await runFirebaseAuthWithAppCheckRecovery(() =>
+                    createUserWithEmailAndPassword(auth, email, password));
                 const user = userCredential.user;
 
-                await sendEmailVerification(user);
+                await runFirebaseAuthWithAppCheckRecovery(() => sendEmailVerification(user));
                 setModalMessage("Registration successful! A verification link has been sent to your email.");
 
                 const batch = writeBatch(db);

@@ -39,6 +39,25 @@ html, body, #root {
   padding: 0;
 }
 
+.pc-modal-progress-bar {
+  width: 42%;
+  animation: pc-modal-progress 1.35s ease-in-out infinite;
+}
+
+@keyframes pc-modal-progress {
+  0% { transform: translateX(-115%); }
+  50% { transform: translateX(70%); }
+  100% { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-modal-progress-bar {
+    width: 100%;
+    animation: none;
+    opacity: .75;
+  }
+}
+
 .profile-content-swipe {
   scrollbar-width: none;
 }

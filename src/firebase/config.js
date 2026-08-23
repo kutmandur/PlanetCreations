@@ -43,6 +43,7 @@ const forceRecaptchaForElectronTest = shouldForceRecaptchaForElectronTest({
 });
 
 let app, auth, db, appCheck;
+let appCheckReady = Promise.resolve('unavailable');
 
 if (isConfigured) {
     app = initializeApp(firebaseConfig);
@@ -61,7 +62,7 @@ if (isConfigured) {
                 isTokenAutoRefreshEnabled: true,
             });
             if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
-                void recoverElectronAppCheck({
+                appCheckReady = recoverElectronAppCheck({
                     appCheckInstance: appCheck,
                     getToken,
                     isDev: import.meta.env.DEV,
@@ -136,4 +137,4 @@ export async function getMessagingIfSupported() {
     return messagingInstance;
 }
 
-export { app, appCheck, auth, db };
+export { app, appCheck, appCheckReady, auth, db };

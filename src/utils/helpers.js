@@ -141,7 +141,7 @@ export const ICONS = {
 // youtu.be-Links mit Query-Parametern.
 export const getYoutubeId = (url) => {
     if (!url) return null;
-    const match = url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([\w-]{11})/);
+    const match = url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/|\/live\/)([\w-]{11})/);
     return match ? match[1] : null;
 };
 
