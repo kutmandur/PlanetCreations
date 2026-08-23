@@ -71,9 +71,50 @@ test('shows compact verified park stats and opens a full ride list grouped by ca
     expect(screen.queryByText('Avg excitement')).not.toBeInTheDocument();
 });
 
-test('does not render park cards for a blueprint', () => {
-    const { container } = render(<VerifiedParkStats metadata={{ blueprint: { rideCount: 1 } }} />);
-    expect(container).toBeEmptyDOMElement();
+test('keeps park-only controls off blueprint pages and still offers all stats', () => {
+    render(<VerifiedParkStats metadata={{ blueprint: { rideCount: 1 } }} />);
+    expect(screen.getByTestId('verified-blueprint-stats')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'More stats' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ride List' })).not.toBeInTheDocument();
+});
+
+test('shows verified blueprint costs and EFN values in compact stat cards', () => {
+    render(<VerifiedParkStats metadata={{ blueprint: {
+        placementCost: 13815.503,
+        runningCost: 574.267,
+        ratings: {
+            excitement: 4.9,
+            fear: 5.5,
+            nausea: 2.4,
+        },
+        trackedRideElementCount: 42,
+        utilities: {
+            generatedPower: 12.5,
+            requiredPower: 8,
+        },
+        researchPacks: [3, 7],
+    } }} />);
+
+    const stats = screen.getByTestId('verified-blueprint-stats');
+    expect(stats).toHaveTextContent('Build cost');
+    expect(stats).toHaveTextContent(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(13815.503));
+    expect(stats).toHaveTextContent('Running cost');
+    expect(stats).toHaveTextContent(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(574.267));
+    expect(screen.getByTestId('blueprint-score-excitement')).toHaveTextContent('Excitement');
+    expect(screen.getByTestId('blueprint-score-excitement')).toHaveTextContent(new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(4.9));
+    expect(screen.getByTestId('blueprint-score-excitement')).toHaveAttribute('data-tone', 'yellow');
+    expect(screen.getByTestId('blueprint-score-fear')).toHaveAttribute('data-tone', 'yellow');
+    expect(screen.getByTestId('blueprint-score-nausea')).toHaveAttribute('data-tone', 'green');
+    expect(screen.queryByRole('button', { name: 'Ride List' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'More stats' }));
+    const dialog = screen.getByRole('dialog', { name: 'Creation stats' });
+    expect(dialog).toHaveTextContent('Tracked-ride elements');
+    expect(dialog).toHaveTextContent('42');
+    expect(dialog).toHaveTextContent('Generated power');
+    expect(dialog).toHaveTextContent('Required power');
+    expect(dialog).toHaveTextContent('Research packs');
+    expect(dialog).toHaveTextContent('3, 7');
 });
 
 test('applies user visibility and offers animated Areas and Types views', () => {
