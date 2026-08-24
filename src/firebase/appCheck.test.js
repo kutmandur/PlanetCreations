@@ -3,18 +3,24 @@ import { beforeEach, expect, test, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     appCheck: { name: 'app-check' },
     getToken: vi.fn(),
+    readyStatus: 'ready',
+    appCheckReady: {
+        then: (resolve, reject) => Promise.resolve(mocks.readyStatus).then(resolve, reject),
+    },
 }));
 
 vi.mock('firebase/app-check', () => ({ getToken: mocks.getToken }));
 vi.mock('./config', () => ({
     appCheck: mocks.appCheck,
-    appCheckReady: Promise.resolve('ready'),
+    appCheckReady: mocks.appCheckReady,
 }));
 
 import {
     isHostedElectronAppCheckContext,
     runFirebaseAuthWithAppCheckRecovery,
+    waitForElectronAppCheck,
 } from './appCheck';
+import { ELECTRON_APP_CHECK_RECOVERY_KEY } from '../utils/appCheckMode';
 
 const hostedElectronContext = {
     electronApi: { isElectron: true },
@@ -23,6 +29,30 @@ const hostedElectronContext = {
 
 beforeEach(() => {
     mocks.getToken.mockReset();
+    mocks.readyStatus = 'ready';
+});
+
+test('starts a fresh recovery batch instead of authenticating with a dummy token', async () => {
+    mocks.readyStatus = 'failed';
+    const values = new Map([[
+        ELECTRON_APP_CHECK_RECOVERY_KEY,
+        JSON.stringify({ attempts: 3, lastAttemptAt: Date.now() }),
+    ]]);
+    const sessionStorage = {
+        getItem: (key) => values.get(key) || null,
+        setItem: (key, value) => values.set(key, value),
+        removeItem: (key) => values.delete(key),
+    };
+    const reload = vi.fn();
+
+    await expect(waitForElectronAppCheck({
+        ...hostedElectronContext,
+        sessionStorage,
+        reload,
+    })).resolves.toBe('reloading');
+
+    expect(values.has(ELECTRON_APP_CHECK_RECOVERY_KEY)).toBe(false);
+    expect(reload).toHaveBeenCalledOnce();
 });
 
 test('recognizes only the hosted desktop client as the Auth recovery context', () => {
