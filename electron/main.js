@@ -12,11 +12,13 @@ const log = require('electron-log');
 const {
     indexGamesFromPath,
     inspectFrontierFileInWorker,
+    loadOrCreateRideAnalysis,
     saveMetadataInspection,
     scanGamesFromPath,
     scanAllMediaFiles,
 } = require('./modules/FileHandler');
 const { readFrontierPreview } = require('./modules/FrontierSaveParser');
+const { FrontierSaveIndexWatcher } = require('./modules/FrontierSaveIndexWatcher');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
@@ -68,6 +70,8 @@ let isQuitting = false;
 let hasShownTrayHint = false;
 let streamingIntegration = null;
 let frontierMetadataScanGeneration = 0;
+let frontierSaveIndexWatcher = null;
+let frontierSaveIndexWatcherPath = null;
 // Manueller Overlay-Schalter: zeigt das Overlay unabhängig von der
 // PC2-Prozesserkennung — auf macOS/Linux der einzige Weg (kein tasklist.exe),
 // auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
@@ -1912,6 +1916,19 @@ ipcMain.handle('read-frontier-preview', (event, filePath) => {
     return readFrontierPreview(resolvedPath);
 });
 
+ipcMain.handle('read-frontier-ride-analysis', async (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    const storedPath = getStoredPath();
+    if (!filePath || typeof filePath !== 'string' || !storedPath) {
+        throw new Error('A configured local Frontier file is required.');
+    }
+    const resolvedPath = path.resolve(filePath);
+    if (!isPathInside(storedPath, resolvedPath) || !isValidGameFile(resolvedPath) || !fs.existsSync(resolvedPath)) {
+        throw new Error('The selected file is outside the configured game folders or unsupported.');
+    }
+    return loadOrCreateRideAnalysis(resolvedPath);
+});
+
 ipcMain.handle('inspect-frontier-file', async (event, filePath) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
@@ -2183,6 +2200,26 @@ ipcMain.handle('delete-creation-media', (event, filePath, mode) => {
     requireTrustedIpcSender(event, true);
     return deleteCreationMedia(filePath, mode);
 });
+
+function ensureFrontierSaveIndexWatcher(basePath) {
+    const resolvedPath = path.resolve(basePath);
+    if (frontierSaveIndexWatcher && frontierSaveIndexWatcherPath === resolvedPath) return;
+    frontierSaveIndexWatcher?.close();
+    frontierSaveIndexWatcher = new FrontierSaveIndexWatcher(resolvedPath, changedPaths => {
+        if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+        mainWindow.webContents.send('frontier-save-files-changed', { changedPaths });
+    });
+    frontierSaveIndexWatcherPath = resolvedPath;
+    try {
+        frontierSaveIndexWatcher.start();
+    } catch (error) {
+        log.warn('Could not watch Frontier save folders:', error.message);
+        frontierSaveIndexWatcher.close();
+        frontierSaveIndexWatcher = null;
+        frontierSaveIndexWatcherPath = null;
+    }
+}
+
 ipcMain.handle('scan-games', (event, basePath, options = {}) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
@@ -2190,6 +2227,7 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
         path.resolve(basePath) !== path.resolve(storedPath)) {
         throw new Error('Only the configured Frontier folder can be scanned.');
     }
+    ensureFrontierSaveIndexWatcher(basePath);
     const generation = ++frontierMetadataScanGeneration;
     const sender = event.sender;
     const indexed = indexGamesFromPath(basePath, {
@@ -2212,6 +2250,7 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
                 inspection = await inspectFrontierFileInWorker(
                     pendingFile.path,
                     options?.dlcCatalogs,
+                    { includeRideAnalysis: true },
                 );
                 const mediaSync = syncAutomaticMediaSnapshot(pendingFile.path, inspection);
                 if (!mediaSync.success) {
@@ -2227,6 +2266,7 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
                 filePath: pendingFile.path,
                 metadata: cached.metadata,
                 mediaReferences: cached.mediaReferences,
+                rideAnalysisSummary: cached.rideAnalysis,
                 error: cached.error,
                 status: cached.error ? 'error' : 'ready',
                 progress: {
@@ -2320,6 +2360,9 @@ app.whenReady().then(() => {
 });
 app.on('before-quit', () => {
     isQuitting = true;
+    frontierSaveIndexWatcher?.close();
+    frontierSaveIndexWatcher = null;
+    frontierSaveIndexWatcherPath = null;
     flushPendingOverlaySettings();
     if (gameProcessTimer) clearInterval(gameProcessTimer);
     if (updateCheckTimer) clearInterval(updateCheckTimer);

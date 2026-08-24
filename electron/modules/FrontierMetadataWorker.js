@@ -4,6 +4,7 @@ const { inspectFrontierFile } = require('./FrontierSaveParser');
 try {
     const inspection = inspectFrontierFile(workerData.filePath, {
         includeMediaReferences: true,
+        includeRideAnalysis: workerData.includeRideAnalysis === true,
         dlcCatalogs: workerData.dlcCatalogs,
     });
     parentPort.postMessage({ inspection });

@@ -43,6 +43,7 @@ function applyMetadataUpdate(results, update) {
                     ...file,
                     frontierMetadata: update.metadata || file.frontierMetadata,
                     customMediaReferences: update.mediaReferences || file.customMediaReferences || [],
+                    rideAnalysisSummary: update.rideAnalysisSummary || file.rideAnalysisSummary,
                     frontierMetadataError: update.error || undefined,
                     metadataStatus: update.status,
                 };
@@ -930,6 +931,13 @@ const ClientDashboard = ({ user }) => {
             if (update.progress) setScanProgress(update.progress);
         });
     }, []);
+
+    useEffect(() => {
+        if (!selectedPath || !window.electronAPI?.onFrontierSaveFilesChanged) return undefined;
+        return window.electronAPI.onFrontierSaveFilesChanged(() => {
+            void handleScan(selectedPath, { preserveResults: true });
+        });
+    }, [handleScan, selectedPath]);
 
     useEffect(() => {
         const loadStoredPath = async () => {
