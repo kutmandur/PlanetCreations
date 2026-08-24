@@ -58,7 +58,7 @@ const AutoGroupSubmissionsModal = ({ onClose, onConfirm, communityRanks, color }
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose} style={color?.style}>
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={onClose} style={color?.style}>
             <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-4 pb-2 border-b">
                     <h2 className="text-2xl font-bold">Automatic Grouping</h2>

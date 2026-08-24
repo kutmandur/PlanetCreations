@@ -10,6 +10,7 @@ import { ICONS, isSafeHttpUrl } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 import {
+    DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
     supportsDesktopBackupUpload,
     uploadPreparedDesktopBackup,
 } from '../../utils/desktopBackupUpload';
@@ -74,7 +75,7 @@ const CollaborationChangelogModal = ({
         if (!window.electronAPI?.getLatestCollaborationFile) {
             const result = {
                 success: false,
-                message: 'Please update the desktop client before creating collaboration changelogs.',
+                message: DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
             };
             setLatestSave(result);
             setCheckingSave(false);
@@ -158,7 +159,7 @@ const CollaborationChangelogModal = ({
         let finalizationStarted = false;
         try {
             if (!supportsDesktopBackupUpload(window.electronAPI)) {
-                throw new Error('This desktop client must be updated before it can upload local files.');
+                throw new Error(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE);
             }
             const [idToken, appCheckToken] = await Promise.all([
                 auth.currentUser.getIdToken(true),

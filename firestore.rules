@@ -44,7 +44,7 @@ service cloud.firestore {
         'backupFileSize', 'backupIsSigned', 'backupSignerUid',
         'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
         'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt',
-        'verifiedGameMetadata'
+        'verifiedGameMetadata', 'rideAnalysisObjectKey'
       ]) || (
         data.get('backupObjectKey', null) == null &&
         data.get('backupStorageProvider', null) == null &&
@@ -58,7 +58,8 @@ service cloud.firestore {
         data.get('backupMediaSetId', null) == null &&
         data.get('backupProcessingError', null) == null &&
         data.get('backupUpdatedAt', null) == null &&
-        data.get('verifiedGameMetadata', null) == null
+        data.get('verifiedGameMetadata', null) == null &&
+        data.get('rideAnalysisObjectKey', null) == null
       );
     }
 
@@ -68,7 +69,7 @@ service cloud.firestore {
         'backupFileSize', 'backupIsSigned', 'backupSignerUid',
         'backupSignerUsername', 'backupOriginalFileName', 'backupPackageId',
         'backupMediaSetId', 'backupProcessingError', 'backupUpdatedAt',
-        'verifiedGameMetadata'
+        'verifiedGameMetadata', 'rideAnalysisObjectKey'
       ]);
     }
 
@@ -128,6 +129,8 @@ service cloud.firestore {
              hasNoServerBackupFields(data) &&
              hasNoServerCollaborationPublicationFields(data) &&
              isValidParkRidePresentation(data) &&
+             data.get('eventIds', []).size() == 0 &&
+             data.get('eventSubmissions', {}) == {} &&
              (!('likes' in data.keys()) || data.likes == 0) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
@@ -149,6 +152,14 @@ service cloud.firestore {
              // verifizieren über die Twitch-/YouTube-API) — sonst könnte ein
              // modifizierter Client sich Live-Badge und Feed-Boost erschleichen.
              data.get('liveStream', null) == existing.get('liveStream', null);
+    }
+
+    // Event-Einreichungen werden ausschließlich durch die atomare Callable
+    // submitCreationToEvent geschrieben. So kann kein Client die serverseitige
+    // Limitprüfung durch direkte Creation-Updates umgehen.
+    function eventSubmissionFieldsAreUnchanged(data, existing) {
+      return data.get('eventIds', []) == existing.get('eventIds', []) &&
+             data.get('eventSubmissions', {}) == existing.get('eventSubmissions', {});
     }
 
     // Validiert Profile-Daten
@@ -375,6 +386,7 @@ service cloud.firestore {
       ) || (isLoggedIn() && (
           serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
           collaborationPublicationFieldsAreUnchanged(request.resource.data, resource.data) &&
+          eventSubmissionFieldsAreUnchanged(request.resource.data, resource.data) &&
           ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
           isModerator())
        ));

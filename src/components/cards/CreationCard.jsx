@@ -104,7 +104,7 @@ const CreationCard = memo(({
                     // Admin-Debug: aus welchem Pool dieser Eintrag im
                     // Recommended-Feed gezogen wurde (+ Komponenten-Scores im Tooltip)
                     <div
-                        className={`absolute ${isLive ? 'top-8' : 'top-2'} left-2 bg-black bg-opacity-75 text-white text-[10px] font-mono px-2 py-1 rounded-md`}
+                        className={`absolute ${isLive ? 'top-8' : 'top-2'} left-2 bg-black/75 text-white text-[10px] font-mono px-2 py-1 rounded-md`}
                         title={Object.entries(creation.__feedDebug.parts)
                             .map(([k, v]) => `${k}: ${v.toFixed(3)}`)
                             .join('\n')}
@@ -114,7 +114,7 @@ const CreationCard = memo(({
                         {creation.__feedDebug.score.toFixed(2)}
                     </div>
                 )}
-                <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded-md text-xs font-semibold">
+                <div className="absolute bottom-2 left-2 bg-black/60 text-white px-2 py-1 rounded-md text-xs font-semibold">
                     <div onClick={handleProfileClick} className="hover:underline flex items-center">
                         <ProfileImage src={creation.userProfilePictureUrl} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-white object-cover" />
                         <span>
@@ -163,6 +163,7 @@ const CreationCard = memo(({
     return isLink ? (
         <Link
             to={`/creation/${creation.id}`}
+            state={creation.__fromIndex ? {indexGame: creation.game} : undefined}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={stopHover}
             onTouchStart={handlePrefetch}

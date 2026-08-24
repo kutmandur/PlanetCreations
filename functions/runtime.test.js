@@ -8,7 +8,7 @@ const exportedFunctions = require("./index");
 test("exports every function as a second-generation endpoint", () => {
   const endpoints = Object.entries(exportedFunctions);
 
-  assert.equal(endpoints.length, 90);
+  assert.equal(endpoints.length, 94);
   for (const [name, fn] of endpoints) {
     assert.equal(
       fn.__endpoint?.platform,
@@ -16,6 +16,15 @@ test("exports every function as a second-generation endpoint", () => {
       `${name} must remain a second-generation function`,
     );
   }
+});
+
+test("requires login before serving public creation ride-analysis chunks", async () => {
+  await assert.rejects(
+    exportedFunctions.getCreationRideAnalysisChunk.run({
+      data: {creationId: "public-creation", offset: 0},
+    }),
+    (error) => error.code === "unauthenticated",
+  );
 });
 
 test("keeps the established execution identity during migration", () => {

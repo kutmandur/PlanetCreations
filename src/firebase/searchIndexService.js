@@ -11,9 +11,10 @@ import { cacheFrontierDlcCatalog } from '../utils/frontierDlcCatalogCache';
  * dürfen daher nie in den ['creation', id]-React-Query-Cache geschrieben werden,
  * den die Detailseite nutzt.
  */
-export function entryToCreation(id, e) {
+export function entryToCreation(id, e, game = '') {
     return {
         id,
+        game,
         title: e.t || '',
         description: e.d || '',
         tags: e.tg || [],
@@ -50,5 +51,6 @@ export async function fetchSearchIndex(game) {
     });
     cacheFrontierDlcCatalog(game, scalableIndex?.metadata?.dlcCatalog);
     const entries = scalableIndex?.entries || {};
-    return Object.entries(entries).map(([id, entry]) => entryToCreation(id, entry));
+    return Object.entries(entries).map(([id, entry]) =>
+        entryToCreation(id, entry, game));
 }

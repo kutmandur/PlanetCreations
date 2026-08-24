@@ -11,6 +11,21 @@ export const RIDE_CATEGORY_ORDER = [
     'show',
 ];
 
+export function getPlanetCoaster2ScoreTone(metric, value) {
+    if (!Number.isFinite(value)) return null;
+    if (metric === 'excitement') {
+        return value > 6 ? 'green' : value > 3 ? 'yellow' : 'red';
+    }
+    if (metric === 'fear') {
+        if (value < 2 || value > 8) return 'red';
+        return value >= 4 && value <= 6 ? 'green' : 'yellow';
+    }
+    if (metric === 'nausea') {
+        return value <= 3 ? 'green' : value <= 6 ? 'yellow' : 'red';
+    }
+    return null;
+}
+
 const CATEGORY_LABELS = {
     coaster: 'Coasters',
     'water-ride': 'Water Rides',

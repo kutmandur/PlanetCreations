@@ -1,6 +1,8 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getCombinedParkPieceCount } from '../../utils/verifiedParkStats';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getCombinedParkPieceCount, getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
+export { getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
 import {
     colorWithAlpha,
     groupPresentedParkRides,
@@ -8,6 +10,9 @@ import {
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
 import CreationMetadataPanel from './CreationMetadataPanel';
+import RideNerdAnalysis from './RideNerdAnalysis';
+import { parseRideAnalysisBuffer } from '../../utils/rideAnalysis';
+import { downloadCreationRideAnalysis } from '../../utils/rideAnalysisDownload';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const decimalFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
@@ -40,18 +45,10 @@ const CATEGORY_CARD_STYLES = {
 };
 
 const SCORE_TONE_STYLES = {
-    green: 'border-green-300 bg-green-100 text-green-950 dark:border-green-700 dark:bg-green-950 dark:text-green-100',
-    yellow: 'border-yellow-300 bg-yellow-100 text-yellow-950 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100',
-    red: 'border-red-300 bg-red-100 text-red-950 dark:border-red-700 dark:bg-red-950 dark:text-red-100',
+    green: 'border-green-300 bg-green-100 text-green-950 dark:border-green-500 dark:bg-green-800/80 dark:text-green-50',
+    yellow: 'border-yellow-300 bg-yellow-100 text-yellow-950 dark:border-yellow-500 dark:bg-yellow-800/80 dark:text-yellow-50',
+    red: 'border-red-300 bg-red-100 text-red-950 dark:border-red-500 dark:bg-red-800/80 dark:text-red-50',
 };
-
-export function getPlanetCoaster2ScoreTone(metric, value) {
-    if (!Number.isFinite(value)) return null;
-    if (metric === 'excitement') return value >= 5 ? 'green' : value >= 3 ? 'yellow' : 'red';
-    if (metric === 'fear') return value <= 5 ? 'green' : value <= 7 ? 'yellow' : 'red';
-    if (metric === 'nausea') return value <= 3 ? 'green' : value <= 5 ? 'yellow' : 'red';
-    return null;
-}
 
 function formatNumber(value, digits = 0) {
     if (!Number.isFinite(value)) return 'N/A';
@@ -120,7 +117,7 @@ const BlueprintStatCard = ({ label, value, formatter = decimalFormatter, metric,
     );
 };
 
-const VerifiedBlueprintStats = ({ metadata }) => {
+const VerifiedBlueprintStats = ({ metadata, creationName, bannerImageUrl }) => {
     const blueprint = metadata?.blueprint;
     const ratings = blueprint?.ratings;
     const hasPlacementCost = Number.isFinite(blueprint?.placementCost);
@@ -132,7 +129,9 @@ const VerifiedBlueprintStats = ({ metadata }) => {
     ].filter(entry => Number.isFinite(entry.value));
     if (!blueprint) return null;
 
-    return (
+    const isMultiRideBlueprint = blueprint?.rideCount > 1 ||
+        (blueprint?.trackedRideCount || 0) + (blueprint?.flatRideCount || 0) > 1;
+    return <>
         <div
             className="mt-3 grid gap-2 text-left"
             style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(7.5rem, 1fr))' }}
@@ -145,11 +144,18 @@ const VerifiedBlueprintStats = ({ metadata }) => {
             ))}
             <CreationMetadataPanel
                 metadata={metadata}
+                creationName={creationName}
+                bannerImageUrl={bannerImageUrl}
                 triggerLabel="More stats"
                 triggerClassName="flex min-h-14 items-center justify-center rounded-xl bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
             />
         </div>
-    );
+        {isMultiRideBlueprint && (
+            <p data-testid="multi-ride-blueprint-analysis-note" className="mx-auto mt-3 max-w-2xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100">
+                Planet Coaster 2 does not include final EFN ratings or ride-test curves in multi-ride blueprints, so no reliable ride analysis can be shown for this file.
+            </p>
+        )}
+    </>;
 };
 
 const TinyMetric = ({ label, value, accent = '' }) => (
@@ -165,7 +171,8 @@ const TestScoreMetric = ({ metric, label, value, source }) => {
         <div
             data-testid={`test-score-${metric}`}
             data-tone={tone || 'neutral'}
-            title={source === 'user' ? `${label} entered by the creator` : `${label} rating stored by the game`}
+            title={source === 'user' ? `${label} entered by the creator` :
+                (source === 'calculated' ? `${label} calculated from the stored ride-test curve` : `${label} rating stored by the game`)}
             className={`min-w-0 rounded-lg border px-2 py-1.5 text-center ${SCORE_TONE_STYLES[tone] || 'border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100'}`}
         >
             <p className="truncate text-[9px] font-semibold uppercase tracking-wide opacity-70">{label}</p>
@@ -179,18 +186,28 @@ const RideStats = ({ ride, userEfn }) => {
     const ratings = ride?.ratings;
     const hasGameRatings = ['excitement', 'fear', 'nausea']
         .some(metric => Number.isFinite(ratings?.[metric]));
-    const scores = hasGameRatings ? ratings : userEfn;
-    const scoreSource = hasGameRatings ? 'game' : 'user';
+    const calculatedRatings = stats?.calculatedRatings || (stats?.testCurves?.average ? {
+        ...stats.testCurves.average,
+        source: 'legacy-tracked-ride-test-curve-sample-mean',
+        isFinalRating: false,
+    } : null);
+    const hasCalculatedRatings = ['excitement', 'fear', 'nausea']
+        .some(metric => Number.isFinite(calculatedRatings?.[metric]));
+    const scores = hasGameRatings ? ratings : (hasCalculatedRatings ? calculatedRatings : userEfn);
+    const scoreSource = hasGameRatings ? 'game' : (hasCalculatedRatings ? 'calculated' : 'user');
     if (!stats && !scores) {
         return <p className="mt-3 text-xs text-gray-500">{ride?.isCustom ? 'Custom attraction — no savefile stats.' : 'No stored per-ride test stats.'}</p>;
     }
     return (
         <div className="mt-3 space-y-2">
             {scores && (
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="space-y-1.5">
+                    {scoreSource === 'calculated' && <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">Calculated from test curve</p>}
+                    <div className="grid grid-cols-3 gap-1.5">
                     <TestScoreMetric metric="excitement" label="Excitement" value={scores.excitement} source={scoreSource} />
                     <TestScoreMetric metric="fear" label="Fear" value={scores.fear} source={scoreSource} />
                     <TestScoreMetric metric="nausea" label="Nausea" value={scores.nausea} source={scoreSource} />
+                    </div>
                 </div>
             )}
             {stats && <>
@@ -257,13 +274,13 @@ const AnimatedPillTabs = ({ activeTab, onChange, tabs }) => {
     );
 };
 
-const RideCard = ({ entry, showType = false }) => {
+const RideCard = ({ entry, showType = false, nerdMode = false, analysis, analysisLoading = false, expanded = false, onToggle }) => {
     const { ride, index, category } = entry;
     const categoryKey = category?.key || 'tracked-ride';
     return (
         <article
             data-testid={`ride-card-${categoryKey}-${index}`}
-            className={`rounded-2xl border p-3 text-center shadow-sm ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
+            className={`min-w-0 rounded-2xl border p-3 text-center shadow-sm ${nerdMode ? 'w-full sm:p-5' : ''} ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
         >
             <div className="min-w-0 text-center">
                 <h4 className="break-words text-sm font-bold leading-tight text-gray-950 dark:text-white" title={entry.displayName}>{entry.displayName}</h4>
@@ -276,6 +293,14 @@ const RideCard = ({ entry, showType = false }) => {
             </div>
             {!ride.isCountPlaceholder && <RideStats ride={ride} userEfn={entry.userEfn} />}
             {ride.isCountPlaceholder && <p className="mt-3 text-center text-xs text-gray-500">Ride counted, but no individual record was available.</p>}
+            {nerdMode && ride.kind === 'tracked' && !ride.isCountPlaceholder && (
+                <div className="mt-4">
+                    <button type="button" disabled={analysisLoading || !analysis} onClick={onToggle} className="rounded-full bg-gray-900 px-4 py-2 text-xs font-bold text-white hover:bg-black disabled:cursor-wait disabled:opacity-50 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200">
+                        {analysisLoading ? 'Loading full-resolution data…' : (expanded ? 'Close detailed analysis' : 'Open detailed analysis')}
+                    </button>
+                    {expanded && analysis && <RideNerdAnalysis analysis={analysis} entry={entry} />}
+                </div>
+            )}
         </article>
     );
 };
@@ -323,8 +348,58 @@ const AreaSections = ({ groups }) => (
     </div>
 );
 
-const RideListPopover = ({ groups, areaGroups, hasAreas, onClose }) => {
+const RideListPopover = ({
+    groups,
+    areaGroups,
+    hasAreas,
+    creationId,
+    rideAnalysisSummary,
+    onClose,
+}) => {
     const [grouping, setGrouping] = useState(hasAreas ? 'areas' : 'types');
+    const [nerdMode, setNerdMode] = useState(false);
+    const [analysis, setAnalysis] = useState(null);
+    const [analysisStatus, setAnalysisStatus] = useState('idle');
+    const [analysisError, setAnalysisError] = useState('');
+    const [expandedRideKey, setExpandedRideKey] = useState('');
+    const analysisStatusRef = useRef('idle');
+    const allEntries = useMemo(() => groups.flatMap(group => group.rides), [groups]);
+    const nerdModeAvailable = Boolean(creationId && rideAnalysisSummary?.available);
+
+    const loadAnalysis = useCallback(async () => {
+        if (!nerdModeAvailable || ['loading', 'complete'].includes(analysisStatusRef.current)) return;
+        analysisStatusRef.current = 'loading';
+        setAnalysisStatus('loading');
+        setAnalysisError('');
+        try {
+            const requestChunk = httpsCallable(getFunctions(), 'getCreationRideAnalysisChunk');
+            const analysisBuffer = await downloadCreationRideAnalysis(
+                creationId,
+                async payload => (await requestChunk(payload)).data,
+            );
+            setAnalysis(parseRideAnalysisBuffer(analysisBuffer));
+            analysisStatusRef.current = 'complete';
+            setAnalysisStatus('complete');
+        } catch (error) {
+            console.warn('Full-resolution ride analysis could not be loaded:', error);
+            analysisStatusRef.current = 'error';
+            setAnalysisError(error.message || 'Full-resolution ride analysis could not be loaded.');
+            setAnalysisStatus('error');
+        }
+    }, [creationId, nerdModeAvailable]);
+
+    const enableNerdMode = () => {
+        setNerdMode(true);
+        void loadAnalysis();
+    };
+    const changeMode = mode => {
+        if (mode === 'nerd') {
+            enableNerdMode();
+            return;
+        }
+        setNerdMode(false);
+        setExpandedRideKey('');
+    };
     useEffect(() => {
         const handleKeyDown = event => { if (event.key === 'Escape') onClose(); };
         const previousOverflow = document.body.style.overflow;
@@ -343,7 +418,7 @@ const RideListPopover = ({ groups, areaGroups, hasAreas, onClose }) => {
                     <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-300">Park metadata</p>
                         <h2 className="mt-1 text-2xl font-bold text-gray-950 dark:text-white">Ride List</h2>
-                        <p className="mt-1 text-xs text-gray-500">EFN values are shown only when stored by the game or entered separately by the creator.</p>
+                        <p className="mt-1 text-xs text-gray-500">Stored game EFN takes priority; when it is missing, EFN is calculated from the saved test curve.</p>
                     </div>
                     <button type="button" aria-label="Close Ride List" onClick={onClose} className="grid h-10 w-10 flex-none place-items-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700">
                         <span aria-hidden="true" className="relative block h-4 w-4">
@@ -353,8 +428,21 @@ const RideListPopover = ({ groups, areaGroups, hasAreas, onClose }) => {
                     </button>
                 </header>
                 <div className="overflow-y-auto p-4 sm:p-6">
+                    {nerdModeAvailable && (
+                        <div className="mx-auto mb-5 w-full max-w-xs">
+                            <AnimatedPillTabs
+                                activeTab={nerdMode ? 'nerd' : 'normal'}
+                                onChange={changeMode}
+                                tabs={[
+                                    { id: 'normal', label: 'Normal mode' },
+                                    { id: 'nerd', label: 'Nerd mode' },
+                                ]}
+                            />
+                        </div>
+                    )}
+                    {nerdMode && analysisStatus === 'error' && <p role="alert" className="mb-5 rounded-xl border border-red-300 bg-red-50 p-3 text-center text-sm text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">{analysisError}</p>}
                     {hasAreas && (
-                        <div className="mb-6">
+                        <div className={`mb-6 ${nerdMode ? 'hidden' : ''}`}>
                             <AnimatedPillTabs
                                 activeTab={grouping}
                                 onChange={setGrouping}
@@ -362,7 +450,22 @@ const RideListPopover = ({ groups, areaGroups, hasAreas, onClose }) => {
                             />
                         </div>
                     )}
-                    {grouping === 'areas' && hasAreas ? <AreaSections groups={areaGroups} /> : <TypeSections groups={groups} />}
+                    {nerdMode ? (
+                        <div className="mx-auto w-full max-w-5xl space-y-3 overflow-x-hidden" data-testid="nerd-ride-list">
+                            {allEntries.map(entry => (
+                                <RideCard
+                                    key={entry.key}
+                                    entry={entry}
+                                    showType
+                                    nerdMode
+                                    analysis={analysis}
+                                    analysisLoading={analysisStatus === 'loading'}
+                                    expanded={expandedRideKey === entry.key}
+                                    onToggle={() => setExpandedRideKey(current => current === entry.key ? '' : entry.key)}
+                                />
+                            ))}
+                        </div>
+                    ) : (grouping === 'areas' && hasAreas ? <AreaSections groups={areaGroups} /> : <TypeSections groups={groups} />)}
                 </div>
             </div>
         </div>,
@@ -370,13 +473,19 @@ const RideListPopover = ({ groups, areaGroups, hasAreas, onClose }) => {
     );
 };
 
-const VerifiedParkStats = ({ metadata, presentation }) => {
+const VerifiedParkStats = ({ metadata, presentation, creationName, bannerImageUrl, creationId, rideAnalysisSummary }) => {
     const [rideListOpen, setRideListOpen] = useState(false);
     const normalizedPresentation = useMemo(() => sanitizeParkRidePresentation(presentation), [presentation]);
     const park = metadata?.park || (normalizedPresentation.customRides.length > 0 ? { rides: [] } : null);
     const groups = useMemo(() => groupPresentedParkRides(park, normalizedPresentation), [park, normalizedPresentation]);
     const areaGroups = useMemo(() => groupPresentedParkRidesByArea(park, normalizedPresentation), [park, normalizedPresentation]);
-    if (!park) return <VerifiedBlueprintStats metadata={metadata} />;
+    if (!park) return (
+        <VerifiedBlueprintStats
+            metadata={metadata}
+            creationName={creationName}
+            bannerImageUrl={bannerImageUrl}
+        />
+    );
 
     const pieceCount = getCombinedParkPieceCount(park);
     return <>
@@ -406,6 +515,8 @@ const VerifiedParkStats = ({ metadata, presentation }) => {
                 groups={groups}
                 areaGroups={areaGroups}
                 hasAreas={normalizedPresentation.areas.length > 0}
+                creationId={creationId}
+                rideAnalysisSummary={rideAnalysisSummary}
                 onClose={() => setRideListOpen(false)}
             />
         )}

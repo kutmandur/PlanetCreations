@@ -147,7 +147,7 @@ const MediaSnapshotModal = ({ file, gameName, onClose, onSave }) => {
     const handleSave = () => { const associatedPaths = associatedMedia.map(m => m.path); onSave(file.path, associatedPaths); };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-50 p-4">
             {previewFile && <MediaPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
             <div className="bg-gray-900 p-6 rounded-lg shadow-xl max-w-5xl w-full border border-gray-700">
                 <h3 className="text-xl font-bold mb-4 text-white">Manage Media for <span className="text-yellow-400">{file.name}</span></h3>

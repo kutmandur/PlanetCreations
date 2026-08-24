@@ -227,7 +227,7 @@ const GamesManager = ({ setModalMessage }) => {
             </div>
 
             {form && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4" onClick={() => setForm(null)}>
+                <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4" onClick={() => setForm(null)}>
                     <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-xl font-bold">{editingId ? `Edit ${form.name || editingId}` : 'Add Game'}</h3>
                         {!editingId && (

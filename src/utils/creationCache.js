@@ -18,6 +18,28 @@ export function getCachedCreation(queryClient, creationId) {
 }
 
 /**
+ * Removes a deleted/missing Creation from every client-side list that can keep
+ * rendering a card after the canonical document is gone.
+ */
+export function removeCreationFromCaches(queryClient, creationId) {
+    if (!queryClient || !creationId) return;
+    queryClient.removeQueries({queryKey: ['creation', creationId], exact: true});
+    for (const queryKey of ['searchIndex', 'communityIndex']) {
+        queryClient.setQueriesData({queryKey: [queryKey]}, current =>
+            Array.isArray(current) ?
+                current.filter(creation => creation?.id !== creationId) :
+                current
+        );
+    }
+    queryClient.setQueriesData({queryKey: ['homeCreations']}, current =>
+        current && Array.isArray(current.creationIds) ? {
+            ...current,
+            creationIds: current.creationIds.filter(id => id !== creationId),
+        } : current
+    );
+}
+
+/**
  * Holt mehrere Creations aus dem Cache, gibt gecachte und fehlende IDs zurück
  */
 export function getCreationsFromCache(queryClient, creationIds) {

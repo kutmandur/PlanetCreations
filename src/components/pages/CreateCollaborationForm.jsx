@@ -10,6 +10,7 @@ import SelectBackupModal from '../modals/SelectBackupModal';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 import {
+    DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
     supportsDesktopBackupUpload,
     uploadPreparedDesktopBackup,
 } from '../../utils/desktopBackupUpload';
@@ -163,7 +164,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
 
     const handleChooseInitialSave = () => {
         if (!isRunningInElectron || !window.electronAPI?.listAllLocalCreationsAndBackups) {
-            setModalMessage('Please use an up-to-date PlanetCreations desktop client to choose the initial save.');
+            setModalMessage(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE);
             return;
         }
         setIsBackupModalOpen(true);
@@ -241,7 +242,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                 navigate(`/collaboration/${collaborationId}`);
             } else {
                 if (!supportsDesktopBackupUpload(window.electronAPI)) {
-                    throw new Error('This desktop client must be updated before it can upload local files.');
+                    throw new Error(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE);
                 }
                 setSubmissionStage('Preparing initial save…');
                 const [idToken, appCheckToken] = await Promise.all([

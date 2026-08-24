@@ -77,7 +77,7 @@ const ManagedCreationCard = ({ creation, onPinToggle, onUnlink, onClick, onMarkF
             </div>
 
             <div ref={menuRef} className="absolute top-2 left-2 z-10">
-                <button onClick={handleMenuToggle} className="w-8 h-8 rounded-full bg-black bg-opacity-60 text-white flex items-center justify-center hover:bg-opacity-80 transition-all">
+                <button onClick={handleMenuToggle} className="w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-all">
                     <Icon path={ICONS.chevronDown} className="w-5 h-5" />
                 </button>
                 {isMenuOpen && (

@@ -193,7 +193,7 @@ function normalizeFrontierMetadata(rawMetadata, originalFileName, options = {}) 
     return normalized;
 }
 
-function extractFrontierMetadata(payloadBuffer, options) {
+function extractFrontierData(payloadBuffer, options) {
     if (!Buffer.isBuffer(payloadBuffer) || payloadBuffer.length <= 0) {
         throw new Error("The verified game-file payload is missing.");
     }
@@ -237,6 +237,7 @@ function extractFrontierMetadata(payloadBuffer, options) {
         throw new Error("The Frontier metadata entry is not valid JSON.");
     }
     const normalized = normalizeFrontierMetadata(rawMetadata, originalFileName, options);
+    let rideAnalysis = null;
     const creationEntry = archive.getEntry(expectedKindForExtension === "blueprint" ?
         "blueprint" : "parkdata");
     if (creationEntry && !creationEntry.isDirectory &&
@@ -253,32 +254,39 @@ function extractFrontierMetadata(payloadBuffer, options) {
                     expectedKindForExtension,
                     normalized.blueprint?.ratings,
                     normalized.tags,
+                    {includeRideAnalysis: options?.includeRideAnalysis === true},
                 ) : parsePlanetZooSaveMetadata(
                     creationPayload,
                     expectedKindForExtension,
                 );
-            if (inner && normalized.park) Object.assign(normalized.park, inner);
+            const {rideAnalysis: extractedRideAnalysis = null, ...innerMetadata} = inner || {};
+            rideAnalysis = extractedRideAnalysis;
+            if (inner && normalized.park) Object.assign(normalized.park, innerMetadata);
             if (inner && normalized.blueprint) {
                 if (expectedGameForExtension === "planet-zoo") {
-                    Object.assign(normalized.blueprint, inner);
+                    Object.assign(normalized.blueprint, innerMetadata);
                 } else {
-                    normalized.blueprint.rideCount = inner.rideCount;
-                    normalized.blueprint.rides = inner.rides;
-                    normalized.blueprint.placedPartCount = inner.placedPartCount;
-                    normalized.blueprint.sceneryPieceCount = inner.sceneryPieceCount;
-                    normalized.blueprint.serializedGroupCount = inner.buildingCount;
-                    normalized.blueprint.railElementCount = inner.railElementCount;
+                    normalized.blueprint.rideCount = innerMetadata.rideCount;
+                    normalized.blueprint.rides = innerMetadata.rides;
+                    normalized.blueprint.placedPartCount = innerMetadata.placedPartCount;
+                    normalized.blueprint.sceneryPieceCount = innerMetadata.sceneryPieceCount;
+                    normalized.blueprint.serializedGroupCount = innerMetadata.buildingCount;
+                    normalized.blueprint.railElementCount = innerMetadata.railElementCount;
                     normalized.blueprint.trackedRideElementCount =
-                        inner.trackedRideElementCount;
-                    normalized.blueprint.binCount = inner.binCount;
-                    normalized.blueprint.poolCount = inner.poolCount;
+                        innerMetadata.trackedRideElementCount;
+                    normalized.blueprint.binCount = innerMetadata.binCount;
+                    normalized.blueprint.poolCount = innerMetadata.poolCount;
                 }
             }
         } catch {
             // Preserve verified outer metadata if the optional internal layout is newer.
         }
     }
-    return normalized;
+    return {metadata: normalized, rideAnalysis};
+}
+
+function extractFrontierMetadata(payloadBuffer, options) {
+    return extractFrontierData(payloadBuffer, options).metadata;
 }
 
 function resolveVerifiedRequiredDlcs(currentRequiredDlcs, verifiedMetadata) {
@@ -309,6 +317,7 @@ module.exports = {
     FRONTIER_WRAPPER_MAGIC,
     VERIFIED_METADATA_SCHEMA_VERSION,
     buildCreationMetadataUpdate,
+    extractFrontierData,
     extractFrontierMetadata,
     normalizeFrontierMetadata,
     resolveVerifiedRequiredDlcs,

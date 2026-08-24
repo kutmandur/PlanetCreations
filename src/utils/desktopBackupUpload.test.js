@@ -1,5 +1,6 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
+    DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
     supportsDesktopBackupUpload,
     uploadPreparedDesktopBackup,
 } from './desktopBackupUpload';
@@ -12,6 +13,15 @@ vi.mock('firebase/functions', () => ({
 describe('desktop backup upload compatibility', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    test('does not mislabel a temporarily unavailable bridge as an outdated client', () => {
+        expect(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE).toContain('restart');
+        expect(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE.toLowerCase()).not.toContain('update');
+        expect(supportsDesktopBackupUpload({
+            prepareBackupForUpload: true,
+            uploadPreparedBackup: true,
+        })).toBe(false);
     });
 
     test('prefers the capability-scoped upload handle on current clients', async () => {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
@@ -226,7 +226,33 @@ function requireTrustedIpcSender(event, allowHosted = false) {
     if (!isTrustedIpcSender(event, allowHosted)) throw new Error('IPC request rejected for an untrusted page.');
 }
 
+function clearHostedNavigationState(browserWindow) {
+    if (browserWindow.__hostedRetryTimer) {
+        clearTimeout(browserWindow.__hostedRetryTimer);
+        browserWindow.__hostedRetryTimer = null;
+    }
+    if (browserWindow.__hostedFallbackListener) {
+        browserWindow.webContents.removeListener(
+            'did-fail-load',
+            browserWindow.__hostedFallbackListener,
+        );
+        browserWindow.__hostedFallbackListener = null;
+    }
+    if (browserWindow.__hostedFinishListener) {
+        browserWindow.webContents.removeListener(
+            'did-finish-load',
+            browserWindow.__hostedFinishListener,
+        );
+        browserWindow.__hostedFinishListener = null;
+    }
+    if (browserWindow.__hostedCapabilityTimer) {
+        clearTimeout(browserWindow.__hostedCapabilityTimer);
+        browserWindow.__hostedCapabilityTimer = null;
+    }
+}
+
 function loadBundledApp(browserWindow, hashRoute = '/client/dashboard') {
+    clearHostedNavigationState(browserWindow);
     return browserWindow.loadURL(`${getBundledAppUrl()}#${hashRoute}`);
 }
 
@@ -252,32 +278,102 @@ function queueLocalBackupImport(filePath) {
 function loadHostedAppWithFallback(
     browserWindow,
     hashRoute = '/',
-    { requireOverlayCapability = false, requireOfflineManagerCapability = false } = {},
+    {
+        requireOverlayCapability = false,
+        requireOfflineManagerCapability = false,
+        allowBundledFallback = false,
+    } = {},
 ) {
     const hostedUrl = `${getHostedAppUrl()}#${hashRoute}`;
     const fallbackUrl = `${getBundledAppUrl()}#${hashRoute}`;
     let usingFallback = false;
-    let capabilityTimer = null;
-    const loadFallback = (reason) => {
-        if (usingFallback || browserWindow.isDestroyed()) return;
+    let hostedRetryDelayMs = 1500;
+    let fallbackProbeDelayMs = 5000;
+    clearHostedNavigationState(browserWindow);
+
+    const scheduleFallbackRecoveryProbe = () => {
+        if (!usingFallback || browserWindow.isDestroyed() ||
+            browserWindow.__hostedRetryTimer) return;
+        const retryDelayMs = fallbackProbeDelayMs;
+        fallbackProbeDelayMs = Math.min(fallbackProbeDelayMs * 2, 60000);
+        browserWindow.__hostedRetryTimer = setTimeout(async () => {
+            browserWindow.__hostedRetryTimer = null;
+            if (!usingFallback || browserWindow.isDestroyed()) return;
+            try {
+                const response = await net.fetch(getHostedAppUrl(), {
+                    method: 'HEAD',
+                    cache: 'no-store',
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                usingFallback = false;
+                fallbackProbeDelayMs = 5000;
+                browserWindow.webContents.__hostedUiCapabilities = null;
+                log.info('Hosted UI is reachable again; leaving bundled fallback.');
+                browserWindow.loadURL(hostedUrl)
+                    .catch((error) => loadFallback(error.message, true));
+            } catch (error) {
+                log.warn(`Hosted UI recovery probe failed: ${error.message}`);
+                scheduleFallbackRecoveryProbe();
+            }
+        }, retryDelayMs);
+    };
+    const loadFallback = (reason, retryHosted = false) => {
+        if (!allowBundledFallback || usingFallback || browserWindow.isDestroyed()) return;
         usingFallback = true;
-        if (capabilityTimer) clearTimeout(capabilityTimer);
+        if (browserWindow.__hostedCapabilityTimer) {
+            clearTimeout(browserWindow.__hostedCapabilityTimer);
+            browserWindow.__hostedCapabilityTimer = null;
+        }
         log.warn(`Hosted UI unavailable (${reason}); loading bundled fallback.`);
-        browserWindow.loadURL(fallbackUrl).catch((error) => log.error('Bundled UI fallback failed:', error));
+        browserWindow.loadURL(fallbackUrl)
+            .then(() => {
+                if (retryHosted) scheduleFallbackRecoveryProbe();
+            })
+            .catch((error) => log.error('Bundled UI fallback failed:', error));
+    };
+    const scheduleHostedRetry = (reason) => {
+        if (allowBundledFallback) {
+            loadFallback(reason, true);
+            return;
+        }
+        if (browserWindow.isDestroyed() || browserWindow.__hostedRetryTimer) return;
+        const retryDelayMs = hostedRetryDelayMs;
+        hostedRetryDelayMs = Math.min(hostedRetryDelayMs * 2, 30000);
+        log.warn(
+            `Hosted UI temporarily unavailable (${reason}); preserving the HTTPS ` +
+            `Workshop session and retrying in ${retryDelayMs}ms.`,
+        );
+        browserWindow.__hostedRetryTimer = setTimeout(() => {
+            browserWindow.__hostedRetryTimer = null;
+            if (browserWindow.isDestroyed()) return;
+            browserWindow.loadURL(hostedUrl).catch(() => {
+                // did-fail-load owns retry scheduling so one failed navigation
+                // cannot create two concurrent retry loops.
+            });
+        }, retryDelayMs);
     };
     const handleLoadFailure = (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
         if (!isMainFrame || usingFallback || !isHostedAppUrl(validatedUrl)) return;
-        loadFallback(`${errorCode}: ${errorDescription}`);
+        // Chromium emits ERR_ABORTED for harmless redirects and superseded
+        // navigations. Treating it as an outage used to throw authenticated
+        // users into the file:// bundle.
+        if (errorCode === -3) return;
+        scheduleHostedRetry(`${errorCode}: ${errorDescription}`);
     };
-    if (browserWindow.__hostedFallbackListener) {
-        browserWindow.webContents.removeListener('did-fail-load', browserWindow.__hostedFallbackListener);
-    }
     browserWindow.__hostedFallbackListener = handleLoadFailure;
     browserWindow.webContents.on('did-fail-load', handleLoadFailure);
     browserWindow.webContents.__hostedUiCapabilities = null;
-    browserWindow.webContents.once('did-finish-load', () => {
+    const handleHostedFinish = () => {
         if (!isHostedAppUrl(browserWindow.webContents.getURL())) return;
-        capabilityTimer = setTimeout(() => {
+        if (browserWindow.__hostedRetryTimer) {
+            clearTimeout(browserWindow.__hostedRetryTimer);
+            browserWindow.__hostedRetryTimer = null;
+        }
+        hostedRetryDelayMs = 1500;
+        browserWindow.__hostedCapabilityTimer = setTimeout(() => {
+            browserWindow.__hostedCapabilityTimer = null;
             const capabilities = browserWindow.webContents.__hostedUiCapabilities;
             if (!capabilities) {
                 loadFallback('hosted UI did not complete the compatibility handshake');
@@ -305,15 +401,18 @@ function loadHostedAppWithFallback(
                 loadFallback('hosted Offline Manager requires a newer desktop bridge');
             }
         }, 2500);
-    });
+    };
+    browserWindow.__hostedFinishListener = handleHostedFinish;
+    browserWindow.webContents.on('did-finish-load', handleHostedFinish);
     const loadPromise = browserWindow.loadURL(hostedUrl);
-    loadPromise.catch((error) => loadFallback(error.message));
+    loadPromise.catch((error) => scheduleHostedRetry(error.message));
     return loadPromise;
 }
 
 function loadOfflineManager(browserWindow, hashRoute = '/client/dashboard') {
     return loadHostedAppWithFallback(browserWindow, hashRoute, {
         requireOfflineManagerCapability: true,
+        allowBundledFallback: true,
     });
 }
 

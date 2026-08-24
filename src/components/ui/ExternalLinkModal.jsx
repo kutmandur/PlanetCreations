@@ -4,7 +4,7 @@ import { getGameColor } from '../../utils/helpers';
 const ExternalLinkModal = ({ url, onConfirm, onCancel, activeTab }) => {
     const color = getGameColor(activeTab);
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" style={color.style}>
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50" style={color.style}>
             <div className="bg-white p-8 rounded-lg shadow-xl text-center max-w-md">
                 <h3 className="text-xl font-bold mb-4">External Link Warning</h3>
                 <p className="mb-6 text-gray-700">

@@ -11,7 +11,7 @@ const BackupNoteModal = ({ onConfirm, onCancel, isOnline, showMediaPackageOption
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[100]" onClick={onCancel}>
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]" onClick={onCancel}>
             <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <h2 className="text-xl font-bold mb-4">Add a Note to Your Backup</h2>
                 <textarea

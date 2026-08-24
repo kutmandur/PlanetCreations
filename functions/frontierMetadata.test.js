@@ -5,6 +5,7 @@ const test = require("node:test");
 const AdmZip = require("adm-zip");
 const {
     buildCreationMetadataUpdate,
+    extractFrontierData,
     extractFrontierMetadata,
     normalizeFrontierMetadata,
     resolveVerifiedRequiredDlcs,
@@ -257,6 +258,55 @@ test("securely extracts per-ride metadata from the signed CobraSav payload", () 
         ride.rideCategory === "Water Slide"));
 });
 
+test("extracts full-resolution ride data separately from bounded Firestore metadata", () => {
+    const fields = [];
+    for (let field = 0; field < 20; field += 1) {
+        const block = Buffer.alloc(4 + 2 * 4);
+        const values = field === 1 ? [0, 10] :
+            (field === 2 ? [0, 100] :
+                (field === 3 ? [0, 20] :
+                    (field === 11 ? [2, 4] : [0, 0])));
+        values.forEach((value, index) => block.writeFloatLE(value, 4 + index * 4));
+        fields.push(block);
+    }
+    const testCacheData = Buffer.concat([
+        varUInt(42), varUInt(1), varUInt(0),
+        varUInt(1), varUInt(2),
+        ...fields,
+    ]);
+    const trackRecord = Buffer.concat([
+        varUInt(42), varUInt(1), varUInt(0),
+        Buffer.from("f9ffffffffffffffff01", "hex"),
+        varUInt(1), Buffer.from([0]),
+        Buffer.from("c0c801010000f300", "hex"),
+    ]);
+    const cobraPayload = cobraBlueprint(["CC_Test", "Full Resolution Ride"], [
+        cobraClient("FlatRide", 41, 0),
+        cobraClient("Track", 114, 1, trackRecord),
+        cobraClient("TrackedRideTestDataCache", 9, 1, testCacheData),
+    ]);
+    const zip = new AdmZip();
+    zip.addFile("metadata", wrapFrontierMetadata({
+        sName: "Analysis Park",
+        tSave: {sParkName: "Analysis Park"},
+    }));
+    zip.addFile("parkdata", wrapFrontierEntry(cobraPayload));
+
+    const result = extractFrontierData(zip.toBuffer(), {
+        originalFileName: "Analysis Park.park2",
+        expectedGameId: "planet-coaster-2",
+        expectedFileKind: "park",
+        includeRideAnalysis: true,
+    });
+    assert.equal(result.metadata.park.rides[0].name, "Full Resolution Ride");
+    assert.equal(result.metadata.park.rides[0].testStats.calculatedRatings.excitement, 3);
+    assert.equal(result.rideAnalysis.fieldCount, 20);
+    assert.equal(result.rideAnalysis.totalSampleCount, 2);
+    assert.ok(Buffer.isBuffer(result.rideAnalysis.cacheBody));
+    assert.equal(result.rideAnalysis.rides[0].rideIndex, 0);
+    assert.equal(result.metadata.park.rideAnalysis, undefined);
+});
+
 test("securely extracts Planet Zoo park, habitat and transport metadata", () => {
     const cobraPayload = cobraBlueprint(
         ["Transport_Steam_Train", "Goodwin Railway"],
@@ -409,6 +459,9 @@ test("accepts mixed untested and multi-trace ride-test cache entries", () => {
     assert.equal(entries[1].entityId, 200);
     assert.equal(entries[1].stats.traceCount, 3);
     assert.equal(entries[1].stats.durationSeconds, 9);
+    assert.equal(entries[1].stats.calculatedRatings.source,
+        "tracked-ride-test-curve-sample-mean-v1");
+    assert.equal(entries[1].stats.calculatedRatings.isFinalRating, false);
 });
 
 test("rejects a non-Frontier payload instead of trusting client metadata", () => {

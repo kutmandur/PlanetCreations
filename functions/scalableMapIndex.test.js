@@ -7,6 +7,7 @@ const {
     buildMapIndexShards,
     buildShardWithEntry,
     getLocationId,
+    removeMapIndexEntry,
     upsertMapIndexEntry,
 } = require("./scalableMapIndex");
 
@@ -25,6 +26,7 @@ const createFakeFirestore = (initialDocuments) => {
                 assert.equal(documents.has(documentRef.path), false);
                 documents.set(documentRef.path, data);
             },
+            delete: (documentRef) => documents.delete(documentRef.path),
             get: async (documentRef) => snap(documentRef.path),
             set: (documentRef, data, options) => {
                 documents.set(documentRef.path, options?.merge ? {
@@ -134,4 +136,39 @@ test("relocates a growing existing entry instead of overflowing its shard", asyn
     assert.equal(db.documents.get(locationPath).shardId, targetShardId);
     assert.equal(db.documents.get(statePath).count, 2);
     assert.equal(db.documents.get(statePath).shardIds.length, 2);
+});
+
+test("removes a stale shard entry even when its location document is missing", async () => {
+    const scopeId = "planet-coaster";
+    const shardId = "planet-coaster--legacy--000001";
+    const headShardId = "planet-coaster--legacy--000002";
+    const statePath = `searchIndexState/${scopeId}`;
+    const shardPath = `searchIndexShards/${shardId}`;
+    const headShardPath = `searchIndexShards/${headShardId}`;
+    const db = createFakeFirestore({
+        [shardPath]: {
+            b: 1,
+            e: {
+                deleted: {t: "Deleted Creation"},
+            },
+            p: null,
+        },
+        [headShardPath]: {
+            b: 1,
+            e: {remaining: {t: "Remaining Creation"}},
+            p: shardId,
+        },
+        [statePath]: {
+            count: 2,
+            headShardId,
+        },
+    });
+
+    assert.equal(await removeMapIndexEntry(
+        db, "search", scopeId, "deleted"), true);
+    assert.deepEqual(db.documents.get(shardPath).e, {});
+    assert.deepEqual(db.documents.get(headShardPath).e, {
+        remaining: {t: "Remaining Creation"},
+    });
+    assert.equal(db.documents.get(statePath).count, 1);
 });

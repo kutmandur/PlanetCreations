@@ -4,6 +4,8 @@ const TRACK_RECORD_TERMINATOR = Buffer.from('c0c801010000f300', 'hex');
 const TRACK_NAME_SENTINEL = Buffer.from('f9ffffffffffffffff01', 'hex');
 const MAX_RIDES = 500;
 const MAX_TEST_SAMPLES = 10_000_000;
+const RIDE_ANALYSIS_SCHEMA_VERSION = 1;
+const TEST_DATA_FIELD_COUNT = 20;
 const { resolveFrontierRideCategory } = require('./FrontierRideCategory');
 
 function readVarUInt(buffer, offset) {
@@ -113,9 +115,9 @@ function summarizeTrace(values, mode) {
  * has been tested. These are measured trace values, not the game's final EFN
  * rating. Untested/empty traces deliberately produce no stats.
  */
-function parseTrackedRideTestDataCache(body, trackedRideCount) {
+function readTrackedRideTestDataLayout(body, trackedRideCount) {
     const header = readClientHeader(body);
-    if (!header || header.count !== trackedRideCount || header.count > MAX_RIDES) return [];
+    if (!header || header.count !== trackedRideCount || header.count > MAX_RIDES) return null;
     let offset = header.dataOffset;
     const cacheEntries = [];
     let declaredPathCount = 0;
@@ -124,7 +126,7 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
         const firstTraceCount = entityId ? readVarUInt(body, entityId.offset) : null;
         const secondTraceCount = firstTraceCount ? readVarUInt(body, firstTraceCount.offset) : null;
         if (!entityId || !firstTraceCount || !secondTraceCount ||
-            firstTraceCount.value > 100 || secondTraceCount.value > 100) return [];
+            firstTraceCount.value > 100 || secondTraceCount.value > 100) return null;
         const traceCount = firstTraceCount.value + secondTraceCount.value;
         cacheEntries.push({ entityId: entityId.value, traceCount, pathStart: declaredPathCount });
         declaredPathCount += traceCount;
@@ -132,23 +134,38 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
     }
 
     const pathCountValue = readVarUInt(body, offset);
-    if (!pathCountValue || pathCountValue.value !== declaredPathCount) return [];
+    if (!pathCountValue || pathCountValue.value !== declaredPathCount) return null;
     offset = pathCountValue.offset;
     const pathLengths = [];
     let totalSamples = 0;
     for (let index = 0; index < pathCountValue.value; index += 1) {
         const length = readVarUInt(body, offset);
-        if (!length) return [];
+        if (!length) return null;
         totalSamples += length.value;
-        if (totalSamples > MAX_TEST_SAMPLES) return [];
+        if (totalSamples > MAX_TEST_SAMPLES) return null;
         pathLengths.push(length.value);
         offset = length.offset;
     }
-    if (totalSamples === 0) return cacheEntries.map(entry => ({ entityId: entry.entityId, stats: null }));
-
     const blockStride = 4 + totalSamples * 4;
-    const fieldCount = 20;
-    if (!Number.isSafeInteger(blockStride) || offset + fieldCount * blockStride > body.length) return [];
+    if (!Number.isSafeInteger(blockStride) ||
+        offset + TEST_DATA_FIELD_COUNT * blockStride > body.length) return null;
+    return {
+        version: header.version,
+        cacheEntries,
+        pathLengths,
+        totalSamples,
+        dataOffset: offset,
+        blockStride,
+    };
+}
+
+function parseTrackedRideTestDataCache(body, trackedRideCount) {
+    const layout = readTrackedRideTestDataLayout(body, trackedRideCount);
+    if (!layout) return [];
+    const { cacheEntries, pathLengths, totalSamples, dataOffset, blockStride } = layout;
+    if (totalSamples === 0) {
+        return cacheEntries.map(entry => ({ entityId: entry.entityId, stats: null }));
+    }
 
     const pathOffsets = [];
     let sampleOffset = 0;
@@ -158,7 +175,7 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
     }
     const readPathField = (pathIndex, fieldIndex) => {
         const length = pathLengths[pathIndex];
-        const fieldStart = offset + fieldIndex * blockStride + 4;
+        const fieldStart = dataOffset + fieldIndex * blockStride + 4;
         const start = fieldStart + pathOffsets[pathIndex] * 4;
         const values = [];
         for (let index = 0; index < length; index += 1) values.push(finiteFloat(body, start + index * 4));
@@ -189,6 +206,11 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
         const excitement = readPathField(longestPathIndex, 11);
         const fear = readPathField(longestPathIndex, 12);
         const nausea = readPathField(longestPathIndex, 13);
+        const calculatedRatings = {
+            excitement: summarizeTrace(excitement, 'average'),
+            fear: summarizeTrace(fear, 'average'),
+            nausea: summarizeTrace(nausea, 'average'),
+        };
         results.push({
             entityId: cacheEntry.entityId,
             stats: {
@@ -199,12 +221,13 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
                 traversalLengthMeters,
                 maxSpeedMps,
                 maxSpeedKph: Number.isFinite(maxSpeedMps) ? maxSpeedMps * 3.6 : null,
+                calculatedRatings: {
+                    ...calculatedRatings,
+                    source: 'tracked-ride-test-curve-sample-mean-v1',
+                    isFinalRating: false,
+                },
                 testCurves: {
-                    average: {
-                        excitement: summarizeTrace(excitement, 'average'),
-                        fear: summarizeTrace(fear, 'average'),
-                        nausea: summarizeTrace(nausea, 'average'),
-                    },
+                    average: calculatedRatings,
                     maximum: {
                         excitement: summarizeTrace(excitement, 'max'),
                         fear: summarizeTrace(fear, 'max'),
@@ -221,6 +244,40 @@ function parseTrackedRideTestDataCache(body, trackedRideCount) {
         });
     }
     return results;
+}
+
+function buildTrackedRideAnalysisSource(body, trackedRideCount, trackedRides) {
+    const layout = readTrackedRideTestDataLayout(body, trackedRideCount);
+    if (!layout || layout.totalSamples <= 0) return null;
+    const ridesByEntityId = new Map(trackedRides
+        .filter(ride => Number.isSafeInteger(ride._entityId))
+        .map((ride, rideIndex) => [ride._entityId, { ride, rideIndex }]));
+    const rides = layout.cacheEntries.map(entry => {
+        const match = ridesByEntityId.get(entry.entityId);
+        return {
+            entityId: entry.entityId,
+            rideIndex: match?.rideIndex ?? null,
+            name: match?.ride?.name ?? null,
+            typeId: match?.ride?.typeId ?? null,
+            category: match?.ride?.category ?? null,
+            rideCategoryKey: match?.ride?.rideCategoryKey ?? null,
+            rideCategory: match?.ride?.rideCategory ?? null,
+            traceCount: entry.traceCount,
+            pathStart: entry.pathStart,
+        };
+    });
+    return {
+        schemaVersion: RIDE_ANALYSIS_SCHEMA_VERSION,
+        source: 'tracked-ride-test-cache',
+        clientVersion: layout.version,
+        fieldCount: TEST_DATA_FIELD_COUNT,
+        trackedRideCount,
+        pathCount: layout.pathLengths.length,
+        totalSampleCount: layout.totalSamples,
+        sourceBytes: body.length,
+        rides,
+        cacheBody: Buffer.from(body),
+    };
 }
 
 function parsePoolCount(body) {
@@ -473,7 +530,7 @@ function parsePlanetZooSaveMetadata(payload, kind) {
     };
 }
 
-function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = []) {
+function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = [], options = {}) {
     const strings = parseStringTable(payload);
     if (!strings) return null;
     const clients = parseClients(payload);
@@ -500,8 +557,11 @@ function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = []) {
         trackedRides = trackBody ? parseBlueprintTrackedRides(trackBody, strings, tags) : [];
         flatRides = flatBody ? parseBlueprintFlatRides(flatBody, strings, tags) : [];
     }
-    const testData = clients.has('TrackedRideTestDataCache') ?
-        parseTrackedRideTestDataCache(clients.get('TrackedRideTestDataCache'), trackedRideCount) : [];
+    const testCacheBody = clients.get('TrackedRideTestDataCache');
+    const testData = testCacheBody ?
+        parseTrackedRideTestDataCache(testCacheBody, trackedRideCount) : [];
+    const rideAnalysis = options.includeRideAnalysis === true && testCacheBody ?
+        buildTrackedRideAnalysisSource(testCacheBody, trackedRideCount, trackedRides) : null;
     const testStatsByEntityId = new Map(testData.map(entry => [entry.entityId, entry.stats]));
     trackedRides.forEach(ride => {
         const testStats = testStatsByEntityId.get(ride._entityId);
@@ -526,6 +586,7 @@ function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = []) {
         binCount,
         poolCount,
         rides,
+        rideAnalysis,
     };
 }
 
@@ -535,5 +596,6 @@ module.exports = {
     parsePlanetZooSaveMetadata,
     parsePoolCount,
     parseTrackedRideTestDataCache,
+    readTrackedRideTestDataLayout,
     readVarUInt,
 };
