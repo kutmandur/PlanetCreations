@@ -1,7 +1,7 @@
 import React from 'react';
 
 const ConfirmationModal = ({ message, onConfirm, onCancel }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+    <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
         <div className="bg-white dark:bg-gray-800 dark:text-gray-100 p-8 rounded-lg shadow-xl text-center max-w-sm">
             <p className="mb-6 text-lg">{message}</p>
             <div className="flex justify-center space-x-4">

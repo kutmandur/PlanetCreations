@@ -31,6 +31,7 @@ import {
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 import { wasOpenedFromCreationDetail } from '../../utils/creationNavigation';
 import {
+    DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
     supportsDesktopBackupUpload,
     uploadPreparedDesktopBackup,
 } from '../../utils/desktopBackupUpload';
@@ -529,7 +530,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             return false;
         }
         if (!supportsDesktopBackupUpload(window.electronAPI)) {
-            setModalMessage("This desktop client must be updated before it can upload local files.");
+            setModalMessage(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE);
             return false;
         }
     

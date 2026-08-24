@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link, useParams } from 'react-router-dom';
+import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
 import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQueryClient } from '@tanstack/react-query';
@@ -18,10 +18,13 @@ import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { getVerifiedGameTags } from '../../utils/creationSavePrefill';
 import VerifiedParkStats from '../ui/VerifiedParkStats';
 import { buildCreationEditNavigationState } from '../../utils/creationNavigation';
+import { removeCreationFromCaches } from '../../utils/creationCache';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
     const id = creationIdOverride || idFromUrl;
+    const location = useLocation();
+    const indexGameHint = location.state?.indexGame;
     const queryClient = useQueryClient();
 
     // Versuche Creation aus Cache zu laden für sofortige Anzeige
@@ -101,11 +104,19 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const functions = getFunctions();
 
     useEffect(() => {
-        const repairKey = creation?.backupObjectKey ? `${id}:${creation.backupObjectKey}` : '';
+        const verified = creation?.verifiedGameMetadata;
+        const needsRideAnalysisBackfill = Boolean(
+            verified &&
+            verified.gameId === 'planet-coaster-2' &&
+            ['park', 'autosave'].includes(verified.fileKind) &&
+            !verified.rideAnalysis
+        );
+        const repairKey = creation?.backupObjectKey ?
+            `${id}:${creation.backupObjectKey}:${needsRideAnalysisBackfill ? 'ride-analysis-v1' : 'metadata'}` : '';
         const shouldRepair = Boolean(
             repairKey &&
             creation?.backupIsSigned === true &&
-            !creation?.verifiedGameMetadata &&
+            (!verified || needsRideAnalysisBackfill) &&
             creation?.userId === user?.uid &&
             metadataRepairAttemptRef.current !== repairKey
         );
@@ -267,6 +278,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 // Live-Session dieses Clients hing und gelöscht wurde.
                 if (readOverlayQr()?.creationId === id) setOverlayQr(null);
                 if (readLiveSession()?.creationId === id) setLiveSession(null);
+                removeCreationFromCaches(queryClient, id);
+                const pruneMissingCreationIndexes = httpsCallable(
+                    functions, 'pruneMissingCreationIndexes');
+                pruneMissingCreationIndexes({
+                    creationId: id,
+                    game: indexGameHint || undefined,
+                }).catch(error => {
+                    console.warn('Could not prune missing Creation index entry:', error);
+                });
                 setModalMessage("Creation not found.");
                 if (!creationIdOverride) navigate('/');
             }
@@ -274,7 +294,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         });
 
         return () => { isMounted = false; unsubscribe(); };
-    }, [id, navigate, setModalMessage, creationIdOverride, queryClient]);
+    }, [id, navigate, setModalMessage, creationIdOverride, queryClient,
+        functions, indexGameHint]);
     
     useEffect(() => {
         if (!user || !id || !creation) return;
@@ -344,6 +365,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             onConfirm: async () => {
                 try {
                     await deleteDoc(doc(db, 'creations', id));
+                    removeCreationFromCaches(queryClient, id);
                     setModalMessage("Creation deleted successfully.");
                     scheduleDataRefresh();
                     navigate('/');
@@ -698,6 +720,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     <VerifiedParkStats
                         metadata={creation.verifiedGameMetadata?.metadata}
                         presentation={creation.parkRidePresentation}
+                        creationName={creation.title}
+                        bannerImageUrl={creation.imageUrls?.[0]}
+                        creationId={creation.id || id}
+                        rideAnalysisSummary={creation.verifiedGameMetadata?.rideAnalysis}
                     />
                     {metadataRepairStatus === 'loading' && !creation.verifiedGameMetadata && (
                         <p className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">Reading verified stats from the attached savefile…</p>

@@ -23,6 +23,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 const {
     getMatchDecision,
     normalizeText: normalizeLiveMatchText,
@@ -60,14 +61,20 @@ const {
 const {
     VERIFIED_METADATA_SCHEMA_VERSION,
     buildCreationMetadataUpdate,
-    extractFrontierMetadata,
+    extractFrontierData,
 } = require("./frontierMetadata");
+const {buildRideAnalysisObject} = require("./rideAnalysis");
 const {normalizeFrontierDlcCatalog} = require("./frontierDlcResolver");
 const {
     getEffectiveCommunityPermissionKeys,
     hashCommunityPassword,
     verifyCommunityPassword,
 } = require("./communityMembership");
+const {
+    EventSubmissionError,
+    getSubmissionLimit,
+    validateAndNormalizeSubmission,
+} = require("./eventSubmission");
 const {
     DISCORD_OAUTH_PROVIDER,
     OAUTH_STATE_TTL_MS,
@@ -642,15 +649,16 @@ function getPublicFrontierDlcCatalog(catalog) {
     };
 }
 
-async function buildVerifiedGameMetadata(validation) {
+async function buildVerifiedGameData(validation, options = {}) {
     const dlcCatalog = await getServerFrontierDlcCatalog(validation.metadata.gameId);
-    const metadata = extractFrontierMetadata(validation.payloadBuffer, {
+    const extracted = extractFrontierData(validation.payloadBuffer, {
         originalFileName: validation.metadata.originalFileName,
         expectedGameId: validation.metadata.gameId,
         expectedFileKind: validation.metadata.fileKind,
         dlcCatalog,
+        includeRideAnalysis: options.includeRideAnalysis === true,
     });
-    return {
+    const verifiedGameMetadata = {
         schemaVersion: VERIFIED_METADATA_SCHEMA_VERSION,
         source: "server-verified-backup",
         gameId: validation.metadata.gameId,
@@ -659,8 +667,18 @@ async function buildVerifiedGameMetadata(validation) {
         packageId: validation.metadata.packageId,
         payloadSha256: validation.metadata.payloadSha256,
         extractedAt: Timestamp.now(),
-        metadata,
+        metadata: extracted.metadata,
     };
+    return {verifiedGameMetadata, rideAnalysis: extracted.rideAnalysis};
+}
+
+async function buildVerifiedGameMetadata(validation) {
+    return (await buildVerifiedGameData(validation)).verifiedGameMetadata;
+}
+
+function supportsTrackedRideAnalysis(verifiedGameMetadata) {
+    return verifiedGameMetadata?.gameId === "planet-coaster-2" &&
+        ["park", "autosave"].includes(verifiedGameMetadata.fileKind);
 }
 
 /**
@@ -681,6 +699,8 @@ function getPublicKeyFromPrivate(privateKey) {
 const uploadFunctionOptions = { secrets: [r2AccessKeyId, r2SecretAccessKey] };
 const uploadSessionCollection = db.collection("backupUploadSessions");
 const uploadContentType = "application/zip";
+const RIDE_ANALYSIS_CHUNK_BYTES = 2 * 1024 * 1024;
+const MAX_COMPRESSED_RIDE_ANALYSIS_BYTES = 72 * 1024 * 1024;
 
 function requireAuthenticated(context) {
     if (!context.auth) {
@@ -966,6 +986,56 @@ function encodeCopySource(bucket, objectKey) {
     return `/${encodeURIComponent(bucket)}/${encodedKey}`;
 }
 
+function sanitizeRideAnalysisIdentity(identity) {
+    return String(identity || "analysis")
+        .replace(/[^A-Za-z0-9_-]/g, "_")
+        .slice(0, 160) || "analysis";
+}
+
+function buildCreationRideAnalysisObjectKey(uid, creationId, identity) {
+    const safeIdentity = sanitizeRideAnalysisIdentity(identity);
+    return `creation-ride-analysis/${uid}/${creationId}/${safeIdentity}.pcra`;
+}
+
+function isCreationRideAnalysisObjectKey(objectKey, uid, creationId) {
+    return isOwnedObjectKey(objectKey, uid, "creation-ride-analysis") &&
+        objectKey.startsWith(`creation-ride-analysis/${uid}/${creationId}/`) &&
+        objectKey.endsWith(".pcra");
+}
+
+async function storeCreationRideAnalysis({
+    source,
+    payloadSha256,
+    uid,
+    creationId,
+    identity,
+}) {
+    const packaged = buildRideAnalysisObject(source, {payloadSha256});
+    if (!packaged) return null;
+    const compressed = zlib.gzipSync(packaged.objectBuffer, {level: 9});
+    const objectKey = buildCreationRideAnalysisObjectKey(uid, creationId, identity);
+    await getS3().send(new PutObjectCommand({
+        Bucket: getR2Bucket(),
+        Key: objectKey,
+        Body: compressed,
+        ContentType: "application/vnd.planetcreations.ride-analysis",
+        ContentEncoding: "gzip",
+        CacheControl: "private, max-age=600",
+        Metadata: {
+            schema: String(packaged.summary.schemaVersion),
+            payloadsha256: String(payloadSha256 || "").slice(0, 64),
+        },
+    }));
+    return {
+        objectKey,
+        summary: {
+            ...packaged.summary,
+            storage: "r2",
+            compressedBytes: compressed.length,
+        },
+    };
+}
+
 exports.getUploadUrl = onCallWith(
     uploadFunctionOptions,
     async (data, context) => {
@@ -1131,6 +1201,7 @@ exports.finalizeBackupUpload = onCallWith(
         });
         const bucket = getR2Bucket();
         let destinationKey = null;
+        let rideAnalysisObjectKey = null;
         try {
             const head = await getS3().send(new HeadObjectCommand({ Bucket: bucket, Key: session.objectKey }));
             if (head.ContentLength !== session.expectedSize || head.ContentLength > MAX_BACKUP_SIZE_BYTES ||
@@ -1148,7 +1219,28 @@ exports.finalizeBackupUpload = onCallWith(
             if (validation.metadata.gameId !== creationSnap.data().game) {
                 throw new Error("The game in the package does not match the creation.");
             }
-            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
+            const verified = await buildVerifiedGameData(validation, {
+                includeRideAnalysis: true,
+            });
+            const verifiedGameMetadata = verified.verifiedGameMetadata;
+            const storedRideAnalysis = supportsTrackedRideAnalysis(verifiedGameMetadata) ?
+                await storeCreationRideAnalysis({
+                    source: verified.rideAnalysis,
+                    payloadSha256: validation.metadata.payloadSha256,
+                    uid,
+                    creationId,
+                    identity: uploadId,
+                }) : null;
+            rideAnalysisObjectKey = storedRideAnalysis?.objectKey || null;
+            if (storedRideAnalysis) {
+                verifiedGameMetadata.rideAnalysis = storedRideAnalysis.summary;
+            } else if (supportsTrackedRideAnalysis(verifiedGameMetadata)) {
+                verifiedGameMetadata.rideAnalysis = {
+                    schemaVersion: 1,
+                    available: false,
+                    reason: "no-tracked-ride-test-data",
+                };
+            }
             const metadataUpdate = buildCreationMetadataUpdate(
                 creationSnap.data().requiredDlcs,
                 verifiedGameMetadata,
@@ -1163,6 +1255,7 @@ exports.finalizeBackupUpload = onCallWith(
                 MetadataDirective: "REPLACE",
             }));
             const oldObjectKey = creationSnap.data().backupObjectKey;
+            const oldRideAnalysisObjectKey = creationSnap.data().rideAnalysisObjectKey;
             await creationRef.update({
                 backupObjectKey: destinationKey,
                 backupStorageProvider: "cloudflare-r2",
@@ -1177,6 +1270,7 @@ exports.finalizeBackupUpload = onCallWith(
                 backupProcessingError: null,
                 backupUpdatedAt: FieldValue.serverTimestamp(),
                 backupUploadConsent: session.uploadConsent,
+                rideAnalysisObjectKey,
                 // This is the only editable wizard field corrected from the
                 // server-verified file. All other user-authored fields remain
                 // untouched; automatic stats live below verifiedGameMetadata.
@@ -1200,6 +1294,13 @@ exports.finalizeBackupUpload = onCallWith(
                 await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: oldObjectKey }))
                     .catch((error) => console.warn("Old R2 object cleanup failed:", error.message));
             }
+            if (oldRideAnalysisObjectKey && oldRideAnalysisObjectKey !== rideAnalysisObjectKey &&
+                isCreationRideAnalysisObjectKey(oldRideAnalysisObjectKey, uid, creationId)) {
+                await getS3().send(new DeleteObjectCommand({
+                    Bucket: bucket,
+                    Key: oldRideAnalysisObjectKey,
+                })).catch((error) => console.warn("Old ride-analysis cleanup failed:", error.message));
+            }
             return {
                 success: true,
                 metadataUpdated: true,
@@ -1211,6 +1312,12 @@ exports.finalizeBackupUpload = onCallWith(
             await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey })).catch(() => null);
             if (destinationKey) {
                 await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: destinationKey })).catch(() => null);
+            }
+            if (rideAnalysisObjectKey) {
+                await getS3().send(new DeleteObjectCommand({
+                    Bucket: bucket,
+                    Key: rideAnalysisObjectKey,
+                })).catch(() => null);
             }
             await Promise.all([
                 sessionRef.set({ status: "rejected", error: error.message }, { merge: true }),
@@ -1242,6 +1349,120 @@ exports.getBackupDownloadUrl = onCallWith(
         );
         return { downloadUrl, expiresInSeconds: 600 };
     });
+
+exports.getCreationRideAnalysisUrl = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
+        const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "download-creation-ride-analysis",
+            subject: uid,
+            limit: 120,
+            windowMs: 15 * 60 * 1000,
+        });
+        const creationId = data && data.creationId;
+        if (typeof creationId !== "string" || !creationIdPattern.test(creationId)) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "A valid creation ID is required.",
+            );
+        }
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists) {
+            throw new functions.https.HttpsError("not-found", "Creation not found.");
+        }
+        const creation = creationSnap.data();
+        const objectKey = creation.rideAnalysisObjectKey;
+        if (!creation.verifiedGameMetadata?.rideAnalysis?.available ||
+            !isCreationRideAnalysisObjectKey(
+                objectKey,
+                creation.userId,
+                creationId,
+            )) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "This creation has no full-resolution ride analysis.",
+            );
+        }
+        const downloadUrl = await getSignedUrl(
+            getS3(),
+            new GetObjectCommand({Bucket: getR2Bucket(), Key: objectKey}),
+            {expiresIn: 60 * 10},
+        );
+        return {
+            downloadUrl,
+            expiresInSeconds: 600,
+            summary: creation.verifiedGameMetadata.rideAnalysis,
+        };
+    },
+);
+
+exports.getCreationRideAnalysisChunk = onCallWith(
+    uploadFunctionOptions,
+    async (data, context) => {
+        const uid = requireAuthenticated(context);
+        await enforceCallableRateLimit({
+            action: "download-creation-ride-analysis-chunk",
+            subject: uid,
+            limit: 240,
+            windowMs: 15 * 60 * 1000,
+        });
+        const creationId = data && data.creationId;
+        const offset = data && data.offset;
+        if (typeof creationId !== "string" || !creationIdPattern.test(creationId) ||
+            !Number.isSafeInteger(offset) || offset < 0 ||
+            offset % RIDE_ANALYSIS_CHUNK_BYTES !== 0) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "A valid creation ID and chunk offset are required.",
+            );
+        }
+
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists) {
+            throw new functions.https.HttpsError("not-found", "Creation not found.");
+        }
+        const creation = creationSnap.data();
+        const objectKey = creation.rideAnalysisObjectKey;
+        const summary = creation.verifiedGameMetadata?.rideAnalysis;
+        const totalBytes = summary?.compressedBytes;
+        if (!summary?.available || !Number.isSafeInteger(totalBytes) || totalBytes <= 0 ||
+            totalBytes > MAX_COMPRESSED_RIDE_ANALYSIS_BYTES || offset >= totalBytes) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "This creation has no readable full-resolution ride analysis.",
+            );
+        }
+
+        if (!isCreationRideAnalysisObjectKey(objectKey, creation.userId, creationId)) {
+            throw new functions.https.HttpsError(
+                "not-found",
+                "This creation has no readable full-resolution ride analysis.",
+            );
+        }
+
+        const end = Math.min(offset + RIDE_ANALYSIS_CHUNK_BYTES, totalBytes) - 1;
+        const object = await getS3().send(new GetObjectCommand({
+            Bucket: getR2Bucket(),
+            Key: objectKey,
+            Range: `bytes=${offset}-${end}`,
+        }));
+        const chunk = await r2BodyToBuffer(object.Body);
+        const expectedBytes = end - offset + 1;
+        if (chunk.length !== expectedBytes) {
+            throw new functions.https.HttpsError(
+                "data-loss",
+                "The stored ride analysis returned an incomplete chunk.",
+            );
+        }
+        return {
+            chunkBase64: chunk.toString("base64"),
+            offset,
+            nextOffset: end + 1 < totalBytes ? end + 1 : null,
+            totalBytes,
+        };
+    },
+);
 
 exports.refreshCreationGameMetadata = onCallWith(
     {
@@ -1303,7 +1524,30 @@ exports.refreshCreationGameMetadata = onCallWith(
                 throw new Error("The stored package identity does not match the creation.");
             }
 
-            const verifiedGameMetadata = await buildVerifiedGameMetadata(validation);
+            const verified = await buildVerifiedGameData(validation, {
+                includeRideAnalysis: true,
+            });
+            const verifiedGameMetadata = verified.verifiedGameMetadata;
+            const analysisIdentity = path.basename(objectKey)
+                .replace(/\.PlanetCreations$/i, "");
+            const storedRideAnalysis = supportsTrackedRideAnalysis(verifiedGameMetadata) ?
+                await storeCreationRideAnalysis({
+                    source: verified.rideAnalysis,
+                    payloadSha256: validation.metadata.payloadSha256,
+                    uid,
+                    creationId,
+                    identity: analysisIdentity,
+                }) : null;
+            const rideAnalysisObjectKey = storedRideAnalysis?.objectKey || null;
+            if (storedRideAnalysis) {
+                verifiedGameMetadata.rideAnalysis = storedRideAnalysis.summary;
+            } else if (supportsTrackedRideAnalysis(verifiedGameMetadata)) {
+                verifiedGameMetadata.rideAnalysis = {
+                    schemaVersion: 1,
+                    available: false,
+                    reason: "no-tracked-ride-test-data",
+                };
+            }
             const metadataUpdate = buildCreationMetadataUpdate(
                 creation.requiredDlcs,
                 verifiedGameMetadata,
@@ -1312,7 +1556,23 @@ exports.refreshCreationGameMetadata = onCallWith(
                 verifiedGameMetadata: metadataUpdate.verifiedGameMetadata,
                 requiredDlcs: metadataUpdate.requiredDlcs,
                 backupProcessingError: null,
+                rideAnalysisObjectKey,
             });
+            if (creation.rideAnalysisObjectKey &&
+                creation.rideAnalysisObjectKey !== rideAnalysisObjectKey &&
+                isCreationRideAnalysisObjectKey(
+                    creation.rideAnalysisObjectKey,
+                    uid,
+                    creationId,
+                )) {
+                await getS3().send(new DeleteObjectCommand({
+                    Bucket: bucket,
+                    Key: creation.rideAnalysisObjectKey,
+                })).catch((cleanupError) => console.warn(
+                    "Old refreshed ride-analysis cleanup failed:",
+                    cleanupError.message,
+                ));
+            }
             return {
                 success: true,
                 metadataUpdated: true,
@@ -1348,6 +1608,13 @@ exports.removeCreationBackup = onCallWith(
         if (objectKey && objectKey.startsWith(`creation-backups/${uid}/${creationId}/`)) {
             await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: objectKey }));
         }
+        const rideAnalysisObjectKey = creationSnap.data().rideAnalysisObjectKey;
+        if (isCreationRideAnalysisObjectKey(rideAnalysisObjectKey, uid, creationId)) {
+            await getS3().send(new DeleteObjectCommand({
+                Bucket: getR2Bucket(),
+                Key: rideAnalysisObjectKey,
+            }));
+        }
         await creationRef.update({
             backupObjectKey: null,
             backupStorageProvider: null,
@@ -1361,6 +1628,7 @@ exports.removeCreationBackup = onCallWith(
             backupMediaSetId: null,
             backupProcessingError: null,
             backupUpdatedAt: FieldValue.serverTimestamp(),
+            rideAnalysisObjectKey: null,
             verifiedGameMetadata: null,
         });
         return { success: true };
@@ -1891,6 +2159,8 @@ exports.deleteEventAsStaff = onCall(async (data, context) => {
         const votersRef = db.collection('events').doc(eventId).collection('voters');
         const votersSnapshot = await votersRef.get();
         votersSnapshot.forEach(voterDoc => { batch.delete(voterDoc.ref); });
+        const claimsSnapshot = await eventRef.collection('submissionClaims').get();
+        claimsSnapshot.forEach(claimDoc => { batch.delete(claimDoc.ref); });
         await batch.commit();
         return { success: true, message: "Event deleted successfully." };
     } catch (error) {
@@ -1898,6 +2168,219 @@ exports.deleteEventAsStaff = onCall(async (data, context) => {
         if (error.code) { throw error; }
         throw new functions.https.HttpsError('internal', 'An unexpected error occurred while deleting the event.');
     }
+});
+
+// Event submissions used to be a client-side read/count followed by a later
+// write. Two tabs (or two fast requests) could both observe the same free slot
+// and exceed the per-user limit. The per-event/user claim document is the
+// transaction conflict point that makes the check and write atomic even when
+// two different Creation documents are submitted concurrently.
+exports.submitCreationToEvent = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    const eventId = typeof data?.eventId === 'string' ? data.eventId : '';
+    const creationId = requireCreationId(data?.creationId);
+    if (!creationIdPattern.test(eventId)) {
+        throw new functions.https.HttpsError(
+            'invalid-argument', 'A valid event ID is required.');
+    }
+    await enforceCallableRateLimit({
+        action: 'submit-creation-to-event',
+        subject: uid,
+        limit: 30,
+        windowMs: 10 * 60 * 1000,
+    });
+
+    // Legacy submissions predate submissionClaims. Fold them into the first
+    // transactional claim so existing limits remain authoritative after the
+    // migration.
+    const legacySubmissions = await db.collection('creations')
+        .where('userId', '==', uid)
+        .where('eventIds', 'array-contains', eventId)
+        .get();
+    const legacyIds = legacySubmissions.docs.map(doc => doc.id);
+    const eventRef = db.doc(`events/${eventId}`);
+    const creationRef = db.doc(`creations/${creationId}`);
+    const claimRef = db.doc(`events/${eventId}/submissionClaims/${uid}`);
+
+    try {
+        return await db.runTransaction(async (transaction) => {
+            const [
+                eventSnap,
+                creationSnap,
+                claimSnap,
+                profileSnap,
+                blacklistSnap,
+            ] = await Promise.all([
+                transaction.get(eventRef),
+                transaction.get(creationRef),
+                transaction.get(claimRef),
+                transaction.get(db.doc(`profiles/${uid}`)),
+                transaction.get(db.doc('meta/blacklist')),
+            ]);
+            if (!eventSnap.exists) {
+                throw new functions.https.HttpsError(
+                    'not-found', 'Event does not exist.');
+            }
+            if (!creationSnap.exists) {
+                throw new functions.https.HttpsError(
+                    'not-found', 'Creation does not exist.');
+            }
+
+            const event = eventSnap.data();
+            const creation = creationSnap.data();
+            const communityId = String(event.communityId || '');
+            if (!creationIdPattern.test(communityId)) {
+                throw new functions.https.HttpsError(
+                    'failed-precondition',
+                    'The event is not connected to a valid community.',
+                );
+            }
+            const [communitySnap, memberSnap] = await Promise.all([
+                transaction.get(db.doc(`communitys/${communityId}`)),
+                transaction.get(db.doc(
+                    `communitys/${communityId}/members/${uid}`)),
+            ]);
+            if (!communitySnap.exists) {
+                throw new functions.https.HttpsError(
+                    'failed-precondition', 'The event community no longer exists.');
+            }
+
+            const claimedIds = [...new Set([
+                ...legacyIds,
+                ...(claimSnap.exists && Array.isArray(claimSnap.data().creationIds) ?
+                    claimSnap.data().creationIds : []),
+            ].filter(id => typeof id === 'string' && creationIdPattern.test(id)))];
+            const claimedSnaps = await Promise.all(claimedIds.map(id =>
+                id === creationId ? creationSnap :
+                    transaction.get(db.doc(`creations/${id}`))
+            ));
+            const activeIds = claimedIds.filter((id, index) => {
+                const snap = claimedSnaps[index];
+                if (!snap?.exists) return false;
+                const candidate = snap.data();
+                return candidate.userId === uid &&
+                    Array.isArray(candidate.eventIds) &&
+                    candidate.eventIds.includes(eventId);
+            });
+            if (activeIds.includes(creationId) ||
+                (Array.isArray(creation.eventIds) &&
+                    creation.eventIds.includes(eventId))) {
+                throw new EventSubmissionError(
+                    'already-exists',
+                    'This creation has already been submitted to the event.',
+                );
+            }
+            const submissionLimit = getSubmissionLimit(event);
+            if (activeIds.length >= submissionLimit) {
+                throw new EventSubmissionError(
+                    'resource-exhausted',
+                    'You have already reached the submission limit for this event.',
+                );
+            }
+
+            const profileRole = profileSnap.exists ? profileSnap.data().role : null;
+            const tokenRole = context.auth.token?.role;
+            const isSiteStaff = ['admin', 'moderator'].includes(tokenRole) ||
+                ['admin', 'moderator'].includes(profileRole);
+            const isCommunityOwner = communitySnap.data().ownerId === uid;
+            const permissions = memberSnap.exists ?
+                getEffectiveCommunityPermissionKeys(
+                    communitySnap.data(), memberSnap.data()) : [];
+            const customFields = validateAndNormalizeSubmission({
+                acceptedRuleIds: data?.acceptedRuleIds,
+                blacklist: blacklistSnap.exists ?
+                    (blacklistSnap.data().words || []) : [],
+                canParticipate: isSiteStaff || isCommunityOwner ||
+                    permissions.includes('participateEvents'),
+                creation,
+                customFieldData: data?.customFieldData,
+                event,
+                uid,
+            });
+
+            transaction.update(creationRef, {
+                eventIds: FieldValue.arrayUnion(eventId),
+                eventSubmissions: {
+                    ...(creation.eventSubmissions || {}),
+                    [eventId]: customFields,
+                },
+            });
+            transaction.set(db.doc(
+                `communitys/${communityId}/creations/${creationId}`), {
+                addedAt: FieldValue.serverTimestamp(),
+                creationId,
+                linkedAt: FieldValue.serverTimestamp(),
+                userId: uid,
+            }, {merge: true});
+            const nextIds = [...activeIds, creationId];
+            transaction.set(claimRef, {
+                count: nextIds.length,
+                creationIds: nextIds,
+                updatedAt: FieldValue.serverTimestamp(),
+                userId: uid,
+            });
+            return {
+                creationId,
+                submissionCount: nextIds.length,
+                submissionLimit,
+                title: creation.title || '',
+            };
+        });
+    } catch (error) {
+        if (error instanceof EventSubmissionError) {
+            throw new functions.https.HttpsError(error.code, error.message);
+        }
+        throw error;
+    }
+});
+
+// A missing location doc used to let removeMapIndexEntry return successfully
+// while the compact shard still retained a dead card. Detail pages can report
+// that canonical Firestore data is gone; this callable verifies that fact and
+// safely prunes only index data for the missing ID.
+exports.pruneMissingCreationIndexes = onCall(async (data, context) => {
+    const creationId = requireCreationId(data?.creationId);
+    const gameHint = typeof data?.game === 'string' &&
+        creationIdPattern.test(data.game) ? data.game : null;
+    const subject = context.auth?.uid || context.rawRequest?.ip || 'anonymous';
+    await enforceCallableRateLimit({
+        action: 'prune-missing-creation-indexes',
+        subject,
+        limit: 30,
+        windowMs: 10 * 60 * 1000,
+    });
+
+    if ((await db.doc(`creations/${creationId}`).get()).exists) {
+        return {missing: false, removed: 0};
+    }
+
+    const families = [
+        ['search', 'searchIndexLocations'],
+        ['community', 'communitySearchIndexLocations'],
+        ['showcase', 'showcaseIndexLocations'],
+    ];
+    const locationSnaps = await Promise.all(families.map(([, collection]) =>
+        db.collection(collection).where('entryId', '==', creationId).get()
+    ));
+    const targets = new Map();
+    families.forEach(([family], index) => {
+        locationSnaps[index].docs.forEach((locationDoc) => {
+            const scopeId = locationDoc.data().scopeId;
+            if (scopeId) targets.set(`${family}:${scopeId}`, {family, scopeId});
+        });
+    });
+    // The hint repairs legacy entries that have no location doc at all.
+    if (gameHint) {
+        targets.set(`search:${gameHint}`, {family: 'search', scopeId: gameHint});
+    }
+    const results = await Promise.all([...targets.values()].map(target =>
+        removeMapIndexEntry(
+            db, target.family, target.scopeId, creationId)
+    ));
+    return {
+        missing: true,
+        removed: results.filter(Boolean).length,
+    };
 });
 
 
@@ -1941,6 +2424,33 @@ exports.onCreationDelete = documentDeleted(
             }
         } catch (e) { console.error(`Failed to clean votes for ${creationId}:`, e.message); }
 
+        // 4) Atomaren Event-Submission-Claim freigeben. Ohne diese Reparatur
+        // würde eine gelöschte Einreichung weiterhin das Nutzerlimit belegen.
+        const eventIds = Array.isArray(deletedData.eventIds) ?
+            deletedData.eventIds : [];
+        if (deletedData.userId) {
+            await Promise.all(eventIds.map(async (eventId) => {
+                const claimRef = db.doc(
+                    `events/${eventId}/submissionClaims/${deletedData.userId}`,
+                );
+                await db.runTransaction(async (transaction) => {
+                    const claimSnap = await transaction.get(claimRef);
+                    if (!claimSnap.exists) return;
+                    const remaining = (claimSnap.data().creationIds || [])
+                        .filter(id => id !== creationId);
+                    if (remaining.length === 0) {
+                        transaction.delete(claimRef);
+                    } else {
+                        transaction.set(claimRef, {
+                            count: remaining.length,
+                            creationIds: remaining,
+                            updatedAt: FieldValue.serverTimestamp(),
+                        }, {merge: true});
+                    }
+                });
+            }));
+        }
+
         const objectKey = deletedData.backupObjectKey;
         const expectedPrefix = `creation-backups/${deletedData.userId}/${creationId}/`;
         if (typeof objectKey === "string" && objectKey.startsWith(expectedPrefix) &&
@@ -1950,7 +2460,17 @@ exports.onCreationDelete = documentDeleted(
                 Key: objectKey,
             }));
         }
-
+        const rideAnalysisObjectKey = deletedData.rideAnalysisObjectKey;
+        if (isCreationRideAnalysisObjectKey(
+            rideAnalysisObjectKey,
+            deletedData.userId,
+            creationId,
+        )) {
+            await getS3().send(new DeleteObjectCommand({
+                Bucket: getR2Bucket(),
+                Key: rideAnalysisObjectKey,
+            }));
+        }
         // Staff/account cleanup can delete a published Creation outside the
         // unanimous vote callable. Repair the source Collaboration so it never
         // keeps a dangling publishedCreationId.
@@ -3803,7 +4323,7 @@ exports.syncCreationToSearchIndex = documentWritten(
         const indexGames = await getRegistryGameIds();
 
         // Aus dem alten Index entfernen bei Löschung oder Spiel-Wechsel
-        if (gameBefore && indexGames.includes(gameBefore) && gameBefore !== gameAfter) {
+        if (gameBefore && gameBefore !== gameAfter) {
             await removeMapIndexEntry(db, 'search', gameBefore, creationId);
         }
 

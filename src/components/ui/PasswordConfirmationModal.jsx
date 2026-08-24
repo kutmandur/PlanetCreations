@@ -11,7 +11,7 @@ const PasswordConfirmationModal = ({ message, onConfirm, onCancel }) => {
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
             <div className="bg-white p-8 rounded-lg shadow-xl text-center max-w-sm w-full">
                 <h3 className="text-lg font-bold mb-4">Confirmation Required</h3>
                 <p className="mb-4 text-gray-700">{message}</p>

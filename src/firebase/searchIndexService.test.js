@@ -31,6 +31,7 @@ it('caches the DLC catalog from the already-read search-index state', async () =
     const creations = await fetchSearchIndex('planet-zoo');
 
     expect(creations[0].title).toBe('Future Zoo');
+    expect(creations[0].game).toBe('planet-zoo');
     expect(getCachedFrontierDlcCatalogs()['planet-zoo']).toMatchObject({
         version: 88,
         entries: [{ name: 'Future Animal Pack', bit: 21 }],

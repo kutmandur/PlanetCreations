@@ -102,8 +102,11 @@ const SelectBackupModal = ({
         setSelectedFile(null);
         setPreview(null);
         setMetadataError(null);
+    }, [effectiveGameId]);
+
+    useEffect(() => {
         setActiveTab(current => tabs.some(tab => tab.id === current) ? current : (tabs[0]?.id || 'parks'));
-    }, [effectiveGameId, tabs]);
+    }, [tabs]);
 
     useEffect(() => {
         const filePath = selectedFile?.path;

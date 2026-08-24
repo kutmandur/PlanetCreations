@@ -334,9 +334,10 @@ const AppContent = () => {
 
     useEffect(() => {
         if (!window.electronAPI?.isHostedWebView) return;
-        // Clients released before the explicit bridge counter already provide the
-        // online Workshop capabilities. Treat that established bridge as v1 and
-        // negotiate newer native features individually instead of blocking the UI.
+        // This is a compatibility floor, not a Workshop release counter. Keep it
+        // at v1 for web-only, Functions and rules changes. Raise it only when the
+        // hosted Workshop unavoidably needs a native API that older clients lack;
+        // prefer capability detection and adapters such as the legacy upload path.
         const minimumBridgeVersion = 1;
         window.electronAPI.reportHostedUiReady?.({
             uiVersion: 2,

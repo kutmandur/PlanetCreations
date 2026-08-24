@@ -13,9 +13,30 @@ test('both desktop channels prefer the hosted Offline Manager with a bundled fal
     assert.match(mainSource, /function loadOfflineManager[\s\S]*return loadHostedAppWithFallback/);
     assert.doesNotMatch(mainSource, /function loadOfflineManager[\s\S]*if \(isStoreBuild\) return loadBundledApp/);
     assert.match(mainSource, /requireOfflineManagerCapability:\s*true/);
+    assert.match(mainSource, /allowBundledFallback:\s*true/);
     assert.match(mainSource, /mode === 'offline'\) return loadOfflineManager/);
     assert.match(mainSource, /mode === 'offline'\) loadOfflineManager/);
     assert.match(mainSource, /currentUrl\.startsWith\(getBundledAppUrl\(\)\) \|\| isHostedAppUrl\(currentUrl\)/);
+});
+
+test('the Online Workshop never falls back to the unauthenticated file origin', () => {
+    assert.match(mainSource, /allowBundledFallback = false/);
+    assert.match(mainSource, /if \(errorCode === -3\) return/);
+    assert.match(mainSource, /preserving the HTTPS ` \+/);
+    assert.match(mainSource, /hostedRetryDelayMs = Math\.min\(hostedRetryDelayMs \* 2, 30000\)/);
+    assert.doesNotMatch(
+        mainSource,
+        /mode === 'online'\)[^\n]*allowBundledFallback:\s*true/,
+    );
+});
+
+test('a network-triggered bundled fallback keeps probing the hosted UI', () => {
+    assert.match(mainSource, /scheduleFallbackRecoveryProbe/);
+    assert.match(mainSource, /net\.fetch\(getHostedAppUrl\(\), \{/);
+    assert.match(mainSource, /method:\s*'HEAD'/);
+    assert.match(mainSource, /fallbackProbeDelayMs = Math\.min\(fallbackProbeDelayMs \* 2, 60000\)/);
+    assert.match(mainSource, /Hosted UI is reachable again; leaving bundled fallback/);
+    assert.match(mainSource, /loadFallback\(reason, true\)/);
 });
 
 test('hosted Offline Manager compatibility is negotiated before local capabilities are used', () => {

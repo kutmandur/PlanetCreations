@@ -46,7 +46,7 @@ const BugReportModal = ({ user, userProfile, onClose, setModalMessage, blacklist
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={onClose}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
                 <h2 className="text-xl font-bold text-gray-800 mb-2">Report a Bug</h2>
                 <p className="text-sm text-gray-500 mb-4">

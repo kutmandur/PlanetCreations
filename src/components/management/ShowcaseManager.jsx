@@ -21,7 +21,7 @@ const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, 
     const [name, setName] = useState(initialName || '');
     const [url, setUrl] = useState(initialUrl || '');
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={onClose}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
                 <h2 className="text-xl font-bold text-gray-800 mb-4">{title}</h2>
                 <label className="block text-sm font-bold text-gray-700 mb-1">Showcase Name</label>
@@ -805,7 +805,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
             {/* Showcase sharing QR code + explanation for the video creator */}
             {qrModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={() => setQrModal(null)}>
+                <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={() => setQrModal(null)}>
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
                         <h2 className="text-xl font-bold text-gray-800 mb-1">Sharing QR code</h2>
                         <p className="text-sm text-gray-500 mb-4">
@@ -839,7 +839,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
 
             {/* Landing-page preview: video placeholder + currently assigned creations */}
             {previewModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-start z-50 p-4 overflow-y-auto" onClick={() => setPreviewModal(null)}>
+                <div className="fixed inset-0 bg-black/60 flex justify-center items-start z-50 p-4 overflow-y-auto" onClick={() => setPreviewModal(null)}>
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl my-8 p-6" onClick={(e) => e.stopPropagation()} style={{ '--theme-color': community.themeColor || '#F97316' }}>
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-xl font-bold text-gray-800">Landing page preview</h2>

@@ -128,7 +128,7 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                                     <ProfileImage src={userProfile?.profilePictureUrl} alt="Profile" className="w-10 h-10 rounded-full object-cover" />
                                 </button>
                                 {isProfileMenuOpen && (
-                                    <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-30">
+                                    <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black/5 focus:outline-none z-30">
                                         <button
                                             onClick={() => { navigate(`/profile/${user.uid}`); setIsProfileMenuOpen(false); }}
                                             onMouseEnter={() => preloadRoute(`/profile/${user.uid}`)}

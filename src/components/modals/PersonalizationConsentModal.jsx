@@ -4,7 +4,7 @@ import React from 'react';
 // Zustimmung komplett aus (keinerlei Datenerhebung). Beide Antworten werden
 // gespeichert, damit nie erneut gefragt wird.
 const PersonalizationConsentModal = ({ onAnswer }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
         <div className="bg-white p-8 rounded-lg shadow-xl max-w-md text-center">
             <h2 className="text-xl font-bold mb-3">Personalized recommendations</h2>
             <p className="text-gray-600 mb-2">

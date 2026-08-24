@@ -59,7 +59,7 @@ const InfluencerApplicationModal = ({ user, profileData, onClose, onSubmitted, s
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={onClose}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
                 <h2 className="text-xl font-bold text-gray-800 mb-1">Influencer Application</h2>
                 <p className="text-sm text-gray-500 mb-5">

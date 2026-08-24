@@ -28,7 +28,7 @@ const ProfilePopover = ({ userId, onClose, user, userProfile, setReportModal, se
     }, [onClose]);
 
     return createPortal(
-        <div className="fixed inset-0 bg-black bg-opacity-75 z-40 flex items-center justify-center p-4 sm:p-6 md:p-8">
+        <div className="fixed inset-0 bg-black/75 z-40 flex items-center justify-center p-4 sm:p-6 md:p-8">
             <div ref={popoverRef} className="bg-white rounded-lg shadow-xl w-full h-full max-w-5xl max-h-[90vh] flex flex-col">
                 <div className="flex justify-between items-center p-2 border-b bg-gray-50 rounded-t-lg">
                     <span className="text-lg font-bold text-gray-700 ml-4">User Profile</span>

@@ -63,7 +63,7 @@ const MediaPreviewModal = ({ file, onClose }) => {
     }
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[60]" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60]" onClick={onClose}>
             <div className="bg-gray-800 p-4 rounded-lg relative shadow-2xl min-w-[300px] min-h-[200px] flex flex-col" onClick={e => e.stopPropagation()}>
                 <button onClick={onClose} className="absolute -top-3 -right-3 bg-red-600 hover:bg-red-700 rounded-full p-1 text-white z-10">
                      <Icon path={ICONS.xMark} className="w-5 h-5" />

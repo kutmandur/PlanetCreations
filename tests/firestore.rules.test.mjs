@@ -486,6 +486,10 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
       doc(moderatorDb, `creations/${PUBLISHED_CREATION_ID}`),
       {verifiedGameMetadata},
     ));
+    await assertFails(updateDoc(
+      doc(ownerDb, `creations/${PUBLISHED_CREATION_ID}`),
+      {rideAnalysisObjectKey: `creation-ride-analysis/${OWNER_ID}/${PUBLISHED_CREATION_ID}/forged.pcra`},
+    ));
   });
 
   test("owners can edit bounded park ride presentation settings", async () => {
@@ -707,6 +711,40 @@ describe("scalable map-index Firestore rules", { concurrency: false }, () => {
         shardId: "forged",
       }));
     }
+  });
+});
+
+describe("event submission Firestore rules", { concurrency: false }, () => {
+  test("owners and moderators cannot bypass the atomic submission callable", async () => {
+    for (const clientDb of [
+      authenticatedFirestore(OWNER_ID),
+      authenticatedFirestore(MODERATOR_ID, {role: "moderator"}),
+    ]) {
+      await assertFails(updateDoc(
+        doc(clientDb, "creations", PUBLISHED_CREATION_ID),
+        {
+          eventIds: ["rules-event"],
+          eventSubmissions: {"rules-event": {}},
+        },
+      ));
+      await assertFails(setDoc(
+        doc(clientDb, "events", "rules-event", "submissionClaims", OWNER_ID),
+        {creationIds: [PUBLISHED_CREATION_ID], count: 1},
+      ));
+    }
+  });
+
+  test("a new creation cannot forge an initial event submission", async () => {
+    const ownerDb = authenticatedFirestore(OWNER_ID);
+    await assertFails(setDoc(doc(ownerDb, "creations", "forged-submission"), {
+      category: "Coaster",
+      eventIds: ["rules-event"],
+      eventSubmissions: {"rules-event": {}},
+      game: "planet-coaster-2",
+      tags: ["wooden"],
+      title: "Forged Event Submission",
+      userId: OWNER_ID,
+    }));
   });
 });
 

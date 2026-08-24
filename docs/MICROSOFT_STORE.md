@@ -64,6 +64,15 @@ the test machine.
 - The hosted UI and desktop bridge perform separate online and Offline Manager
   version/capability handshakes. If an update needs a newer native operation,
   older clients use their bundled UI until a certified Store package is updated.
+- The Online Workshop `minimumBridgeVersion` is a native compatibility floor,
+  not a website release counter. Keep it unchanged for web-only, Firebase,
+  index and other backward-compatible deployments. Raise it only when the
+  hosted Workshop unavoidably requires a native API absent from older clients
+  and capability detection, an adapter or graceful fallback cannot preserve
+  compatibility. The Offline Manager minimum is versioned independently.
+- Workshop uploads retain both the current opaque-handle API and the released
+  legacy `uploadBackupFile` adapter; the absence of an API in an already-open
+  window must not by itself be reported as an outdated installed client.
 - If the hosted UI cannot be reached, the bundled UI is used as the fallback;
   local management therefore remains available without the website.
 - Application updates are delivered only by Microsoft Store.
@@ -139,6 +148,9 @@ Before every Store upload:
   while the client is already running.
 - First-time game-folder selection, raw-save preview, packaged-backup selection
   and the native upload confirmation are tested from the hosted online UI.
+- The hosted Workshop is tested against the current bridge and the oldest
+  supported released bridge before increasing `minimumBridgeVersion`; the
+  release notes identify the exact incompatible native contract for any bump.
 - The hosted Offline Manager is tested online, after disconnecting the network,
   and with an intentionally incompatible bridge version to verify bundled fallback.
 - Hosted UI changes remain within the Store-listed feature set; any new native

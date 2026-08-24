@@ -8,7 +8,7 @@ const PopoverModal = ({ children, onClose }) => {
 
     return (
         <div 
-            className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4"
+            className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4"
             onClick={onClose} // Close when clicking the background
         >
             <div 

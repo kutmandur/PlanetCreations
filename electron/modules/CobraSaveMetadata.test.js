@@ -120,6 +120,9 @@ test('extracts conservative values from a completed tracked-ride test cache', ()
     assert.equal(stats.maxSpeedKph, 72);
     assert.equal(stats.sampleCount, 4);
     assert.ok(Math.abs(stats.testCurves.average.excitement - 2) < 0.0001);
+    assert.ok(Math.abs(stats.calculatedRatings.excitement - 2) < 0.0001);
+    assert.equal(stats.calculatedRatings.source, 'tracked-ride-test-curve-sample-mean-v1');
+    assert.equal(stats.calculatedRatings.isFinalRating, false);
     assert.ok(Math.abs(stats.gForces.vertical.max - 3.2) < 0.0001);
     assert.equal(stats.testCurves.isFinalRating, false);
 });

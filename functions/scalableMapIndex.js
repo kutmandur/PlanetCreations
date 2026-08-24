@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const {FieldValue, Timestamp} = require("firebase-admin/firestore");
+const {Timestamp} = require("firebase-admin/firestore");
 
 const INDEX_VERSION = 1;
 const MAX_SHARD_BYTES = 700 * 1024;
@@ -335,14 +335,59 @@ const removeMapIndexEntry = async (db, family, scopeId, entryId) => {
     );
 
     return db.runTransaction(async (transaction) => {
-        const locationSnap = await transaction.get(locationRef);
-        if (!locationSnap.exists) return false;
-        const shardRef = db.doc(
-            `${configuration.shards}/${locationSnap.data().shardId}`,
-        );
-        const shardSnap = await transaction.get(shardRef);
-        if (shardSnap.exists) {
+        const [locationSnap, stateSnap] = await Promise.all([
+            transaction.get(locationRef),
+            transaction.get(stateRef),
+        ]);
+        const state = stateSnap.exists ? stateSnap.data() : {};
+
+        // Location docs were introduced together with the scalable index. A
+        // migrated/partially rebuilt index can therefore still contain an
+        // entry in a shard while its location doc is missing or points at an
+        // obsolete shard. Scan every active shard as a repair fallback and
+        // remove all copies, otherwise a deleted Creation remains visible as a
+        // dead card forever.
+        const listedShardIds = Array.isArray(state.shardIds) ?
+            state.shardIds : [];
+        const shardRefs = [];
+        const shardSnaps = [];
+        const visitedShardIds = new Set();
+        const readShard = async (shardId) => {
+            if (!shardId || visitedShardIds.has(shardId)) return null;
+            visitedShardIds.add(shardId);
+            const shardRef = db.doc(`${configuration.shards}/${shardId}`);
+            const shardSnap = await transaction.get(shardRef);
+            shardRefs.push(shardRef);
+            shardSnaps.push(shardSnap);
+            return shardSnap;
+        };
+        if (listedShardIds.length > 0) {
+            await Promise.all([...new Set([
+                ...listedShardIds,
+                state.headShardId,
+                locationSnap.exists ? locationSnap.data().shardId : null,
+            ].filter(Boolean))].map(readShard));
+        } else {
+            // Backward-compatible state documents expose only the head and p
+            // links. Follow the full chain when shardIds has not been backfilled.
+            let currentShardId = state.headShardId ||
+                (locationSnap.exists ? locationSnap.data().shardId : null);
+            while (currentShardId && !visitedShardIds.has(currentShardId)) {
+                const shardSnap = await readShard(currentShardId);
+                currentShardId = shardSnap?.exists ?
+                    shardSnap.data().p || null : null;
+            }
+            if (locationSnap.exists) {
+                await readShard(locationSnap.data().shardId);
+            }
+        }
+
+        let removedFromShard = false;
+        shardSnaps.forEach((shardSnap, index) => {
+            if (!shardSnap.exists) return;
             const shard = shardSnap.data();
+            if (!Object.prototype.hasOwnProperty.call(
+                shard.e || {}, safeEntryId)) return;
             const entries = {...(shard.e || {})};
             delete entries[safeEntryId];
             const nextShard = {
@@ -352,14 +397,19 @@ const removeMapIndexEntry = async (db, family, scopeId, entryId) => {
                 u: Timestamp.now(),
             };
             nextShard.b = estimateShardBytes(nextShard);
-            transaction.set(shardRef, nextShard);
+            transaction.set(shardRefs[index], nextShard);
+            removedFromShard = true;
+        });
+
+        const removedLogicalEntry = locationSnap.exists || removedFromShard;
+        if (locationSnap.exists) transaction.delete(locationRef);
+        if (stateSnap.exists && removedLogicalEntry) {
+            transaction.set(stateRef, {
+                count: Math.max(0, (Number(state.count) || 0) - 1),
+                updatedAt: Timestamp.now(),
+            }, {merge: true});
         }
-        transaction.delete(locationRef);
-        transaction.set(stateRef, {
-            count: FieldValue.increment(-1),
-            updatedAt: Timestamp.now(),
-        }, {merge: true});
-        return true;
+        return removedLogicalEntry;
     });
 };
 

@@ -1,9 +1,15 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
-export const supportsDesktopBackupUpload = (api) => Boolean(
-    api?.prepareBackupForUpload &&
-    (api.uploadPreparedBackup || api.uploadBackupFile),
-);
+// A missing capability can also mean that an already-open desktop window still
+// has the previous hosted Workshop bundle loaded. Do not call the installed
+// client outdated based on capability detection alone.
+export const DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE =
+    'The desktop upload bridge is unavailable. Reload the Workshop or restart the PlanetCreations desktop client.';
+
+export const supportsDesktopBackupUpload = (api) =>
+    typeof api?.prepareBackupForUpload === 'function' &&
+    (typeof api.uploadPreparedBackup === 'function' ||
+        typeof api.uploadBackupFile === 'function');
 
 const abortLegacyUpload = async (uploadId) => {
     if (!uploadId) return;

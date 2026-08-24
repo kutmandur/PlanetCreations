@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../../firebase/config';
-import { collection, query, where, getDocs, doc, writeBatch, serverTimestamp, arrayUnion, getCountFromServer } from 'firebase/firestore';
+import { collection, query, where, getDocs, getCountFromServer } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
 import Icon from '../ui/Icon';
@@ -44,27 +45,18 @@ const SubmissionForm = ({ creation, event, onConfirm, community, blacklist = [] 
         setError('');
         setIsSubmitting(true);
         try {
-            const batch = writeBatch(db);
-            const creationRef = doc(db, 'creations', creation.id);
-            batch.update(creationRef, {
-                eventIds: arrayUnion(event.id),
-                eventSubmissions: {
-                    ...(creation.eventSubmissions || {}),
-                    [event.id]: customFieldData
-                }
+            const submitCreationToEvent = httpsCallable(
+                getFunctions(), 'submitCreationToEvent');
+            const response = await submitCreationToEvent({
+                acceptedRuleIds: checkedRules,
+                creationId: creation.id,
+                customFieldData,
+                eventId: event.id,
             });
-
-            const linkRef = doc(db, 'communitys', event.communityId, 'creations', creation.id);
-            batch.set(linkRef, {
-                addedAt: serverTimestamp(),
-                userId: creation.userId
-            });
-
-            await batch.commit();
-            onConfirm(creation.id); // Pass the ID back on success
-
+            onConfirm(creation.id, response.data?.title);
         } catch (error) {
             console.error("Error submitting creation:", error);
+            setError(error.message || 'The creation could not be submitted.');
         } finally {
             setIsSubmitting(false);
         }
@@ -173,8 +165,11 @@ const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage
         fetchCreations();
     }, [user.uid, event, setModalMessage, onClose]);
 
-    const handleConfirmSubmission = (submittedCreationId) => {
-        setModalMessage(`"${userCreations.find(c => c.id === submittedCreationId).title}" was successfully submitted!`);
+    const handleConfirmSubmission = (submittedCreationId, submittedTitle) => {
+        const title = submittedTitle ||
+            userCreations.find(c => c.id === submittedCreationId)?.title ||
+            'Creation';
+        setModalMessage(`"${title}" was successfully submitted!`);
         onClose(submittedCreationId);
     };
 
@@ -185,7 +180,7 @@ const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage
     }, [userCreations, searchTerm]);
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4" onClick={() => onClose(null)}>
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={() => onClose(null)}>
             <div className="bg-gray-100 rounded-xl shadow-2xl w-full max-w-4xl h-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="p-4 border-b bg-white rounded-t-xl flex justify-between items-center">
                     <div>

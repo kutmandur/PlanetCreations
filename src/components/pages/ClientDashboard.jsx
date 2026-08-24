@@ -117,7 +117,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                 const discovery = viewMode === 'media' ? mediaDiscoveryStatus?.[file.path] : null;
 
                 return (
-                    <div key={file.path} className={`pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900 bg-opacity-40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
+                    <div key={file.path} className={`pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900/40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
                         {viewMode === 'backup' && (
                             <div className="self-end flex-shrink-0">
                                 <input

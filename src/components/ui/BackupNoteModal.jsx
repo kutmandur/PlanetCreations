@@ -8,7 +8,7 @@ const BackupNoteModal = ({ onConfirm, onCancel }) => {
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
             <div className="bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full border border-gray-700">
                 <h3 className="text-xl font-bold mb-4 text-white">Add Backup Note</h3>
                 <p className="text-gray-400 mb-4 text-sm">You can add an optional note to remember why you created this backup (e.g., "Before big coaster build").</p>
