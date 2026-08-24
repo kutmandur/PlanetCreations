@@ -167,6 +167,7 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
             creationPayload = null;
         }
     }
+    let rideAnalysis = null;
     if (creationPayload) {
         try {
             const inner = ['.park2', '.blpr2', '.prkauto2'].includes(extension) ?
@@ -175,21 +176,24 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
                     normalized.kind,
                     normalized.blueprint?.ratings,
                     normalized.tags,
+                    { includeRideAnalysis: options.includeRideAnalysis === true && normalized.kind !== 'blueprint' },
                 ) : parsePlanetZooSaveMetadata(creationPayload, normalized.kind);
-            if (inner && normalized.park) Object.assign(normalized.park, inner);
+            const { rideAnalysis: extractedRideAnalysis = null, ...innerMetadata } = inner || {};
+            rideAnalysis = extractedRideAnalysis;
+            if (inner && normalized.park) Object.assign(normalized.park, innerMetadata);
             if (inner && normalized.blueprint) {
                 if (normalized.gameId === 'planet-zoo') {
-                    Object.assign(normalized.blueprint, inner);
+                    Object.assign(normalized.blueprint, innerMetadata);
                 } else {
-                    normalized.blueprint.rideCount = inner.rideCount;
-                    normalized.blueprint.rides = inner.rides;
-                    normalized.blueprint.placedPartCount = inner.placedPartCount;
-                    normalized.blueprint.sceneryPieceCount = inner.sceneryPieceCount;
-                    normalized.blueprint.serializedGroupCount = inner.buildingCount;
-                    normalized.blueprint.railElementCount = inner.railElementCount;
-                    normalized.blueprint.trackedRideElementCount = inner.trackedRideElementCount;
-                    normalized.blueprint.binCount = inner.binCount;
-                    normalized.blueprint.poolCount = inner.poolCount;
+                    normalized.blueprint.rideCount = innerMetadata.rideCount;
+                    normalized.blueprint.rides = innerMetadata.rides;
+                    normalized.blueprint.placedPartCount = innerMetadata.placedPartCount;
+                    normalized.blueprint.sceneryPieceCount = innerMetadata.sceneryPieceCount;
+                    normalized.blueprint.serializedGroupCount = innerMetadata.buildingCount;
+                    normalized.blueprint.railElementCount = innerMetadata.railElementCount;
+                    normalized.blueprint.trackedRideElementCount = innerMetadata.trackedRideElementCount;
+                    normalized.blueprint.binCount = innerMetadata.binCount;
+                    normalized.blueprint.poolCount = innerMetadata.poolCount;
                 }
             }
         } catch {
@@ -199,6 +203,7 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
     return {
         raw,
         normalized,
+        rideAnalysis,
         mediaReferences: options.includeMediaReferences && creationPayload ?
             extractCustomMediaReferences(creationPayload) : undefined,
     };
@@ -295,11 +300,13 @@ function inspectFrontierFile(filePath, options = {}) {
         throw new Error('Unsupported Frontier creation file extension.');
     }
     const cache = getCacheRecord(filePath);
-    if (!cache.metadata || (options.includeMediaReferences && !cache.mediaReferences)) {
+    if (!cache.metadata || (options.includeMediaReferences && !cache.mediaReferences) ||
+        (options.includeRideAnalysis && cache.rideAnalysis === undefined)) {
         const archive = new AdmZip(filePath);
-        if (!cache.metadata) {
+        if (!cache.metadata || (options.includeRideAnalysis && cache.rideAnalysis === undefined)) {
             const parsed = readMetadataFromArchive(archive, filePath, options);
             cache.metadata = { raw: parsed.raw, normalized: parsed.normalized };
+            cache.rideAnalysis = parsed.rideAnalysis;
             if (options.includeMediaReferences && parsed.mediaReferences) {
                 cache.mediaReferences = parsed.mediaReferences;
             }
@@ -311,6 +318,7 @@ function inspectFrontierFile(filePath, options = {}) {
     return {
         rawMetadata: cache.metadata.raw,
         metadata: cache.metadata.normalized,
+        rideAnalysis: options.includeRideAnalysis ? cache.rideAnalysis : undefined,
         mediaReferences: options.includeMediaReferences ? [...(cache.mediaReferences || [])] : undefined,
         source: {
             size: cache.size,

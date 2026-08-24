@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { ICONS } from '../../utils/helpers';
 import { getPlanetCoaster2ResearchPack } from '../../utils/planetCoaster2ResearchPacks';
 import { getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
+import { parseRideAnalysisBuffer } from '../../utils/rideAnalysis';
+import AnimatedPillTabs from './AnimatedPillTabs';
+import RideNerdAnalysis from './RideNerdAnalysis';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const moneyFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -252,7 +255,17 @@ const RideTestStats = ({ stats }) => {
     );
 };
 
-const RideOverview = ({ rides = [], showTraceNote = true, eyebrow = 'Rides', title = 'Per-ride overview' }) => {
+const RideOverview = ({
+    rides = [],
+    showTraceNote = true,
+    eyebrow = 'Rides',
+    title = 'Per-ride overview',
+    nerdMode = false,
+    analysis = null,
+    analysisLoading = false,
+    expandedRideKey = '',
+    onToggleRide = () => {},
+}) => {
     const groups = useMemo(() => groupedRides(rides), [rides]);
     if (groups.length === 0) return null;
     return (
@@ -260,7 +273,7 @@ const RideOverview = ({ rides = [], showTraceNote = true, eyebrow = 'Rides', tit
             <div className="text-center">
                 <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 dark:text-blue-300">{eyebrow}</p>
                 <h3 className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">{title}</h3>
-                {showTraceNote && <p className="mt-1 text-[11px] text-gray-500">Calculated EFN trace values are retained for future improvements, but intentionally hidden until the calculation is reliable.</p>}
+                {showTraceNote && !nerdMode && <p className="mt-1 text-[11px] text-gray-500">Calculated EFN trace values are retained for future improvements, but intentionally hidden until the calculation is reliable.</p>}
             </div>
             {groups.map(group => (
                 <div key={group.key} className="space-y-2 text-center">
@@ -270,7 +283,7 @@ const RideOverview = ({ rides = [], showTraceNote = true, eyebrow = 'Rides', tit
                     </div>
                     <div className="flex flex-wrap justify-center gap-2.5">
                         {group.rides.map(({ ride, index }) => (
-                            <article key={`${ride.kind}-${ride.typeId || 'unknown'}-${index}`} className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800/80 dark:shadow-none sm:w-72">
+                            <article key={`${ride.kind}-${ride.typeId || 'unknown'}-${index}`} className={`${nerdMode ? 'w-full max-w-5xl p-4 sm:p-5' : 'w-full max-w-sm p-3 sm:w-72'} rounded-xl border border-gray-200 bg-white text-center shadow-sm dark:border-gray-700 dark:bg-gray-800/80 dark:shadow-none`}>
                                 <div className="flex flex-col items-center gap-2 text-center">
                                     <div className="min-w-0 text-center">
                                         <h4 className="break-words text-sm font-semibold text-gray-950 dark:text-white" title={ride.name || ride.category || `Ride ${index + 1}`}>{ride.name || ride.category || `Ride ${index + 1}`}</h4>
@@ -279,7 +292,26 @@ const RideOverview = ({ rides = [], showTraceNote = true, eyebrow = 'Rides', tit
                                     <span className={`rounded-full px-2 py-0.5 text-[10px] ${RIDE_CATEGORY_STYLES[group.key] || RIDE_CATEGORY_STYLES['tracked-ride']}`}>{group.label}</span>
                                 </div>
                                 {ride.ratings && <div className="mt-2"><p className="mb-1 text-[9px] uppercase tracking-wide text-gray-500">Final rating stored in blueprint metadata</p><RatingMetrics compact ratings={ride.ratings} /></div>}
+                                {nerdMode && !ride.ratings && ride.testStats?.calculatedRatings && <div className="mt-2"><p className="mb-1 text-[9px] uppercase tracking-wide text-gray-500">Calculated from the stored test curve</p><RatingMetrics compact ratings={ride.testStats.calculatedRatings} /></div>}
                                 {ride.kind === 'tracked' && showTraceNote && <RideTestStats stats={ride.testStats} />}
+                                {nerdMode && ride.kind === 'tracked' && !ride.isCountPlaceholder && (
+                                    <div className="mt-4">
+                                        <button
+                                            type="button"
+                                            disabled={analysisLoading || !analysis}
+                                            onClick={() => onToggleRide(`${ride.kind}-${ride.typeId || 'unknown'}-${index}`)}
+                                            className="rounded-full bg-gray-900 px-4 py-2 text-xs font-bold text-white hover:bg-black disabled:cursor-wait disabled:opacity-50 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200"
+                                        >
+                                            {analysisLoading ? 'Loading full-resolution data…' : (expandedRideKey === `${ride.kind}-${ride.typeId || 'unknown'}-${index}` ? 'Close detailed analysis' : 'Open detailed analysis')}
+                                        </button>
+                                        {expandedRideKey === `${ride.kind}-${ride.typeId || 'unknown'}-${index}` && analysis && (
+                                            <RideNerdAnalysis
+                                                analysis={analysis}
+                                                entry={{ index, ride, displayName: ride.name || ride.category || `Ride ${index + 1}` }}
+                                            />
+                                        )}
+                                    </div>
+                                )}
                             </article>
                         ))}
                     </div>
@@ -360,8 +392,23 @@ const CreationMetadataPanel = ({
     const [preview, setPreview] = useState(null);
     const [previewLoading, setPreviewLoading] = useState(false);
     const [bannerImageFailed, setBannerImageFailed] = useState(false);
+    const [nerdMode, setNerdMode] = useState(false);
+    const [rideAnalysis, setRideAnalysis] = useState(null);
+    const [rideAnalysisStatus, setRideAnalysisStatus] = useState('idle');
+    const [rideAnalysisError, setRideAnalysisError] = useState('');
+    const [expandedRideKey, setExpandedRideKey] = useState('');
+    const rideAnalysisStatusRef = useRef('idle');
 
     useEffect(() => setBannerImageFailed(false), [bannerImageUrl]);
+
+    useEffect(() => {
+        setNerdMode(false);
+        setRideAnalysis(null);
+        setRideAnalysisStatus('idle');
+        setRideAnalysisError('');
+        setExpandedRideKey('');
+        rideAnalysisStatusRef.current = 'idle';
+    }, [filePath]);
 
     useEffect(() => {
         if (!isOpen) return undefined;
@@ -385,6 +432,13 @@ const CreationMetadataPanel = ({
     const park = metadata?.park;
     const blueprint = metadata?.blueprint;
     const rides = park?.rides || blueprint?.rides || [];
+    const nerdModeAvailable = Boolean(
+        filePath &&
+        metadata?.gameId === 'planet-coaster-2' &&
+        !blueprint &&
+        rides.some(ride => ride?.kind === 'tracked' && ride?.testStats) &&
+        window.electronAPI?.readFrontierRideAnalysis,
+    );
     const trackedRideMetrics = trackedRideCategoryMetrics(rides, park?.trackedRideCount ?? blueprint?.trackedRideCount);
     const requiredDlcs = metadata?.requiredDlcs || [];
     const requiredDlcIdentifiers = metadata?.requiredDlcIdentifiers || [];
@@ -403,6 +457,34 @@ const CreationMetadataPanel = ({
     const displayedUnknownDlcBits = unknownDlcBits.filter(bit => !identifiedUnknownBits.has(bit));
     const headerImageUrl = bannerImageUrl && !bannerImageFailed ? bannerImageUrl : preview;
     const headerTitle = creationName || metadata?.name || park?.parkName || 'Creation analysis';
+
+    const changeStatsMode = mode => {
+        if (mode !== 'nerd') {
+            setNerdMode(false);
+            setExpandedRideKey('');
+            return;
+        }
+        setNerdMode(true);
+        if (['loading', 'complete'].includes(rideAnalysisStatusRef.current)) return;
+        rideAnalysisStatusRef.current = 'loading';
+        setRideAnalysisStatus('loading');
+        setRideAnalysisError('');
+        void window.electronAPI.readFrontierRideAnalysis(filePath)
+            .then(value => {
+                if (!value) throw new Error('No stored full-resolution test route is available for this park.');
+                const bytes = value?.type === 'Buffer' && Array.isArray(value.data) ?
+                    Uint8Array.from(value.data) : value;
+                setRideAnalysis(parseRideAnalysisBuffer(bytes));
+                rideAnalysisStatusRef.current = 'complete';
+                setRideAnalysisStatus('complete');
+            })
+            .catch(error => {
+                console.warn('Local full-resolution ride analysis could not be loaded:', error);
+                rideAnalysisStatusRef.current = 'error';
+                setRideAnalysisError(error.message || 'Full-resolution ride analysis could not be loaded.');
+                setRideAnalysisStatus('error');
+            });
+    };
 
     const modal = isOpen && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm dark:bg-black/75 sm:p-3" onMouseDown={event => { if (event.target === event.currentTarget) setIsOpen(false); }}>
@@ -487,11 +569,30 @@ const CreationMetadataPanel = ({
                             </div>
                         </section>}
                         <ResearchPackList researchPacks={blueprint?.researchPacks} />
+                        {nerdModeAvailable && <section className="text-center">
+                            <div className="mx-auto mb-3 w-full max-w-xs">
+                                <AnimatedPillTabs
+                                    activeTab={nerdMode ? 'nerd' : 'normal'}
+                                    onChange={changeStatsMode}
+                                    tabs={[
+                                        { id: 'normal', label: 'Normal mode' },
+                                        { id: 'nerd', label: 'Nerd mode' },
+                                    ]}
+                                />
+                            </div>
+                            <p className="mx-auto max-w-2xl text-xs text-gray-500">Nerd mode reads the locally cached, full-resolution ride-test curves. After the first migration read, they are refreshed only when this save changes.</p>
+                            {nerdMode && rideAnalysisStatus === 'error' && <p role="alert" className="mx-auto mt-3 max-w-2xl rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">{rideAnalysisError}</p>}
+                        </section>}
                         <RideOverview
                             rides={rides}
                             showTraceNote={!isPlanetZoo}
                             eyebrow={isPlanetZoo ? 'Transport' : 'Rides'}
                             title={isPlanetZoo ? 'Transport ride overview' : 'Per-ride overview'}
+                            nerdMode={nerdMode}
+                            analysis={rideAnalysis}
+                            analysisLoading={rideAnalysisStatus === 'loading'}
+                            expandedRideKey={expandedRideKey}
+                            onToggleRide={key => setExpandedRideKey(current => current === key ? '' : key)}
                         />
 
                         <section className="flex flex-wrap justify-center gap-4 text-center">

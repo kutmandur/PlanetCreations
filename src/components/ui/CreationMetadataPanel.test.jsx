@@ -151,6 +151,31 @@ test('keeps calculated EFN hidden while showing conservative stored test-trace f
     expect(screen.queryByText('Final ride rating')).not.toBeInTheDocument();
 });
 
+test('offers the Workshop-style Nerd mode for a tested local park', () => {
+    const readFrontierRideAnalysis = vi.fn(() => new Promise(() => {}));
+    window.electronAPI = { readFrontierRideAnalysis };
+    try {
+        render(<CreationMetadataPanel filePath="C:\\Frontier Developments\\Planet Coaster 2\\12345678901234567\\Saves\\Test.park2" metadata={{
+            gameId: 'planet-coaster-2', kind: 'park', requiredDlc: 0, requiredDlcs: [], unknownDlcBits: [], blueprint: null,
+            park: {
+                rideCount: 1, trackedRideCount: 1, flatRideCount: 0,
+                rides: [{
+                    kind: 'tracked', name: 'Test Coaster', category: 'Coaster', rideCategoryKey: 'coaster', rideCategory: 'Coaster',
+                    testStats: { durationSeconds: 10, traversalLengthMeters: 100, maxSpeedKph: 60, sampleCount: 120 },
+                }],
+            },
+        }} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'View stats' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Nerd mode' }));
+        expect(readFrontierRideAnalysis).toHaveBeenCalledWith(expect.stringMatching(/Test\.park2$/));
+        expect(screen.getByRole('button', { name: /Loading full-resolution data/i })).toBeDisabled();
+        expect(screen.getByText(/refreshed only when this save changes/i)).toBeInTheDocument();
+    } finally {
+        delete window.electronAPI;
+    }
+});
+
 test('renders a dedicated Planet Zoo overview with safe counts and transport rides', () => {
     render(<CreationMetadataPanel customMediaReferences={['habitat-screen.png']} metadata={{
         gameId: 'planet-zoo',

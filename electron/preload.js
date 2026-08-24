@@ -71,6 +71,8 @@ const offlineManagerApi = {
   deleteCreationMedia: (filePath, mode) => ipcRenderer.invoke('delete-creation-media', filePath, mode),
   scanGames: (basePath, options) => ipcRenderer.invoke('scan-games', basePath, options),
   onFrontierMetadataUpdated: (callback) => listen('frontier-metadata-updated', callback, (_event, payload) => [payload]),
+  onFrontierSaveFilesChanged: (callback) => listen('frontier-save-files-changed', callback, (_event, payload) => [payload]),
+  readFrontierRideAnalysis: (filePath) => ipcRenderer.invoke('read-frontier-ride-analysis', filePath),
   createBackup: (filePath, note, isSigned, idToken, appCheckToken) => ipcRenderer.invoke('create-backup', filePath, note, isSigned, idToken, appCheckToken),
   listAllBackups: () => ipcRenderer.invoke('list-all-backups'),
   restoreBackup: (backupFilePath, originalFilePath) => ipcRenderer.invoke('restore-backup', backupFilePath, originalFilePath),

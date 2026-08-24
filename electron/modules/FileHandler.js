@@ -1,12 +1,16 @@
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Worker } = require('worker_threads');
 const { inspectFrontierFile } = require('./FrontierSaveParser');
 const { resolveFrontierDlcRequirements } = require('./FrontierDlcResolver');
+const { buildRideAnalysisObject } = require('./RideAnalysisObject');
 
-// Bump whenever normalized metadata changes so unchanged saves are reparsed
-// once after an update instead of keeping an older interpretation forever.
+// Informational on-disk schema version. A version change must never discard
+// valid per-file entries: reading large Frontier saves is tied exclusively to
+// the source file signature. Users can explicitly request a full refresh from
+// the Offline Manager when they want every save interpreted by a newer parser.
 const METADATA_CACHE_VERSION = 6;
 let latestDlcCatalogs = {};
 
@@ -122,22 +126,89 @@ function getMetadataCachePath() {
     return path.join(app.getPath('userData'), 'frontier-metadata-cache.json');
 }
 
+function normalizeMetadataCache(parsed) {
+    const files = parsed?.files && typeof parsed.files === 'object' &&
+        !Array.isArray(parsed.files) ? parsed.files : {};
+    return {
+        version: METADATA_CACHE_VERSION,
+        files,
+    };
+}
+
+function isMetadataCacheEntryFresh(cached, fileRecord, forceMetadataRefresh = false) {
+    if (forceMetadataRefresh || !cached) return false;
+    if (cached.modifiedAtMs !== fileRecord.modifiedAtMs) return false;
+    // Older cache entries did not always persist size. Their exact mtime still
+    // remains a valid signature; all newly written entries use both values.
+    return typeof cached.size !== 'number' || cached.size === fileRecord.size;
+}
+
 function readMetadataCache() {
     try {
         const parsed = JSON.parse(fs.readFileSync(getMetadataCachePath(), 'utf8'));
-        if (parsed?.version === METADATA_CACHE_VERSION && parsed.files && typeof parsed.files === 'object') {
-            return parsed;
-        }
+        return normalizeMetadataCache(parsed);
     } catch (error) {
         if (error.code !== 'ENOENT') console.warn('[FileHandler] Metadata cache could not be read:', error.message);
     }
-    return { version: METADATA_CACHE_VERSION, files: {} };
+    return normalizeMetadataCache(null);
+}
+
+function writeMetadataCacheFile(cachePath, cache) {
+    const temporaryPath = `${cachePath}.${process.pid}.tmp`;
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    try {
+        fs.writeFileSync(temporaryPath, JSON.stringify(normalizeMetadataCache(cache)));
+        fs.renameSync(temporaryPath, cachePath);
+    } catch (error) {
+        try { fs.unlinkSync(temporaryPath); } catch (_cleanupError) { /* best effort */ }
+        throw error;
+    }
 }
 
 function writeMetadataCache(cache) {
-    const cachePath = getMetadataCachePath();
+    writeMetadataCacheFile(getMetadataCachePath(), cache);
+}
+
+function getRideAnalysisCachePath(cacheKey) {
+    const fileName = crypto.createHash('sha256').update(cacheKey).digest('hex');
+    return path.join(app.getPath('userData'), 'frontier-ride-analysis', `${fileName}.pcride`);
+}
+
+function writeRideAnalysisCache(cacheKey, source) {
+    const cachePath = getRideAnalysisCachePath(cacheKey);
+    const built = buildRideAnalysisObject(source);
+    if (!built) {
+        try { fs.unlinkSync(cachePath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        return { schemaVersion: 1, available: false };
+    }
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-    fs.writeFileSync(cachePath, JSON.stringify(cache));
+    const temporaryPath = `${cachePath}.${process.pid}.tmp`;
+    try {
+        fs.writeFileSync(temporaryPath, built.objectBuffer);
+        fs.renameSync(temporaryPath, cachePath);
+    } catch (error) {
+        try { fs.unlinkSync(temporaryPath); } catch (_cleanupError) { /* best effort */ }
+        throw error;
+    }
+    return built.summary;
+}
+
+function isPathInside(root, candidate) {
+    const relative = path.relative(path.resolve(root), path.resolve(candidate));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function pruneMissingCacheEntries(cache, basePath, currentCacheKeys) {
+    let changed = false;
+    for (const cacheKey of Object.keys(cache.files)) {
+        if (!isPathInside(basePath, cacheKey) || currentCacheKeys.has(cacheKey)) continue;
+        delete cache.files[cacheKey];
+        try { fs.unlinkSync(getRideAnalysisCachePath(cacheKey)); } catch (error) {
+            if (error.code !== 'ENOENT') console.warn('[FileHandler] Orphaned ride-analysis cache could not be removed:', error.message);
+        }
+        changed = true;
+    }
+    if (changed) writeMetadataCache(cache);
 }
 
 function indexGamesFromPath(basePath, options = {}) {
@@ -147,10 +218,17 @@ function indexGamesFromPath(basePath, options = {}) {
     const results = enumerateGamesFromPath(basePath);
     const cache = readMetadataCache();
     const pending = [];
-    for (const fileRecord of allGameFiles(results)) {
+    const fileRecords = allGameFiles(results);
+    const currentCacheKeys = new Set(fileRecords.map(fileRecord => path.resolve(fileRecord.path)));
+    pruneMissingCacheEntries(cache, basePath, currentCacheKeys);
+    for (const fileRecord of fileRecords) {
         const cacheKey = path.resolve(fileRecord.path);
         const cached = cache.files[cacheKey];
-        const isFresh = !options.forceMetadataRefresh && cached?.modifiedAtMs === fileRecord.modifiedAtMs;
+        const isFresh = isMetadataCacheEntryFresh(
+            cached,
+            fileRecord,
+            options.forceMetadataRefresh === true,
+        );
         if (cached?.metadata) {
             const requirements = resolveFrontierDlcRequirements(
                 cached.metadata.gameId,
@@ -168,6 +246,7 @@ function indexGamesFromPath(basePath, options = {}) {
             };
         }
         if (Array.isArray(cached?.mediaReferences)) fileRecord.customMediaReferences = cached.mediaReferences;
+        if (isFresh && cached?.rideAnalysis?.available) fileRecord.rideAnalysisSummary = cached.rideAnalysis;
         if (isFresh) {
             fileRecord.frontierMetadataError = cached.error || undefined;
             fileRecord.metadataStatus = cached.error ? 'error' : 'ready';
@@ -186,22 +265,38 @@ function indexGamesFromPath(basePath, options = {}) {
 
 function saveMetadataInspection(cache, pendingFile, inspection, error = null) {
     const previous = cache.files[pendingFile.cacheKey];
+    let rideAnalysis = previous?.rideAnalysis || null;
+    if (inspection || error) {
+        try {
+            rideAnalysis = inspection && !error ?
+                writeRideAnalysisCache(pendingFile.cacheKey, inspection.rideAnalysis) :
+                writeRideAnalysisCache(pendingFile.cacheKey, null);
+        } catch (rideAnalysisError) {
+            console.warn('[FileHandler] Ride-analysis cache could not be written:', rideAnalysisError.message);
+            rideAnalysis = null;
+        }
+    }
     cache.files[pendingFile.cacheKey] = {
         size: pendingFile.size,
         modifiedAtMs: pendingFile.modifiedAtMs,
         inspectedAt: new Date().toISOString(),
         metadata: inspection?.metadata || previous?.metadata || null,
         mediaReferences: inspection?.mediaReferences || previous?.mediaReferences || [],
+        rideAnalysis,
         error: error ? String(error.message || error) : null,
     };
     writeMetadataCache(cache);
     return cache.files[pendingFile.cacheKey];
 }
 
-function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs) {
+function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs, options = {}) {
     return new Promise((resolve, reject) => {
         const worker = new Worker(path.join(__dirname, 'FrontierMetadataWorker.js'), {
-            workerData: { filePath, dlcCatalogs },
+            workerData: {
+                filePath,
+                dlcCatalogs,
+                includeRideAnalysis: options.includeRideAnalysis === true,
+            },
         });
         let settled = false;
         worker.once('message', message => {
@@ -218,6 +313,38 @@ function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs) 
             else if (!settled) reject(new Error('Metadata worker stopped before returning a result.'));
         });
     });
+}
+
+async function loadOrCreateRideAnalysis(filePath, dlcCatalogs = latestDlcCatalogs) {
+    const resolvedPath = path.resolve(filePath);
+    const stats = fs.statSync(resolvedPath);
+    const pendingFile = {
+        path: resolvedPath,
+        size: stats.size,
+        modifiedAtMs: stats.mtimeMs,
+        cacheKey: resolvedPath,
+    };
+    const cache = readMetadataCache();
+    const cached = cache.files[pendingFile.cacheKey];
+    if (isMetadataCacheEntryFresh(cached, pendingFile) && cached?.rideAnalysis?.available) {
+        try {
+            return fs.readFileSync(getRideAnalysisCachePath(pendingFile.cacheKey));
+        } catch (error) {
+            if (error.code !== 'ENOENT') console.warn('[FileHandler] Cached ride analysis could not be read:', error.message);
+        }
+    }
+    if (isMetadataCacheEntryFresh(cached, pendingFile) && cached?.rideAnalysis?.available === false) {
+        return null;
+    }
+
+    const inspection = await inspectFrontierFileInWorker(
+        resolvedPath,
+        dlcCatalogs,
+        { includeRideAnalysis: true },
+    );
+    const persisted = saveMetadataInspection(cache, pendingFile, inspection);
+    if (!persisted.rideAnalysis?.available) return null;
+    return fs.readFileSync(getRideAnalysisCachePath(pendingFile.cacheKey));
 }
 
 // *** ANGEPASSTE FUNKTION ***
@@ -256,9 +383,14 @@ function scanAllMediaFiles() {
 }
 
 module.exports = {
+    METADATA_CACHE_VERSION,
     indexGamesFromPath,
     inspectFrontierFileInWorker,
+    isMetadataCacheEntryFresh,
+    loadOrCreateRideAnalysis,
+    normalizeMetadataCache,
     saveMetadataInspection,
     scanGamesFromPath,
     scanAllMediaFiles,
+    writeMetadataCacheFile,
 };
