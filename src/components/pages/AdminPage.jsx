@@ -6,13 +6,14 @@ import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import { getGameColor } from '../../utils/helpers';
-import { getGames, getDefaultGameId } from '../../utils/gamesRegistry';
+import { getGames, getDefaultGameId, saveGamesRegistry } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import { DEFAULT_WEIGHTS, WEIGHT_KEYS } from '../../utils/feedRanking';
 import FeedWeightSliders from '../ui/FeedWeightSliders';
 import GamesManager from '../management/GamesManager';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
+import PillTabs from '../ui/PillTabs';
 
 const DLC_SEED_DATA = Object.freeze({
     'planet-coaster': [
@@ -74,23 +75,66 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500', style }) => (
     </div>
 );
 
+const ADMIN_TABS = ['User Management', 'Games & Data', 'Startpage', 'Bug Reports', 'Site Statistics'];
+const USER_MANAGEMENT_TABS = ['All Users', 'Applications', 'Influencers', 'Email Export'];
+const STARTPAGE_TABS = ['Search Indexes', 'Feed'];
+
+const ADMIN_ROUTE_TARGETS = Object.freeze({
+    'user-management': { tab: 'User Management', section: 'All Users' },
+    users: { tab: 'User Management', section: 'All Users' },
+    influencer: { tab: 'User Management', section: 'Applications' },
+    'email-users': { tab: 'User Management', section: 'Email Export' },
+    games: { tab: 'Games & Data' },
+    'data-management': { tab: 'Games & Data' },
+    'games-data': { tab: 'Games & Data' },
+    indexes: { tab: 'Startpage', section: 'Search Indexes' },
+    feed: { tab: 'Startpage', section: 'Feed' },
+    startpage: { tab: 'Startpage', section: 'Search Indexes' },
+    'bug-reports': { tab: 'Bug Reports' },
+    'site-statistics': { tab: 'Site Statistics' },
+    statistics: { tab: 'Site Statistics' },
+});
+
+const ADMIN_SECTION_TARGETS = Object.freeze({
+    'User Management': {
+        users: 'All Users',
+        applications: 'Applications',
+        influencers: 'Influencers',
+        email: 'Email Export',
+    },
+    Startpage: {
+        indexes: 'Search Indexes',
+        feed: 'Feed',
+    },
+});
+
 const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
-    const TABS = useRef(['User Management', 'Influencer', 'Games', 'Data Management', 'Indexes', 'Feed', 'Bug Reports', 'Email Users', 'Site Statistics']).current;
+    const TABS = ADMIN_TABS;
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const [feedWeights, setFeedWeights] = useState(null);
     const [feedWeightsDirty, setFeedWeightsDirty] = useState(false);
     const [savingFeedWeights, setSavingFeedWeights] = useState(false);
-    const mainTabRefs = useRef([]);
-    const mainGliderRef = useRef(null);
     const location = useLocation();
 
-    // Deep-link support (e.g. from a notification): /admin?tab=bug-reports
+    const [userSubTab, setUserSubTab] = useState('All Users');
+    const [startpageSubTab, setStartpageSubTab] = useState('Search Indexes');
+    const [addGameOpen, setAddGameOpen] = useState(false);
+    const [reorderingGames, setReorderingGames] = useState(false);
+
+    // Keep both the consolidated routes and the previous tab links working.
     useEffect(() => {
-        const tabSlug = new URLSearchParams(location.search).get('tab');
+        const params = new URLSearchParams(location.search);
+        const tabSlug = params.get('tab');
         if (!tabSlug) return;
-        const match = TABS.find(t => t.toLowerCase().replace(/\s+/g, '-') === tabSlug);
-        if (match) setActiveTab(match);
-    }, [location.search, TABS]);
+        const target = ADMIN_ROUTE_TARGETS[tabSlug];
+        if (!target) return;
+
+        setActiveTab(target.tab);
+        const requestedSection = ADMIN_SECTION_TARGETS[target.tab]?.[params.get('section')];
+        const section = requestedSection || target.section;
+        if (target.tab === 'User Management' && section) setUserSubTab(section);
+        if (target.tab === 'Startpage' && section) setStartpageSubTab(section);
+    }, [location.search]);
 
     const [selectedGame, setSelectedGame] = useState(() => getGames({ includeDisabled: true })[0]?.id || getDefaultGameId());
     const [newCategory, setNewCategory] = useState('');
@@ -117,8 +161,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const [bugSubTab, setBugSubTab] = useState('Open');
     const [loadingBugs, setLoadingBugs] = useState(true);
 
-    // Influencer-Tab
-    const [influencerSubTab, setInfluencerSubTab] = useState('Applications');
+    // Influencer management inside User Management
     const [influencers, setInfluencers] = useState([]);
     const [loadingInfluencers, setLoadingInfluencers] = useState(true);
 
@@ -139,18 +182,33 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
 
     // Datenpflege auch für deaktivierte Spiele möglich
     const GAME_TABS = useGames({ includeDisabled: true });
+    const selectedGameIndex = GAME_TABS.findIndex(game => game.id === selectedGame);
 
-    useEffect(() => {
-        const activeTabIndex = TABS.findIndex(tab => tab === activeTab);
-        const activeTabNode = mainTabRefs.current[activeTabIndex];
-        if (activeTabNode && mainGliderRef.current) {
-            mainGliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
-            mainGliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
+    const handleMoveSelectedGame = async direction => {
+        const targetIndex = selectedGameIndex + direction;
+        if (selectedGameIndex < 0 || targetIndex < 0 || targetIndex >= GAME_TABS.length) return;
+
+        const reorderedGames = [...GAME_TABS];
+        [reorderedGames[selectedGameIndex], reorderedGames[targetIndex]] = [
+            reorderedGames[targetIndex],
+            reorderedGames[selectedGameIndex],
+        ];
+
+        setReorderingGames(true);
+        try {
+            await saveGamesRegistry({
+                games: reorderedGames.map((game, index) => ({ ...game, order: index })),
+                defaultGameId: getDefaultGameId(),
+            });
+        } catch (error) {
+            setModalMessage(`Error reordering games: ${error.message}`);
+        } finally {
+            setReorderingGames(false);
         }
-    }, [activeTab, TABS]);
+    };
 
     useEffect(() => {
-        if (activeTab === 'Data Management') {
+        if (activeTab === 'Games & Data') {
             const gameTabIndex = GAME_TABS.findIndex(tab => tab.id === selectedGame);
             const gameTabNode = gameTabRefs.current[gameTabIndex];
             if (gameTabNode && gameGliderRef.current) {
@@ -161,7 +219,13 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     }, [selectedGame, activeTab, GAME_TABS]);
 
     useEffect(() => {
-        if (activeTab !== 'User Management') return;
+        if (GAME_TABS.length > 0 && !GAME_TABS.some(game => game.id === selectedGame)) {
+            setSelectedGame(GAME_TABS[0].id);
+        }
+    }, [GAME_TABS, selectedGame]);
+
+    useEffect(() => {
+        if (activeTab !== 'User Management' || userSubTab !== 'All Users') return;
         let isMounted = true;
         setLoadingUsers(true);
         const usersQuery = collection(db, 'users');
@@ -173,11 +237,11 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
             if (isMounted) { setUsers(usersData); setLoadingUsers(false); }
         });
         return () => { isMounted = false; unsubUsers(); };
-    }, [activeTab]);
+    }, [activeTab, userSubTab]);
 
     // Influencer-Tab: offene Bewerbungen + Liste aller Influencer
     useEffect(() => {
-        if (activeTab !== 'Influencer') return;
+        if (activeTab !== 'User Management') return;
         let isMounted = true;
         setLoadingInfluencers(true);
         const unsubApps = onSnapshot(collection(db, 'applications'), (snapshot) => {
@@ -195,7 +259,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     }, [activeTab]);
 
     useEffect(() => {
-        if (activeTab !== 'Data Management') return;
+        if (activeTab !== 'Games & Data') return;
         let isMounted = true;
         setLoadingCategories(true);
         const catRef = doc(db, 'categories', selectedGame);
@@ -209,7 +273,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     }, [selectedGame, activeTab]);
 
     useEffect(() => {
-        if (activeTab !== 'Data Management') return;
+        if (activeTab !== 'Games & Data') return;
         let isMounted = true;
         setLoadingDlcs(true);
         const dlcRef = doc(db, 'dlcs', selectedGame);
@@ -535,18 +599,18 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     }, [setModalMessage]);
 
     useEffect(() => {
-        if (activeTab === 'Indexes') loadIndexOverview();
-    }, [activeTab, loadIndexOverview]);
+        if (activeTab === 'Startpage' && startpageSubTab === 'Search Indexes') loadIndexOverview();
+    }, [activeTab, startpageSubTab, loadIndexOverview]);
 
     // Feed-Tab: globale Feed-Gewichte (meta/feedWeights) laden
     useEffect(() => {
-        if (activeTab !== 'Feed') return;
+        if (activeTab !== 'Startpage' || startpageSubTab !== 'Feed') return;
         let mounted = true;
         getDoc(doc(db, 'meta', 'feedWeights')).then((snap) => {
             if (mounted) setFeedWeights(snap.exists() ? { ...DEFAULT_WEIGHTS, ...snap.data() } : { ...DEFAULT_WEIGHTS });
         }).catch((e) => setModalMessage(`Error loading feed weights: ${e.message}`));
         return () => { mounted = false; };
-    }, [activeTab, setModalMessage]);
+    }, [activeTab, startpageSubTab, setModalMessage]);
 
     const handleSaveFeedWeights = async (weightsToSave) => {
         setSavingFeedWeights(true);
@@ -665,7 +729,21 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     const filteredUsers = useMemo(() => users.filter(user => user.username?.toLowerCase().includes(searchTerm.toLowerCase())), [users, searchTerm]);
   
     const renderContent = () => {
-        switch (activeTab) {
+        let selectedPanel = activeTab;
+        if (activeTab === 'User Management') {
+            selectedPanel = {
+                'All Users': 'User Management',
+                Applications: 'Influencer',
+                Influencers: 'Influencer',
+                'Email Export': 'Email Users',
+            }[userSubTab];
+        } else if (activeTab === 'Games & Data') {
+            selectedPanel = 'Data Management';
+        } else if (activeTab === 'Startpage') {
+            selectedPanel = startpageSubTab === 'Search Indexes' ? 'Indexes' : 'Feed';
+        }
+
+        switch (selectedPanel) {
             case 'User Management':
                 return (
                     <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>
@@ -711,24 +789,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
             case 'Influencer':
                 return (
                     <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>
-                        <div className="flex justify-center mb-8">
-                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                                {['Applications', 'Users'].map(tab => (
-                                    <button
-                                        key={tab}
-                                        onClick={() => setInfluencerSubTab(tab)}
-                                        className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${influencerSubTab === tab ? 'bg-blue-500 text-white' : 'text-gray-600 hover:text-black'}`}
-                                    >
-                                        {tab}
-                                        <span className={`ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${influencerSubTab === tab ? 'bg-white text-gray-800' : 'bg-gray-300 text-gray-700'}`}>
-                                            {tab === 'Applications' ? applications.length : influencers.length}
-                                        </span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {influencerSubTab === 'Applications' && (
+                        {userSubTab === 'Applications' && (
                             applications.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {applications.map(app => <ApplicationCard key={app.id} application={app} onAccept={() => handleApplication(app.id, true)} onDeny={() => handleApplication(app.id, false)} onCopy={handleCopy} />)}
@@ -736,7 +797,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                             ) : <p className="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md">No pending applications.</p>
                         )}
 
-                        {influencerSubTab === 'Users' && (
+                        {userSubTab === 'Influencers' && (
                             loadingInfluencers ? <Spinner /> : influencers.length === 0 ? (
                                 <p className="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md">No influencers yet.</p>
                             ) : (
@@ -803,20 +864,56 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                         )}
                     </div>
                 );
-            case 'Games':
-                return <GamesManager setModalMessage={setModalMessage} />;
             case 'Data Management':
                 return (
                     <div style={color.style}>
                         <div className="relative flex justify-center my-6">
-                            <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                                <div ref={gameGliderRef} className={`absolute h-full rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
-                                {GAME_TABS.map((tab, index) => (
-                                    <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 font-medium whitespace-nowrap ${selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
-                                ))}
+                            <div className="flex max-w-full items-center gap-2">
+                                <div className="relative flex max-w-full items-center overflow-x-auto rounded-full bg-gray-200 p-1 shadow-inner">
+                                    <div ref={gameGliderRef} className={`absolute inset-y-1 rounded-full ${color.bg} transition-all duration-500 ease-in-out`} />
+                                    {GAME_TABS.map((tab, index) => (
+                                        <button key={tab.id} ref={el => gameTabRefs.current[index] = el} onClick={() => setSelectedGame(tab.id)} className={`relative z-10 whitespace-nowrap rounded-full px-4 py-2 font-medium transition-colors duration-300 sm:px-6 ${selectedGame === tab.id ? 'text-white' : 'text-gray-600 hover:text-black'}`}>{tab.name}</button>
+                                    ))}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleMoveSelectedGame(-1)}
+                                    disabled={reorderingGames || selectedGameIndex <= 0}
+                                    aria-label="Move selected game left"
+                                    title="Move selected game left"
+                                    className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-bold text-gray-600 shadow-sm transition hover:bg-gray-100 hover:text-black disabled:cursor-not-allowed disabled:opacity-35"
+                                >
+                                    ←
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleMoveSelectedGame(1)}
+                                    disabled={reorderingGames || selectedGameIndex < 0 || selectedGameIndex >= GAME_TABS.length - 1}
+                                    aria-label="Move selected game right"
+                                    title="Move selected game right"
+                                    className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-bold text-gray-600 shadow-sm transition hover:bg-gray-100 hover:text-black disabled:cursor-not-allowed disabled:opacity-35"
+                                >
+                                    →
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setAddGameOpen(true)}
+                                    aria-label="Add game"
+                                    title="Add game"
+                                    className={`flex h-10 w-10 flex-none items-center justify-center rounded-full text-2xl font-semibold leading-none text-white shadow-md transition hover:scale-105 hover:brightness-90 ${color.bg}`}
+                                >
+                                    +
+                                </button>
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                        <GamesManager
+                            setModalMessage={setModalMessage}
+                            selectedGameId={selectedGame}
+                            onSelectedGameChange={setSelectedGame}
+                            addGameOpen={addGameOpen}
+                            onAddGameOpenChange={setAddGameOpen}
+                        />
+                        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <h3 className="text-xl font-bold mb-4">Manage Categories</h3>
                                 <div className="flex space-x-2 mb-4">
@@ -892,7 +989,7 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
                     <div>
                         <div className="flex justify-center mb-8">
                             <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                                {['General', 'Communitys'].map(tab => (
+                                {['General', 'Communities'].map(tab => (
                                     <button
                                         key={tab}
                                         onClick={() => setIndexSubTab(tab)}
@@ -1121,22 +1218,34 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
     return (
         <div className="container mx-auto p-4 sm:p-8">
             <h1 className="text-3xl font-bold mb-6 text-gray-800">Admin Management</h1>
-            <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                    <div ref={mainGliderRef} className="absolute h-full bg-red-500 rounded-full transition-all duration-300 ease-in-out" />
-                    {TABS.map((tab, index) => (
-                        <button
-                            key={tab}
-                            ref={el => mainTabRefs.current[index] = el}
-                            onClick={() => setActiveTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
-                        >
-                            {tab}
-                        </button>
-                    ))}
-                </div>
-            </div>
+            <PillTabs
+                tabs={TABS}
+                value={activeTab}
+                onChange={setActiveTab}
+                accentClass="bg-red-500"
+                ariaLabel="Admin sections"
+                className="my-6"
+            />
             <div className="py-6">
+                {activeTab === 'User Management' && (
+                    <PillTabs
+                        tabs={USER_MANAGEMENT_TABS}
+                        value={userSubTab}
+                        onChange={setUserSubTab}
+                        counts={{ Applications: applications.length, Influencers: influencers.length }}
+                        ariaLabel="User management sections"
+                        className="mb-8"
+                    />
+                )}
+                {activeTab === 'Startpage' && (
+                    <PillTabs
+                        tabs={STARTPAGE_TABS}
+                        value={startpageSubTab}
+                        onChange={setStartpageSubTab}
+                        ariaLabel="Startpage sections"
+                        className="mb-8"
+                    />
+                )}
                 {renderContent()}
             </div>
         </div>

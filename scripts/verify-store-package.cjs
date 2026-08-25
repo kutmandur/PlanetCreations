@@ -64,7 +64,8 @@ try {
     const preloadSource = asar.extractFile(asarPath, 'electron/preload.js').toString('utf8');
     const privacyPage = asar.extractFile(asarPath, 'build/privacy.html').toString('utf8');
     if (!/function loadOfflineManager[\s\S]*?return loadHostedAppWithFallback/.test(mainSource) ||
-        !mainSource.includes('const fallbackUrl = `${getBundledAppUrl()}#${hashRoute}`;')) {
+        !mainSource.includes('const fallbackUrl = buildBundledAppRouteUrl(getBundledAppUrl(), route);') ||
+        !/function loadOfflineManager[\s\S]*?allowBundledFallback: true/.test(mainSource)) {
         throw new Error('The packed client is missing the hosted Offline Manager with bundled fallback.');
     }
     if (!preloadSource.includes('isTrustedHostedView ? hostedApi')) {
