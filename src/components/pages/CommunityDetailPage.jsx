@@ -35,11 +35,13 @@ import {
 } from '../../utils/communityVisibility';
 import CommunityJoinModal from '../modals/CommunityJoinModal';
 import OfficialPartnerBadge from '../community/OfficialPartnerBadge';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const TABS = ['Creations', 'Members', 'Events'];
 
 const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmation }) => {
-    const { communityName } = useParams();
+    const { communityName: rawCommunityName } = useParams();
+    const communityName = String(rawCommunityName || '').toLowerCase();
     const [activeTab, setActiveTab] = useState(TABS[0]);
     const tabRefs = useRef([]);
     const gliderRef = useRef(null);
@@ -537,7 +539,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             <button
                                 type="button"
                                 onClick={() => navigate(
-                                    `/login?redirect=${encodeURIComponent(`/community/${community.slug}`)}`
+                                    `/login?redirect=${encodeURIComponent(buildCommunityPath(community.slug))}`
                                 )}
                                 className="px-5 py-2.5 rounded-lg community-bg hover:brightness-90 text-white font-bold transition-all"
                             >

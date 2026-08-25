@@ -19,6 +19,7 @@ import { getVerifiedGameTags } from '../../utils/creationSavePrefill';
 import VerifiedParkStats from '../ui/VerifiedParkStats';
 import { buildCreationEditNavigationState } from '../../utils/creationNavigation';
 import { removeCreationFromCaches } from '../../utils/creationCache';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
     const { id: idFromUrl } = useParams();
@@ -329,7 +330,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         const shareData = {
             title: `PlanetCreations: ${creation.title}`,
             text: `Check out "${creation.title}" by ${creatorProfile?.username || creation.username} on PlanetCreations!`,
-            url: window.location.origin + `/#/creation/${id}`,
+            url: buildCreationShareUrl(id),
         };
         try {
             if (navigator.share) {
@@ -527,7 +528,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 type: 'Community',
                 sourceName: comm.communityName,
                 url: comm.showcaseVideoUrl,
-                link: `/community/${comm.slug}` 
+                link: buildCommunityPath(comm.slug)
             });
         }
     });

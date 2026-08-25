@@ -79,8 +79,8 @@ No production audit currently reports a critical finding.
   Keep the `uuid` override until `@google-cloud/storage` no longer requests the
   older major itself; its affected consumers use only the compatible `v4()` API.
 - The root production audit reports React Router's RSC-mode CSRF advisory.
-  This app uses `HashRouter` in declarative SPA mode and has no React Server
-  Components or server actions, so the affected path is not reachable. The
+  This app uses declarative `BrowserRouter`/`HashRouter` SPA modes and has no
+  React Server Components or server actions, so the affected path is not reachable. The
   patched React Router major is not the current stable npm release; npm proposes
   a downgrade instead of an upgrade.
 - The full root development audit additionally reports `brace-expansion` below

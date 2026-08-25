@@ -7,8 +7,9 @@ import { SOCIAL_PLATFORMS, ICONS, getYoutubeId } from '../../utils/helpers';
 import Icon from '../ui/Icon';
 import Spinner from '../ui/Spinner';
 import CreationCard from '../cards/CreationCard';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
-// Public page for a single showcase, reached via its QR code (/#/showcase/:id).
+// Public page for a single showcase, reached via its QR code (/showcase/:id).
 // Built on the community-page layout: reused banner + community identity, a Home
 // and a View Community button, the showcase title, the embedded video, and the
 // featured creations. Loads the self-contained showcase index (1 read) plus the
@@ -109,7 +110,7 @@ const ShowcasePage = () => {
                     {/* View Community button (top-right) */}
                     <div className="order-3 w-48 flex-shrink-0 flex md:block justify-center md:text-right">
                         {community?.slug && (
-                            <button onClick={() => navigate(`/community/${community.slug}`)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-md transition-colors">
+                            <button onClick={() => navigate(buildCommunityPath(community.slug))} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-md transition-colors">
                                 View Community
                             </button>
                         )}

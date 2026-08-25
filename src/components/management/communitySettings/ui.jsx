@@ -1,5 +1,6 @@
 import React from 'react';
 import Spinner from '../../ui/Spinner';
+import { slugifyCommunityName } from '../../../utils/communityRoutes';
 
 // Shared styling for text/url inputs across all settings sections.
 export const inputClass =
@@ -59,14 +60,6 @@ export const getTextColorForBackground = (hexColor) => {
 };
 
 // Slug helper mirrored from the former EditCommunityForm.
-export const slugify = (text) =>
-  text
-    .toString()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w-]+/g, '')
-    .replace(/--+/g, '-')
-    .replace(/^-+/, '')
-    .replace(/-+$/, '');
+export const slugify = slugifyCommunityName;
 
 export { Spinner };

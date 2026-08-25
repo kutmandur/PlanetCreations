@@ -9,11 +9,13 @@
 export const OVERLAY_QR_KEY = 'pc.overlayQr';
 const CHANNEL_NAME = 'pc-overlay';
 
-// Fester Origin wie in CreationSharingQrCode: nie window.location verwenden,
-// sonst landet in Dev-Builds localhost im QR.
-const PUBLIC_ORIGIN = 'https://planetcreations.net';
+// Fester Origin: nie window.location verwenden, sonst landet in Dev-Builds
+// localhost im QR oder Share-Link. Der serverseitige Share-Endpunkt liefert
+// Link-Crawlern Creation-Metadaten und leitet Menschen zur HashRoute weiter.
+const PUBLIC_ORIGIN = 'https://www.planetcreations.net';
 
-export const buildCreationShareUrl = (creationId) => `${PUBLIC_ORIGIN}/#/creation/${creationId}`;
+export const buildCreationShareUrl = (creationId) =>
+    `${PUBLIC_ORIGIN}/share/creation/${encodeURIComponent(creationId)}`;
 
 // Gespeicherter Eintrag: { creationId, title, url, source: 'manual'|'goLive'|'remote', enabledAt }
 // null/fehlend = Overlay zeigt das Logo.

@@ -44,6 +44,7 @@
   "scripts": {
     "start": "vite",
     "build": "vite build",
+    "build:electron": "vite build --mode electron",
     "test": "npm run test:frontend && npm run test:electron",
     "test:frontend": "vitest run",
     "test:electron": "node --test \"electron/modules/*.test.js\"",
@@ -52,8 +53,8 @@
     "test:watch": "vitest",
     "deploy:ionos": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-ionos.ps1",
     "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",
-    "package": "npm run build && electron-builder",
-    "package:store": "npm run build && npm run package:store:artifact",
+    "package": "npm run build:electron && electron-builder",
+    "package:store": "npm run build:electron && npm run package:store:artifact",
     "package:store:artifact": "electron-builder --config electron-builder.store.cjs --publish never",
     "verify:store-package": "node scripts/verify-store-package.cjs",
     "generate:appx-assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-appx-assets.ps1"

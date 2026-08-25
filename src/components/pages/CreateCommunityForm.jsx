@@ -40,6 +40,7 @@ import {
   getFirstCommunityWizardError,
   slugifyCommunityName,
 } from '../../utils/communityWizard';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const API_BASE_URL =
   'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
@@ -563,7 +564,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
 
       setModalMessage(`Community created successfully!${passwordWarning}`);
       scheduleDataRefresh();
-      navigate(`/community/${slug}`);
+      navigate(buildCommunityPath(slug));
     } catch (error) {
       if (communityRef && !ownerMembershipCreated) {
         await deleteDoc(communityRef).catch(() => null);
@@ -593,7 +594,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
           placeholder="Coaster Builders"
         />
         <p className="mt-1 text-xs text-gray-400">
-          URL preview: /community/{slugifyCommunityName(name) || 'your-community'}
+          URL preview: /{slugifyCommunityName(name) || 'your-community'}
         </p>
       </div>
       <div>

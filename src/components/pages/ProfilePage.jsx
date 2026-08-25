@@ -517,7 +517,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         const shareData = {
             title: `PlanetCreations: ${profile?.username || 'Creator'}`,
             text: `Check out ${profile?.username || 'this creator'}'s creations on PlanetCreations!`,
-            url: window.location.origin + `/#/profile/${userId}`,
+            url: `https://www.planetcreations.net/profile/${encodeURIComponent(userId)}`,
         };
         try {
             if (navigator.share) {

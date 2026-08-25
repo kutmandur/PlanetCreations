@@ -10,9 +10,10 @@ import SharingQrCode from '../ui/SharingQrCode';
 import CreationCard from '../cards/CreationCard';
 import ApplicationsManager from './ApplicationsManager';
 import CommunityFilterBar, { creationMatchesFilters } from './CommunityFilterBar';
+import { buildCreationShareUrl } from '../../utils/overlayQr';
 
 const SUB_TABS = ['Applications', 'Waitlist', 'Groups', 'Showcased'];
-const PUBLIC_ORIGIN = 'https://planetcreations.net';
+const PUBLIC_ORIGIN = 'https://www.planetcreations.net';
 
 
 // Seiteninternes Modal zum Fertigstellen/Bearbeiten eines Showcases
@@ -550,7 +551,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     <button onClick={() => handleAddVideoToGroup(group)} className="p-2 text-gray-500 hover:text-green-600" title="Add Video to Group (showcases all creations)">
                                         <Icon path={ICONS.video} className="w-5 h-5" />
                                     </button>
-                                    <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/showcase/${group.id}`, name: group.name, showcaseId: group.id })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                    <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/showcase/${encodeURIComponent(group.id)}`, name: group.name, showcaseId: group.id })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
                                         <Icon path={ICONS.share} className="w-5 h-5" />
                                     </button>
                                     <button onClick={() => handleDeleteGroup(group)} className="p-2 text-gray-500 hover:text-red-600" title="Delete Group">
@@ -614,7 +615,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                 <Icon path={ICONS.edit} className="w-5 h-5" />
                             </button>
                             {group.showcaseId && (
-                                <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/showcase/${group.showcaseId}`, name: group.name, showcaseId: group.showcaseId })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
+                                <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/showcase/${encodeURIComponent(group.showcaseId)}`, name: group.name, showcaseId: group.showcaseId })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code">
                                     <Icon path={ICONS.share} className="w-5 h-5" />
                                 </button>
                             )}
@@ -648,7 +649,7 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                 Watch video ↗
                             </a>
                         )}
-                        <button onClick={() => setQrModal({ url: `${PUBLIC_ORIGIN}/#/creation/${creation.id}`, name: creation.showcaseName || creation.title, showcaseId: null })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code (links directly to the creation)">
+                        <button onClick={() => setQrModal({ url: buildCreationShareUrl(creation.id), name: creation.showcaseName || creation.title, showcaseId: null })} className="p-2 text-gray-500 hover:text-blue-600" title="Show sharing QR code (links directly to the creation)">
                             <Icon path={ICONS.share} className="w-5 h-5" />
                         </button>
                         <button onClick={() => handleRemoveShowcaseVideo(creation.id)} className="p-2 text-gray-500 hover:text-red-600" title="Remove Showcase Video">

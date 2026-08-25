@@ -1,7 +1,13 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+  <IfModule mod_negotiation.c>
+    Options -MultiViews
+  </IfModule>
   RewriteRule ^index\.html$ - [L]
+  # Social crawlers do not execute the SPA before reading Open Graph metadata.
+  # Route public Creation share links through the server-rendered endpoint.
+  RewriteRule ^share/creation/([A-Za-z0-9_-]{1,128})/?$ https://us-central1-planetcreationsdotnet.cloudfunctions.net/api/creation-share/$1 [R=302,L,NE]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteCond %{REQUEST_FILENAME} !-l

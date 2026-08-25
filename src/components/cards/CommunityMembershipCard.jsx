@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const CommunityMembershipCard = ({ membership }) => {
     
@@ -13,7 +14,7 @@ const CommunityMembershipCard = ({ membership }) => {
     };
 
     return (
-        <Link to={`/community/${membership.communitySlug}`} className="block">
+        <Link to={buildCommunityPath(membership.communitySlug)} className="block">
             <article className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden h-full transform hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
                 <div className="h-28 overflow-hidden">
                     <img

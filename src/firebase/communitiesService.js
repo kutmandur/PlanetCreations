@@ -10,7 +10,8 @@ export const fetchAllCommunities = async () => {
 // ✅ ADDED: Function to fetch a single community by its URL slug
 export const fetchCommunityBySlug = async (slug) => {
     if (!slug) return null;
-    const q = query(collection(db, 'communitys'), where('slug', '==', slug), limit(1));
+    const normalizedSlug = String(slug).toLowerCase();
+    const q = query(collection(db, 'communitys'), where('slug', '==', normalizedSlug), limit(1));
     const snapshot = await getDocs(q);
     if (snapshot.empty) {
         throw new Error("Community not found.");

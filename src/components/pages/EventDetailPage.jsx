@@ -11,6 +11,7 @@ import EventCreationCard from '../cards/EventCreationCard';
 import EventSubmissionModal from '../modals/EventSubmissionModal';
 import EventSharingQrCode from '../ui/EventSharingQrCode';
 import { getEffectiveCommunityPermissions } from '../../utils/communityPermissions';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, setPopoverView, blacklist = [] }) => {
     const { eventId } = useParams();
@@ -304,7 +305,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                     await deleteEventAsStaff({ eventId: eventId });
                     setModalMessage("Event has been successfully deleted.");
                     scheduleDataRefresh();
-                    navigate(`/community/${community?.slug || event.communityId}`);
+                    navigate(buildCommunityPath(community?.slug || event.communityId));
                 } catch (error) {
                     setModalMessage(`Error deleting event: ${error.message}`);
                 }
@@ -384,7 +385,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
             <img src={event.bannerImageUrl || 'https://placehold.co/1200x300/e2e8f0/64748b?text=Event'} alt={`${event.title} Banner`} className="w-full h-64 object-cover rounded-lg mb-4"/>
             <div className="flex justify-between items-center mb-6">
-                <button onClick={() => navigate(`/community/${community?.slug || event.communityId}`)} className="community-bg text-white font-bold py-2 px-4 rounded-lg flex items-center hover:brightness-90 transition-all">
+                <button onClick={() => navigate(buildCommunityPath(community?.slug || event.communityId))} className="community-bg text-white font-bold py-2 px-4 rounded-lg flex items-center hover:brightness-90 transition-all">
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />
                     Back to Community
                 </button>

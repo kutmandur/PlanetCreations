@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -15,6 +15,7 @@ import lazyWithReload from './utils/lazyWithReload';
 import { isSafeHttpUrl } from './utils/helpers';
 import { watchSystemTheme } from './utils/theme';
 import { getReportableContent } from './utils/contentReporting';
+import { usesHashRouting } from './utils/routingMode';
 
 import Navbar from './components/ui/Navbar';
 import Modal from './components/ui/Modal';
@@ -110,6 +111,24 @@ const queryClient = new QueryClient({
 
 // Ermöglicht scheduleDataRefresh() aus beliebigen Save-Handlern ohne Hook/Props.
 registerQueryClient(queryClient);
+
+const RouteCanonicalMetadata = () => {
+    const location = useLocation();
+
+    useEffect(() => {
+        if (usesHashRouting()) return;
+        const canonicalUrl = new URL(
+            location.pathname,
+            'https://www.planetcreations.net'
+        ).toString();
+        document.querySelector('link[rel="canonical"]')
+            ?.setAttribute('href', canonicalUrl);
+        document.querySelector('meta[property="og:url"]')
+            ?.setAttribute('content', canonicalUrl);
+    }, [location.pathname]);
+
+    return null;
+};
 
 const AppContent = () => {
     const location = useLocation();
@@ -841,6 +860,7 @@ const AppContent = () => {
 
     return (
         <>
+        <RouteCanonicalMetadata />
         {isGameOverlay && (
             <GameOverlayChrome
                 user={user}
@@ -969,6 +989,7 @@ const AppContent = () => {
                             <Route path="/manager/:id" element={<ProtectedRoute user={user} userProfile={userProfile} checkCommunityOwnership={true} setShowRickRoll={setShowRickRoll}><CommunityManagerPage setPasswordConfirm={setPasswordConfirm} setModalMessage={setModalMessage} setConfirmation={setConfirmation} blacklist={blacklist} userProfile={userProfile} setPopoverView={setPopoverView} /></ProtectedRoute>} />
                             <Route path="/admin" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="admin" setShowRickRoll={setShowRickRoll}><AdminPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setPasswordConfirm={setPasswordConfirm} /></ProtectedRoute>} />
                             <Route path="/moderation" element={<ProtectedRoute user={user} userProfile={userProfile} requiredRole="moderator" setShowRickRoll={setShowRickRoll}><ModerationPage setPopoverView={setPopoverView} setModalMessage={setModalMessage} setStrikeModal={setStrikeModal} setPasswordConfirm={setPasswordConfirm} setConfirmation={setConfirmation} blacklist={blacklist} /></ProtectedRoute>} />
+                            <Route path="/:communityName" element={<CommunityDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
                         </Routes>
                         )}
                     </Suspense>
@@ -1024,11 +1045,13 @@ export default function App() {
         );
     }
     
+    const Router = usesHashRouting() ? HashRouter : BrowserRouter;
+
     return (
         <QueryClientProvider client={queryClient}>
-            <HashRouter>
+            <Router>
                 <AppContent />
-            </HashRouter>
+            </Router>
         </QueryClientProvider>
     );
 }
