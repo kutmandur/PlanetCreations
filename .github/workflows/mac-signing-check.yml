@@ -1,46 +1,14 @@
-name: Build & Release Desktop App
+name: Verify macOS Signing
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
 
 jobs:
-  prepare-release:
-    runs-on: ubuntu-latest
+  verify-macos:
+    runs-on: macos-latest
 
     permissions:
-      contents: write
-
-    steps:
-      - name: Create shared draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: bash
-        run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --draft \
-              --verify-tag \
-              --title "${GITHUB_REF_NAME#v}" \
-              --target "$GITHUB_SHA"
-          fi
-
-  release:
-    needs: prepare-release
-
-    strategy:
-      # Ein fehlgeschlagener Plattform-Build soll die anderen nicht abbrechen
-      # (z. B. macOS-Probleme dürfen das Windows-Release nicht blockieren).
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
-    runs-on: ${{ matrix.os }}
-
-    permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Check out git repository
@@ -61,16 +29,11 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
-      # dmg-license ist eine macOS-only optionale Dependency des DMG-Builders.
-      # Sie fällt aus dem package-lock.json heraus, wenn dieses auf Windows/Linux
-      # erzeugt wurde, wodurch der Mac-Build sonst mit "Cannot find module
-      # 'dmg-license'" abbricht. --no-save lässt das Lockfile unverändert.
+      # dmg-license kann in einem unter Windows erzeugten Lockfile fehlen.
       - name: Install macOS DMG dependency
-        if: matrix.os == 'macos-latest'
         run: npm install dmg-license --no-save
 
       - name: Prepare required Apple signing
-        if: matrix.os == 'macos-latest'
         shell: bash
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -103,15 +66,9 @@ jobs:
           echo "APPLE_API_KEY_ID=$SECRET_APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$SECRET_APPLE_API_ISSUER" >> "$GITHUB_ENV"
 
-      # electron-builder baut je Runner sein natives Target (NSIS/DMG/AppImage)
-      # und lädt alle Artefakte in dasselbe GitHub-Draft-Release hoch.
-      # Auf macOS signiert und notarisiert electron-builder mit dem Developer-ID-
-      # Zertifikat und dem Apple-API-Key. Fehlende Secrets brechen den Mac-Build
-      # oben ab, damit kein unsigniertes Mac-Artefakt veröffentlicht werden kann.
-      - name: Build and release Electron app
-        run: npm run package -- --config.mac.forceCodeSigning=true
+      - name: Build signed and notarized macOS artifacts
+        run: npm run build:electron && npx electron-builder --mac --publish never --config.mac.forceCodeSigning=true
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
@@ -123,27 +80,40 @@ jobs:
           VITE_FIREBASE_VAPID_KEY: ${{ secrets.VITE_FIREBASE_VAPID_KEY }}
           VITE_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ secrets.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY }}
 
-      # Microsoft Store packages intentionally use the separate manual
-      # build-store-package workflow. A GitHub patch release must not create a
-      # second AppX while another Store submission is still under certification.
-
-  finalize-release:
-    needs: release
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
-    steps:
-      - name: Remove differential-update blockmaps
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      - name: Verify signature, Gatekeeper and notarization
         shell: bash
         run: |
-          gh release view "$GITHUB_REF_NAME" \
-            --json assets \
-            --jq '.assets[].name | select(endswith(".blockmap"))' |
-          while IFS= read -r asset; do
-            gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
-          done
+          set -euo pipefail
+
+          apps_found=0
+          while IFS= read -r app; do
+            apps_found=$((apps_found + 1))
+            echo "Verifying $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+            xcrun stapler validate "$app"
+          done < <(find dist -type d -name 'PlanetCreations Client.app' -prune -print)
+
+          if [ "$apps_found" -eq 0 ]; then
+            echo "::error::No packaged macOS app bundle was found."
+            exit 1
+          fi
+
+          dmg_count=$(find dist -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')
+          zip_count=$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l | tr -d ' ')
+
+          if [ "$dmg_count" -eq 0 ] || [ "$zip_count" -eq 0 ]; then
+            echo "::error::Expected both DMG and ZIP artifacts."
+            exit 1
+          fi
+
+      - name: Upload verified macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-macos-artifacts
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 7
