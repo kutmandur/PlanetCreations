@@ -2,6 +2,11 @@ name: Verify macOS Signing
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Git branch or tag to package (defaults to the workflow ref)
+        required: false
+        type: string
 
 jobs:
   verify-macos:
@@ -13,6 +18,8 @@ jobs:
     steps:
       - name: Check out git repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install Node.js
         uses: actions/setup-node@v6
