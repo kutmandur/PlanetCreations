@@ -531,6 +531,12 @@ html.pc-window-resizing *::after {
 .client-feature-card:hover .client-card-shine { left: 125%; }
 .client-workflow-step:hover .client-step-number { transform: scale(1.08); }
 .client-step-number { transition: transform .2s ease; }
+.client-store-badge ms-store-badge::part(img) {
+  width: auto;
+  height: 44px;
+  max-width: 100%;
+  object-fit: contain;
+}
 
 @keyframes client-grid-drift { to { background-position: 42px 42px; } }
 @keyframes client-orb-float { to { transform: translate3d(-55px, 45px, 0) scale(1.15); } }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
@@ -42,32 +42,139 @@ const WorkflowStep = ({ number, title, description, last = false }) => (
     </div>
 );
 
-const DownloadCard = ({ title, subtitle, detail, icon, accent, href, loading, recommended, note }) => (
-    <article className={`relative rounded-xl border-2 bg-white dark:bg-gray-800 p-6 text-center shadow-md transition-all hover:-translate-y-1 hover:shadow-xl ${recommended ? 'border-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
+const getPlatformSignature = (browserNavigator) => [
+    browserNavigator?.userAgentData?.platform,
+    browserNavigator?.platform,
+    browserNavigator?.userAgent,
+].filter(Boolean).join(' ').toLowerCase();
+
+export const detectRecommendedDownload = (browserNavigator = typeof navigator === 'undefined' ? null : navigator) => {
+    const signature = getPlatformSignature(browserNavigator);
+    if (/iphone|ipad|ipod|android/.test(signature)) return null;
+    if (/windows|win32|win64/.test(signature)) return 'windows';
+    if (/linux/.test(signature)) return 'linux';
+    if (!/mac|darwin/.test(signature)) return null;
+
+    const explicitArchitecture = `${browserNavigator?.userAgentData?.architecture || ''} ${browserNavigator?.userAgent || ''}`.toLowerCase();
+    if (/arm64|aarch64|apple silicon/.test(explicitArchitecture)) return 'macArm64';
+    if (/x86_64|amd64/.test(explicitArchitecture)) return 'macIntel';
+
+    // Modern Apple Silicon browsers often report the compatibility value
+    // "MacIntel". Prefer the current Mac architecture until Client Hints can
+    // provide a reliable hardware answer below.
+    return 'macArm64';
+};
+
+const resolveRecommendedDownload = async (browserNavigator) => {
+    const initialRecommendation = detectRecommendedDownload(browserNavigator);
+    if (!initialRecommendation?.startsWith('mac') ||
+        typeof browserNavigator?.userAgentData?.getHighEntropyValues !== 'function') {
+        return initialRecommendation;
+    }
+
+    try {
+        const details = await browserNavigator.userAgentData.getHighEntropyValues(['architecture', 'bitness']);
+        const architecture = String(details?.architecture || '').toLowerCase();
+        if (/^arm|aarch/.test(architecture)) return 'macArm64';
+        if (/^(x86|x64|amd)/.test(architecture)) return 'macIntel';
+    } catch {
+        // Privacy settings may reject high-entropy Client Hints. The initial
+        // operating-system recommendation remains useful in that case.
+    }
+
+    return initialRecommendation;
+};
+
+const InfoTooltip = ({ label, children }) => (
+    <span className="group absolute right-3 top-3 z-20">
+        <button
+            type="button"
+            aria-label={label}
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:border-blue-400 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:border-blue-400 dark:hover:text-blue-300"
+        >
+            <Icon path={ICONS.info} className="h-4 w-4" />
+        </button>
+        <span role="tooltip" className="pointer-events-none absolute right-0 top-full mt-2 w-64 translate-y-1 rounded-lg bg-gray-950 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white opacity-0 shadow-xl transition-all group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:bg-gray-100 dark:text-gray-900">
+            {children}
+        </span>
+    </span>
+);
+
+const DownloadCard = ({ title, subtitle, detail, icon, accent, href, loading, recommended, info }) => (
+    <article className={`relative flex h-full flex-col rounded-xl border-2 bg-white dark:bg-gray-800 p-4 text-center shadow-md transition-all hover:-translate-y-1 hover:shadow-xl ${recommended ? 'border-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
         {recommended && (
             <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">
                 Recommended for this device
             </span>
         )}
+        {info && <InfoTooltip label={`About ${title}`}>{info}</InfoTooltip>}
         <div className={`w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center ${accent}`}>
             <Icon path={icon} className="w-7 h-7" />
         </div>
         <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h3>
         <p className="mt-1 font-semibold text-gray-700 dark:text-gray-200">{subtitle}</p>
         <p className="mt-2 min-h-[2.5rem] text-sm text-gray-500 dark:text-gray-400">{detail}</p>
-        {href ? (
-            <a href={href} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-5 py-3 font-bold text-white transition-colors">
-                <Icon path={ICONS.download} className="w-5 h-5" />
-                Download
-            </a>
-        ) : (
-            <span className="mt-5 inline-flex w-full items-center justify-center rounded-lg bg-gray-200 dark:bg-gray-700 px-5 py-3 font-bold text-gray-500 dark:text-gray-300">
-                {loading ? 'Finding latest download…' : 'Download unavailable'}
-            </span>
-        )}
-        {note && <p className="mt-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300">{note}</p>}
+        <div className="mt-auto pt-5">
+            {href ? (
+                <a href={href} className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 font-bold text-white transition-colors hover:bg-blue-700">
+                    <Icon path={ICONS.download} className="w-5 h-5" />
+                    Download
+                </a>
+            ) : (
+                <span className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg bg-gray-200 px-4 py-2.5 font-bold text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+                    {loading ? 'Finding latest download…' : 'Download unavailable'}
+                </span>
+            )}
+        </div>
     </article>
 );
+
+const MicrosoftStoreCard = ({ recommended }) => {
+    const badgeRef = useRef(null);
+
+    useEffect(() => {
+        const badge = badgeRef.current;
+        if (!badge) return;
+        Object.entries({
+            productid: '9pc0mzv8rwr0',
+            productname: 'PlanetCreations Client',
+            'window-mode': 'direct',
+            theme: 'auto',
+            size: 'large',
+            language: 'en-us',
+            animation: 'on',
+        }).forEach(([name, value]) => badge.setAttribute(name, value));
+    }, []);
+
+    return (
+        <article className={`relative flex h-full flex-col rounded-xl border-2 bg-white dark:bg-gray-800 p-4 text-center shadow-md transition-all hover:-translate-y-1 hover:shadow-xl ${recommended ? 'border-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
+            {recommended && (
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">
+                    Recommended for this device
+                </span>
+            )}
+            <InfoTooltip label="About the Microsoft Store version">
+                Microsoft verifies and signs this package, avoiding the direct installer's unsigned-publisher warning. Updates arrive through Microsoft Store after certification, so a new release can appear later than the direct version.
+            </InfoTooltip>
+            <div className="w-14 h-14 mx-auto mb-4 rounded-full flex items-center justify-center bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+                <Icon path={ICONS.shieldCheck} className="w-7 h-7" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Microsoft Store</h3>
+            <p className="mt-1 font-semibold text-gray-700 dark:text-gray-200">Windows 10 &amp; 11</p>
+            <p className="mt-2 min-h-[2.5rem] text-sm text-gray-500 dark:text-gray-400">
+                Microsoft-verified installation with updates managed by Windows.
+            </p>
+            <div className="client-store-badge mt-auto flex min-h-[44px] items-center justify-center pt-5">
+                <ms-store-badge
+                    ref={badgeRef}
+                    productid="9pc0mzv8rwr0"
+                    productname="PlanetCreations Client"
+                    window-mode="direct"
+                />
+            </div>
+        </article>
+    );
+};
 
 const ClientInfoPage = () => {
     const [downloads, setDownloads] = useState({
@@ -78,6 +185,7 @@ const ClientInfoPage = () => {
         macIntel: null,
         linux: null,
     });
+    const [recommendedDownload, setRecommendedDownload] = useState(() => detectRecommendedDownload());
 
     useEffect(() => {
         let cancelled = false;
@@ -107,8 +215,15 @@ const ClientInfoPage = () => {
         return () => { cancelled = true; };
     }, []);
 
-    const platform = typeof navigator === 'undefined' ? '' : `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
-    const recommendedPlatform = platform.includes('mac') ? 'mac' : platform.includes('win') ? 'windows' : platform.includes('linux') ? 'linux' : null;
+    useEffect(() => {
+        if (typeof navigator === 'undefined') return undefined;
+        let cancelled = false;
+        resolveRecommendedDownload(navigator).then((recommendation) => {
+            if (!cancelled) setRecommendedDownload(recommendation);
+        });
+        return () => { cancelled = true; };
+    }, []);
+
     const scrollToSection = (sectionId) => {
         document.getElementById(sectionId)?.scrollIntoView({
             behavior: 'smooth',
@@ -198,18 +313,21 @@ const ClientInfoPage = () => {
                             {downloads.version && <span className="block mt-1 font-semibold">Latest release: {downloads.version}</span>}
                         </p>
                     </div>
-                    <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
+                    <p className="mb-6 text-center text-sm text-gray-600 dark:text-gray-300">
+                        The direct and Microsoft Store versions contain the same PlanetCreations features and use the same account and local data.
+                    </p>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                         <DownloadCard
-                            title="Windows"
-                            subtitle="Windows 10 & 11"
-                            detail="Standard setup installer (.exe) with automatic updates."
+                            title="Direct download"
+                            subtitle="Windows 10 & 11 (.exe)"
+                            detail="Available directly from GitHub with the built-in updater."
                             icon={ICONS.desktop}
                             accent="bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
                             href={downloads.windows}
                             loading={downloads.loading}
-                            recommended={recommendedPlatform === 'windows'}
-                            note="Currently unsigned: Windows SmartScreen may show a warning before the first installation."
+                            info="Direct releases are normally available as soon as they are published on GitHub and update through the client. Because the installer is currently unsigned, Windows SmartScreen may show an unknown-publisher warning during installation."
                         />
+                        <MicrosoftStoreCard recommended={recommendedDownload === 'windows'} />
                         <DownloadCard
                             title="macOS"
                             subtitle="Apple Silicon"
@@ -218,7 +336,7 @@ const ClientInfoPage = () => {
                             accent="bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
                             href={downloads.macArm64}
                             loading={downloads.loading}
-                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch."
+                            recommended={recommendedDownload === 'macArm64'}
                         />
                         <DownloadCard
                             title="macOS"
@@ -228,7 +346,7 @@ const ClientInfoPage = () => {
                             accent="bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
                             href={downloads.macIntel}
                             loading={downloads.loading}
-                            note="Currently unsigned: macOS may require removing the quarantine attribute before first launch."
+                            recommended={recommendedDownload === 'macIntel'}
                         />
                         <DownloadCard
                             title="Linux"
@@ -238,7 +356,7 @@ const ClientInfoPage = () => {
                             accent="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
                             href={downloads.linux}
                             loading={downloads.loading}
-                            recommended={recommendedPlatform === 'linux'}
+                            recommended={recommendedDownload === 'linux'}
                         />
                     </div>
                     {!downloads.loading && !downloads.windows && !downloads.macArm64 && !downloads.macIntel && !downloads.linux && (
