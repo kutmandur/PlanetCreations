@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
 import { collection, query, onSnapshot, doc, writeBatch, getDocs, where, updateDoc, getDoc, increment } from 'firebase/firestore';
@@ -8,21 +8,57 @@ import Spinner from '../ui/Spinner';
 import BlacklistManager from '../management/BlacklistManager';
 import TagManager from '../management/TagManager';
 import CollaborationManager from '../management/CollaborationManager';
+import PillTabs from '../ui/PillTabs';
+
+const MODERATION_TABS = ['Reports', 'Collaborations', 'Content Settings'];
+const REPORT_TABS = ['Creations', 'Users', 'Content'];
+const CONTENT_SETTINGS_TABS = ['Blacklist', 'Tag Library'];
+
+const MODERATION_ROUTE_TARGETS = Object.freeze({
+    reports: { tab: 'Reports', section: 'Creations' },
+    'reported-creations': { tab: 'Reports', section: 'Creations' },
+    'reported-users': { tab: 'Reports', section: 'Users' },
+    'reported-content': { tab: 'Reports', section: 'Content' },
+    collaborations: { tab: 'Collaborations' },
+    'content-settings': { tab: 'Content Settings', section: 'Blacklist' },
+    blacklist: { tab: 'Content Settings', section: 'Blacklist' },
+    'tag-library': { tab: 'Content Settings', section: 'Tag Library' },
+});
+
+const MODERATION_SECTION_TARGETS = Object.freeze({
+    Reports: {
+        creations: 'Creations',
+        users: 'Users',
+        content: 'Content',
+    },
+    'Content Settings': {
+        blacklist: 'Blacklist',
+        tags: 'Tag Library',
+        'tag-library': 'Tag Library',
+    },
+});
 
 const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPasswordConfirm, setConfirmation, blacklist }) => {
-    const TABS = useRef(['Reported Creations', 'Reported Users', 'Reported Content', 'Collaborations', 'Blacklist', 'Tag Library']).current;
+    const TABS = MODERATION_TABS;
     const [activeTab, setActiveTab] = useState(TABS[0]);
-    const tabRefs = useRef([]);
-    const gliderRef = useRef(null);
+    const [reportSubTab, setReportSubTab] = useState('Creations');
+    const [contentSettingsSubTab, setContentSettingsSubTab] = useState('Blacklist');
     const location = useLocation();
 
-    // Deep-link support (e.g. from a notification): /moderation?tab=reported-users
+    // Consolidated navigation plus backwards-compatible links to the old tabs.
     useEffect(() => {
-        const tabSlug = new URLSearchParams(location.search).get('tab');
+        const params = new URLSearchParams(location.search);
+        const tabSlug = params.get('tab');
         if (!tabSlug) return;
-        const match = TABS.find(t => t.toLowerCase().replace(/\s+/g, '-') === tabSlug);
-        if (match) setActiveTab(match);
-    }, [location.search, TABS]);
+        const target = MODERATION_ROUTE_TARGETS[tabSlug];
+        if (!target) return;
+
+        setActiveTab(target.tab);
+        const requestedSection = MODERATION_SECTION_TARGETS[target.tab]?.[params.get('section')];
+        const section = requestedSection || target.section;
+        if (target.tab === 'Reports' && section) setReportSubTab(section);
+        if (target.tab === 'Content Settings' && section) setContentSettingsSubTab(section);
+    }, [location.search]);
     
     const [reports, setReports] = useState([]);
     const [loadingReports, setLoadingReports] = useState(true);
@@ -30,17 +66,17 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     const [tags, setTags] = useState([]);
     const [loadingTags, setLoadingTags] = useState(true);
 
+    const countReports = predicate => reports.reduce((total, reportGroup) => (
+        predicate(reportGroup) ? total + (reportGroup.reports?.length || 0) : total
+    ), 0);
+    const reportCounts = {
+        Creations: countReports(report => report.type === 'creation'),
+        Users: countReports(report => report.type === 'user'),
+        Content: countReports(report => !['creation', 'user'].includes(report.type)),
+    };
+    const totalReportCount = reportCounts.Creations + reportCounts.Users + reportCounts.Content;
+
     useEffect(() => {
-        const activeTabIndex = TABS.findIndex(tab => tab === activeTab);
-        const activeTabNode = tabRefs.current[activeTabIndex];
-        if (activeTabNode && gliderRef.current) {
-            gliderRef.current.style.left = `${activeTabNode.offsetLeft}px`;
-            gliderRef.current.style.width = `${activeTabNode.offsetWidth}px`;
-        }
-    }, [activeTab, TABS]);
-    
-    useEffect(() => {
-        if (!activeTab.startsWith('Reported')) return;
         let isMounted = true;
         setLoadingReports(true);
         const q = query(collection(db, 'reports'));
@@ -67,10 +103,10 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
             }
         });
         return () => { isMounted = false; unsubscribe(); };
-    }, [activeTab, setModalMessage]);
+    }, [setModalMessage]);
     
     useEffect(() => {
-        if (activeTab !== 'Tag Library') return;
+        if (activeTab !== 'Content Settings' || contentSettingsSubTab !== 'Tag Library') return;
         let isMounted = true;
         setLoadingTags(true);
         const tagsQuery = query(collection(db, 'tags'));
@@ -88,7 +124,7 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
             }
         });
         return () => { isMounted = false; unsubscribe(); };
-    }, [activeTab, setModalMessage]);
+    }, [activeTab, contentSettingsSubTab, setModalMessage]);
     
     const handleAction = async (action, targetId, targetType) => {
         const clearReportsAndMarkers = async (batch) => {
@@ -185,14 +221,15 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     };
 
     const renderContent = () => {
-        if (activeTab.startsWith('Reported')) {
+        if (activeTab === 'Reports') {
             if (loadingReports) return <Spinner />;
-            const filterType = activeTab === 'Reported Creations' ? 'creation' :
-                (activeTab === 'Reported Users' ? 'user' : 'content');
+            const filterType = reportSubTab === 'Creations' ? 'creation' :
+                (reportSubTab === 'Users' ? 'user' : 'content');
             const filteredReports = reports.filter(item => filterType === 'content' ?
                 !['creation', 'user'].includes(item.type) : item.type === filterType);
             if (filteredReports.length === 0) {
-                return <p className="text-center text-gray-500 mt-10">No reported {filterType}s found.</p>;
+                const emptyLabel = reportSubTab === 'Content' ? 'content' : reportSubTab.toLowerCase();
+                return <p className="text-center text-gray-500 mt-10">No reported {emptyLabel} found.</p>;
             }
             return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -207,11 +244,10 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
             return <CollaborationManager setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;
         }
 
-        if (activeTab === 'Blacklist') {
-            return <BlacklistManager blacklist={blacklist} setModalMessage={setModalMessage} />;
-        }
-
-        if (activeTab === 'Tag Library') {
+        if (activeTab === 'Content Settings') {
+            if (contentSettingsSubTab === 'Blacklist') {
+                return <BlacklistManager blacklist={blacklist} setModalMessage={setModalMessage} />;
+            }
             if (loadingTags) return <Spinner />;
             return <TagManager tags={tags} setModalMessage={setModalMessage} />;
         }
@@ -222,22 +258,35 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     return (
         <div className="container mx-auto p-4 sm:p-8">
             <h1 className="text-3xl font-bold mb-6 text-gray-800">Moderation Panel</h1>
-            <div className="relative flex justify-center my-6">
-                <div className="relative flex items-center bg-gray-200 rounded-full p-1 shadow-inner overflow-x-auto">
-                    <div ref={gliderRef} className="absolute h-full bg-yellow-500 rounded-full transition-all duration-300 ease-in-out" />
-                    {TABS.map((tab, index) => (
-                        <button
-                            key={tab}
-                            ref={el => tabRefs.current[index] = el}
-                            onClick={() => setActiveTab(tab)}
-                            className={`relative z-10 py-2 px-4 sm:px-6 rounded-full transition-colors duration-300 text-sm sm:text-base font-medium whitespace-nowrap ${ activeTab === tab ? 'text-white' : 'text-gray-600 hover:text-black'}`}
-                        >
-                            {tab}
-                        </button>
-                    ))}
-                </div>
-            </div>
+            <PillTabs
+                tabs={TABS}
+                value={activeTab}
+                onChange={setActiveTab}
+                counts={{ Reports: totalReportCount }}
+                accentClass="bg-yellow-500"
+                ariaLabel="Moderation sections"
+                className="my-6"
+            />
             <div className="py-6">
+                {activeTab === 'Reports' && (
+                    <PillTabs
+                        tabs={REPORT_TABS}
+                        value={reportSubTab}
+                        onChange={setReportSubTab}
+                        counts={reportCounts}
+                        ariaLabel="Report categories"
+                        className="mb-8"
+                    />
+                )}
+                {activeTab === 'Content Settings' && (
+                    <PillTabs
+                        tabs={CONTENT_SETTINGS_TABS}
+                        value={contentSettingsSubTab}
+                        onChange={setContentSettingsSubTab}
+                        ariaLabel="Content settings sections"
+                        className="mb-8"
+                    />
+                )}
                 {renderContent()}
             </div>
         </div>

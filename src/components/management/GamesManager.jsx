@@ -15,7 +15,13 @@ const EMPTY_FORM = {
     shareCodeLabel: 'Share Code', console: false, modsSupported: false, extensions: '', enabled: true,
 };
 
-const GamesManager = ({ setModalMessage }) => {
+const GamesManager = ({
+    setModalMessage,
+    selectedGameId,
+    onSelectedGameChange,
+    addGameOpen = false,
+    onAddGameOpenChange,
+}) => {
     const games = useGames({ includeDisabled: true });
     const [counts, setCounts] = useState({});
     const [loadingCounts, setLoadingCounts] = useState(true);
@@ -61,7 +67,19 @@ const GamesManager = ({ setModalMessage }) => {
         }
     }, [setModalMessage]);
 
-    const openAdd = () => { setEditingId(null); setForm({ ...EMPTY_FORM }); };
+    useEffect(() => {
+        if (!addGameOpen) return;
+        setEditingId(null);
+        setForm({ ...EMPTY_FORM });
+    }, [addGameOpen]);
+
+    const closeForm = () => {
+        const wasAdding = !editingId;
+        setForm(null);
+        setEditingId(null);
+        if (wasAdding) onAddGameOpenChange?.(false);
+    };
+
     const openEdit = (g) => {
         setEditingId(g.id);
         setForm({
@@ -117,23 +135,13 @@ const GamesManager = ({ setModalMessage }) => {
                     setModalMessage(`Game saved, but seeding categories/dlcs failed: ${e.message}`);
                 }
             }
-            setForm(null);
-            setEditingId(null);
+            closeForm();
         }
     };
 
     const handleToggleEnabled = async (g) => {
         const nextGames = games.map((x) => (x.id === g.id ? { ...x, enabled: x.enabled === false } : x));
         await persist(nextGames);
-    };
-
-    const handleMove = async (g, dir) => {
-        const sorted = [...games];
-        const idx = sorted.findIndex((x) => x.id === g.id);
-        const swap = idx + dir;
-        if (swap < 0 || swap >= sorted.length) return;
-        [sorted[idx], sorted[swap]] = [sorted[swap], sorted[idx]];
-        await persist(sorted.map((x, i) => ({ ...x, order: i })));
     };
 
     const handleRemove = async (g) => {
@@ -153,7 +161,8 @@ const GamesManager = ({ setModalMessage }) => {
                 setModalMessage(`Game removed, but deleting categories/dlcs failed: ${e.message}`);
             }
             setConfirmRemoveId(null);
-            setModalMessage(`"${g.name}" removed. Please run "Rebuild General Index" (Indexes tab) to clean up its search index.`);
+            onSelectedGameChange?.(nextGames.find(game => game.enabled !== false)?.id || nextGames[0].id);
+            setModalMessage(`"${g.name}" removed. Please run "Rebuild General Index" under Startpage → Search Indexes to clean up its search index.`);
         }
     };
 
@@ -162,23 +171,30 @@ const GamesManager = ({ setModalMessage }) => {
     };
 
     const enabledGames = games.filter((g) => g.enabled !== false);
+    const selectedGame = games.find(game => game.id === selectedGameId) || games[0];
 
     return (
-        <div className="max-w-4xl mx-auto">
+        <div>
             <div className="bg-white p-6 rounded-lg shadow-md">
-                <div className="flex justify-between items-center mb-2">
-                    <h2 className="text-2xl font-bold">Games</h2>
-                    <button onClick={openAdd} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">+ Add Game</button>
+                <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h2 className="text-2xl font-bold text-gray-800">Game Settings</h2>
+                        <p className="mt-1 text-sm text-gray-600">
+                            Runtime configuration for the selected game across the website and uploads.
+                        </p>
+                    </div>
+                    {selectedGame && (
+                        <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-sm font-semibold text-gray-700">
+                            <span className="h-3 w-3 rounded-full" style={{ backgroundColor: selectedGame.color }} />
+                            {selectedGame.name}
+                        </div>
+                    )}
                 </div>
-                <p className="text-gray-600 text-sm mb-4">
-                    Games are runtime configuration: tabs, colors, platform/mod options and
-                    upload file types follow this list everywhere. Disabling hides a game
-                    without touching data; removing is only possible while it has no creations.
-                </p>
 
-                <div className="flex items-center gap-3 mb-6">
-                    <span className="text-sm font-semibold text-gray-700">Default game (new users, fallbacks):</span>
+                <div className="mb-5 flex flex-wrap items-center gap-3 border-b border-gray-200 pb-5">
+                    <label htmlFor="default-game" className="text-sm font-semibold text-gray-700">Default game (new users, fallbacks):</label>
                     <select
+                        id="default-game"
                         value={getDefaultGameId()}
                         onChange={(e) => handleDefaultChange(e.target.value)}
                         disabled={saving}
@@ -188,74 +204,87 @@ const GamesManager = ({ setModalMessage }) => {
                     </select>
                 </div>
 
-                <div className="space-y-3">
-                    {games.map((g, idx) => (
-                        <div key={g.id} className={`border rounded-lg p-4 flex flex-wrap items-center gap-3 ${g.enabled === false ? 'opacity-50 bg-gray-50' : ''}`}>
-                            <div className="flex flex-col gap-1">
-                                <button onClick={() => handleMove(g, -1)} disabled={saving || idx === 0} className="text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▲</button>
-                                <button onClick={() => handleMove(g, 1)} disabled={saving || idx === games.length - 1} className="text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▼</button>
+                {selectedGame ? (
+                    <div>
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">ID / short name</p>
+                                <p className="mt-1 font-mono text-sm text-gray-700">{selectedGame.id}</p>
+                                <p className="text-sm text-gray-500">{selectedGame.shortName || '—'}</p>
                             </div>
-                            <span className="w-6 h-6 rounded-full border flex-shrink-0" style={{ backgroundColor: g.color }} title={g.color}></span>
-                            <div className="flex-grow min-w-[180px]">
-                                <div className="font-bold text-gray-800">{g.name} <span className="text-xs font-mono text-gray-400">({g.id})</span></div>
-                                <div className="text-xs text-gray-500">
-                                    {g.shortName || '—'} · {g.platforms?.includes('console') ? 'PC + Console' : 'PC'} · Mods: {g.modsSupported ? 'yes' : 'no'} · Files: {(g.fileExtensions || []).join(' ') || '—'}
-                                </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Platforms / mods</p>
+                                <p className="mt-1 text-sm font-medium text-gray-700">{selectedGame.platforms?.includes('console') ? 'PC + Console' : 'PC'}</p>
+                                <p className="text-sm text-gray-500">Mods: {selectedGame.modsSupported ? 'supported' : 'not supported'}</p>
                             </div>
-                            <span className="text-sm text-gray-600 whitespace-nowrap">
-                                {loadingCounts ? '…' : `${counts[g.id] ?? 0} creations`}
-                            </span>
-                            <button onClick={() => handleToggleEnabled(g)} disabled={saving} className={`text-sm font-semibold py-1 px-3 rounded-lg ${g.enabled === false ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'}`}>
-                                {g.enabled === false ? 'Enable' : 'Disable'}
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Upload files</p>
+                                <p className="mt-1 break-words font-mono text-sm text-gray-700">{(selectedGame.fileExtensions || []).join(', ') || '—'}</p>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Status</p>
+                                <p className={`mt-1 text-sm font-semibold ${selectedGame.enabled === false ? 'text-orange-600' : 'text-green-600'}`}>
+                                    {selectedGame.enabled === false ? 'Disabled' : 'Enabled'}
+                                </p>
+                                <p className="text-sm text-gray-500">{loadingCounts ? 'Loading creations…' : `${counts[selectedGame.id] ?? 0} creations`}</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-5">
+                            <div className="flex-grow" />
+                            <button onClick={() => handleToggleEnabled(selectedGame)} disabled={saving} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedGame.enabled === false ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'}`}>
+                                {selectedGame.enabled === false ? 'Enable' : 'Disable'}
                             </button>
-                            <button onClick={() => openEdit(g)} disabled={saving} className="text-sm font-semibold py-1 px-3 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800">Edit</button>
-                            {confirmRemoveId === g.id ? (
-                                <button onClick={() => handleRemove(g)} disabled={saving} className="text-sm font-bold py-1 px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white">Really remove?</button>
+                            <button onClick={() => openEdit(selectedGame)} disabled={saving} className="rounded-lg bg-gray-200 px-3 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-300">Edit settings</button>
+                            {confirmRemoveId === selectedGame.id ? (
+                                <button onClick={() => handleRemove(selectedGame)} disabled={saving} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700">Really remove?</button>
                             ) : (
                                 <button
-                                    onClick={() => setConfirmRemoveId(g.id)}
-                                    disabled={saving || loadingCounts || (counts[g.id] || 0) > 0}
-                                    title={(counts[g.id] || 0) > 0 ? 'This game has creations — disable it instead.' : 'Remove permanently'}
-                                    className="text-sm font-semibold py-1 px-3 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    onClick={() => setConfirmRemoveId(selectedGame.id)}
+                                    disabled={saving || loadingCounts || (counts[selectedGame.id] || 0) > 0}
+                                    title={(counts[selectedGame.id] || 0) > 0 ? 'This game has creations — disable it instead.' : 'Remove permanently'}
+                                    className="rounded-lg bg-red-100 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                     Remove
                                 </button>
                             )}
                         </div>
-                    ))}
-                </div>
+                    </div>
+                ) : (
+                    <p className="py-8 text-center text-gray-500">No games configured.</p>
+                )}
             </div>
 
             {form && (
-                <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4" onClick={() => setForm(null)}>
-                    <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeForm}>
+                    <div className="max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-xl font-bold">{editingId ? `Edit ${form.name || editingId}` : 'Add Game'}</h3>
                         {!editingId && (
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Id (slug, permanent)</label>
-                                <input type="text" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="planet-zoo-2" className="w-full p-2 border rounded-lg font-mono" />
+                                <label htmlFor="game-id" className="block text-sm font-semibold text-gray-700 mb-1">Id (slug, permanent)</label>
+                                <input id="game-id" type="text" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="planet-zoo-2" className="w-full p-2 border rounded-lg font-mono" />
                             </div>
                         )}
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Name</label>
-                            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Planet Zoo 2" className="w-full p-2 border rounded-lg" />
+                            <label htmlFor="game-name" className="block text-sm font-semibold text-gray-700 mb-1">Name</label>
+                            <input id="game-name" type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Planet Zoo 2" className="w-full p-2 border rounded-lg" />
                         </div>
                         <div className="flex gap-3">
                             <div className="flex-1">
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Short name (pill)</label>
-                                <input type="text" value={form.shortName} onChange={(e) => setForm({ ...form, shortName: e.target.value })} placeholder="PZ2" className="w-full p-2 border rounded-lg" />
+                                <label htmlFor="game-short-name" className="block text-sm font-semibold text-gray-700 mb-1">Short name (pill)</label>
+                                <input id="game-short-name" type="text" value={form.shortName} onChange={(e) => setForm({ ...form, shortName: e.target.value })} placeholder="PZ2" className="w-full p-2 border rounded-lg" />
                             </div>
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Color</label>
+                                <label htmlFor="game-color" className="block text-sm font-semibold text-gray-700 mb-1">Color</label>
                                 <div className="flex items-center gap-2">
-                                    <input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-10 h-10 p-0 border rounded cursor-pointer" />
-                                    <input type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-24 p-2 border rounded-lg font-mono" />
+                                    <input id="game-color" type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-10 h-10 p-0 border rounded cursor-pointer" />
+                                    <input aria-label="Color hex value" type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-24 p-2 border rounded-lg font-mono" />
                                 </div>
                             </div>
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Sharecode field name</label>
-                            <input type="text" value={form.shareCodeLabel} onChange={(e) => setForm({ ...form, shareCodeLabel: e.target.value })} placeholder="Steam Sharecode" className="w-full p-2 border rounded-lg" />
+                            <label htmlFor="game-sharecode-label" className="block text-sm font-semibold text-gray-700 mb-1">Sharecode field name</label>
+                            <input id="game-sharecode-label" type="text" value={form.shareCodeLabel} onChange={(e) => setForm({ ...form, shareCodeLabel: e.target.value })} placeholder="Steam Sharecode" className="w-full p-2 border rounded-lg" />
                             <p className="text-xs text-gray-500 mt-1">Shown when users create or edit a creation for this game.</p>
                         </div>
                         <div className="flex gap-6">
@@ -264,15 +293,15 @@ const GamesManager = ({ setModalMessage }) => {
                             <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} className="h-4 w-4 rounded" /> Enabled</label>
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">File extensions (comma-separated, for backup uploads)</label>
-                            <input type="text" value={form.extensions} onChange={(e) => setForm({ ...form, extensions: e.target.value })} placeholder=".zoo2, .pz2blueprint" className="w-full p-2 border rounded-lg font-mono" />
+                            <label htmlFor="game-file-extensions" className="block text-sm font-semibold text-gray-700 mb-1">File extensions (comma-separated, for backup uploads)</label>
+                            <input id="game-file-extensions" type="text" value={form.extensions} onChange={(e) => setForm({ ...form, extensions: e.target.value })} placeholder=".zoo2, .pz2blueprint" className="w-full p-2 border rounded-lg font-mono" />
                             <p className="text-xs text-gray-500 mt-1">Desktop client support for NEW file types requires a client update — the website works immediately.</p>
                         </div>
                         <div className="flex gap-3 pt-2">
                             <button onClick={handleFormSave} disabled={saving} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
                                 {saving ? <Spinner size="small" /> : 'Save'}
                             </button>
-                            <button onClick={() => setForm(null)} disabled={saving} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">Cancel</button>
+                            <button onClick={closeForm} disabled={saving} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">Cancel</button>
                         </div>
                     </div>
                 </div>
