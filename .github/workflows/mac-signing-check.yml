@@ -74,7 +74,17 @@ jobs:
           echo "APPLE_API_ISSUER=$SECRET_APPLE_API_ISSUER" >> "$GITHUB_ENV"
 
       - name: Build signed and notarized macOS artifacts
-        run: npm run build:electron && npx electron-builder --mac --publish never --config.mac.forceCodeSigning=true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if node -e "process.exit(require('./package.json').scripts?.['build:electron'] ? 0 : 1)"; then
+            npm run build:electron
+          else
+            npm run build
+          fi
+
+          npx electron-builder --mac --publish never --config.mac.forceCodeSigning=true
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
