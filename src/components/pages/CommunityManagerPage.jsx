@@ -26,6 +26,7 @@ import {
     ALL_COMMUNITY_PERMISSIONS,
     getEffectiveCommunityPermissions,
 } from '../../utils/communityPermissions';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirmation, blacklist, userProfile, setPopoverView }) => {
     const { id: communityId } = useParams();
@@ -286,7 +287,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
             <div className="relative text-center mb-8">
                 <div className="flex flex-wrap justify-between items-start gap-2 mb-4 lg:mb-0 lg:absolute lg:inset-x-0 lg:top-0 lg:pointer-events-none">
                     <button
-                        onClick={() => navigate(`/community/${community.slug}`)}
+                        onClick={() => navigate(buildCommunityPath(community.slug))}
                         className="flex items-center justify-center community-bg hover:brightness-90 text-white font-semibold py-2 px-4 rounded-lg transition-all lg:pointer-events-auto"
                     >
                         <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2" />

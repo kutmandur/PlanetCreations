@@ -14,11 +14,11 @@ function prefAllows(prefs, type, channel) {
     return p[channel] !== false;
 }
 
-// Push opens the SPA via its hash route, so a react-router path like
-// "/creation/123" must become "/#/creation/123" for the service worker.
-function toHashLink(link) {
+// Push opens the hosted SPA through its native browser route. The packaged
+// file:// fallback does not register web-push notifications.
+function toPublicLink(link) {
     if (!link) return "/";
-    return link.startsWith("/") ? `/#${link}` : link;
+    return link.startsWith("/") && !link.startsWith("//") ? link : "/";
 }
 
 async function sendPush(uid, tokens, { title, body, link, type }) {
@@ -32,7 +32,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
             data: {
                 title: title || "PlanetCreations",
                 body: body || "",
-                link: toHashLink(link),
+                link: toPublicLink(link),
                 tag: type || "",
             },
         });

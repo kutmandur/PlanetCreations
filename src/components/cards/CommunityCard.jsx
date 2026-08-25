@@ -7,6 +7,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchCommunityBySlug } from '../../firebase/communitiesService';
 import { preloadComponent } from '../../utils/preload';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 // Hilfsfunktion außerhalb der Komponente (kein Re-Create bei jedem Render)
 const hexToRgba = (hex, alpha = 0.1) => {
@@ -99,7 +100,7 @@ const CommunityCard = memo(({ community, selectable = false, selected = false, o
     }
 
     return (
-        <Link to={`/community/${community.slug}`} onMouseEnter={handlePrefetch} onTouchStart={handlePrefetch}>
+        <Link to={buildCommunityPath(community.slug)} onMouseEnter={handlePrefetch} onTouchStart={handlePrefetch}>
             {card}
         </Link>
     );

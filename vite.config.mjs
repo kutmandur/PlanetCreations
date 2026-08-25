@@ -2,8 +2,11 @@ import {defineConfig} from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-export default defineConfig({
-    base: './',
+export default defineConfig(({mode}) => ({
+    // Native web routes need root-relative assets on deep-link reloads. The
+    // packaged Electron fallback is loaded through file:// and therefore keeps
+    // a separate relative-asset build.
+    base: mode === 'electron' ? './' : '/',
     plugins: [
         react(),
         tailwindcss(),
@@ -41,4 +44,4 @@ export default defineConfig({
             './src/setupTests.js',
         ],
     },
-});
+}));

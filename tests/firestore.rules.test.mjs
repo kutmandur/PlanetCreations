@@ -576,13 +576,20 @@ describe("community partner-status Firestore rules", { concurrency: false }, () 
 
     await assertFails(setDoc(doc(moderatorDb, "communitys", "forged-partner"), {
       name: "Forged Partner Community",
+      slug: "forged-partner-community",
       ownerId: MODERATOR_ID,
       isPartner: true,
     }));
     await assertSucceeds(setDoc(doc(adminDb, "communitys", "admin-partner"), {
       name: "Admin Partner Community",
+      slug: "admin-partner-community",
       ownerId: ADMIN_ID,
       isPartner: true,
+    }));
+    await assertFails(setDoc(doc(adminDb, "communitys", "reserved-path"), {
+      name: "Reserved Path Community",
+      slug: "creation",
+      ownerId: ADMIN_ID,
     }));
   });
 });

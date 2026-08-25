@@ -1,3 +1,10 @@
+import {
+  getCommunitySlugError,
+  slugifyCommunityName,
+} from './communityRoutes';
+
+export { slugifyCommunityName };
+
 const COMMUNITY_SOCIAL_FIELDS = [
   { id: 'youtube', label: 'YouTube Channel' },
   { id: 'discord', label: 'Discord Invite' },
@@ -41,15 +48,6 @@ export const COMMUNITY_JOIN_MODES = [
     description: 'Only people with a current invitation can join.',
   },
 ];
-
-export const slugifyCommunityName = (value = '') => String(value)
-  .toLowerCase()
-  .trim()
-  .replace(/\s+/g, '-')
-  .replace(/[^\w-]+/g, '')
-  .replace(/--+/g, '-')
-  .replace(/^-+/, '')
-  .replace(/-+$/, '');
 
 export const isOptionalHttpUrl = (value, httpsOnly = false) => {
   const trimmed = String(value || '').trim();
@@ -134,9 +132,8 @@ export const getCommunityWizardStepError = (
       if (name.length < 3 || name.length > 100) {
         return 'Community name must be between 3 and 100 characters.';
       }
-      if (!slugifyCommunityName(name)) {
-        return 'Choose a community name that can be used in a URL.';
-      }
+      const slugError = getCommunitySlugError(slugifyCommunityName(name));
+      if (slugError) return slugError;
       if (!description || description.length > 2000) {
         return 'Description is required and can contain up to 2,000 characters.';
       }

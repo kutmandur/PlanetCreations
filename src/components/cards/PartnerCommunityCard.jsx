@@ -10,6 +10,7 @@ import { getEnabledGameIds, getGame } from '../../utils/gamesRegistry';
 import { preloadComponent } from '../../utils/preload';
 import Icon from '../ui/Icon';
 import OfficialPartnerBadge from '../community/OfficialPartnerBadge';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const hexToRgba = (hex, alpha = 0.08) => {
     if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return `rgba(107, 114, 128, ${alpha})`;
@@ -106,7 +107,7 @@ const PartnerCommunityCard = memo(({ community }) => {
 
     const handleCardClick = useCallback(event => {
         if (event.target.closest('a, button, input, select, textarea, [role="button"]')) return;
-        navigate(`/community/${community.slug}`);
+        navigate(buildCommunityPath(community.slug));
     }, [community.slug, navigate]);
 
     return (
@@ -118,7 +119,7 @@ const PartnerCommunityCard = memo(({ community }) => {
             onTouchStart={handlePrefetch}
         >
             <Link
-                to={`/community/${community.slug}`}
+                to={buildCommunityPath(community.slug)}
                 aria-label={`Open ${community.name} banner`}
                 className="relative block h-44 overflow-hidden focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-yellow-400 sm:h-48"
             >
@@ -142,7 +143,7 @@ const PartnerCommunityCard = memo(({ community }) => {
                     Official Partner
                 </p>
                 <Link
-                    to={`/community/${community.slug}`}
+                    to={buildCommunityPath(community.slug)}
                     className="rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400"
                 >
                     <h2 className="text-2xl font-bold leading-tight text-gray-900 dark:text-white sm:text-3xl">
@@ -191,7 +192,7 @@ const PartnerCommunityCard = memo(({ community }) => {
                 )}
 
                 <Link
-                    to={`/community/${community.slug}`}
+                    to={buildCommunityPath(community.slug)}
                     className="mt-5 rounded-full px-5 py-2 text-sm font-bold text-white shadow transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400"
                     style={{ backgroundColor: themeColor }}
                 >

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { db, auth } from '../../../firebase/config';
-import { doc, updateDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, collection, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { containsBlacklistedWord } from '../../../utils/helpers';
 import { SectionCard, Field, SaveBar, inputClass, slugify } from './ui';
 import { scheduleDataRefresh } from '../../../utils/appRefresh';
+import { getCommunitySlugError } from '../../../utils/communityRoutes';
 
 // General identity: name (admin-only, password-gated) and description.
 const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, setPasswordConfirm }) => {
@@ -50,6 +51,13 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
           const batch = writeBatch(db);
           const newName = name.trim();
           const newSlug = slugify(newName);
+          const duplicateSlugSnapshot = await getDocs(query(
+            collection(db, 'communitys'),
+            where('slug', '==', newSlug)
+          ));
+          if (duplicateSlugSnapshot.docs.some(result => result.id !== community.id)) {
+            throw new Error('A community with this URL already exists.');
+          }
           batch.update(doc(db, 'communitys', community.id), {
             name: newName,
             slug: newSlug,
@@ -87,6 +95,11 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
       return;
     }
     const nameChanged = isAdmin && name.trim() !== community.name;
+    if ((nameChanged || !community.slug) &&
+        getCommunitySlugError(slugify(name.trim()))) {
+      setModalMessage(getCommunitySlugError(slugify(name.trim())));
+      return;
+    }
     if (nameChanged) saveWithNameChange();
     else saveDirect();
   };

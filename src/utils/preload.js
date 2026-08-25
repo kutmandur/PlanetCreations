@@ -128,6 +128,8 @@ export function preloadRoute(path) {
         preloadComponent('EventDetailPage');
     } else if (path.startsWith('/manager/')) {
         preloadComponent('CommunityManagerPage');
+    } else if (/^\/[^/]+$/.test(path)) {
+        preloadComponent('CommunityDetailPage');
     }
 }
 

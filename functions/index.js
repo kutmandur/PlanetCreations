@@ -64,6 +64,10 @@ const {
     extractFrontierData,
 } = require("./frontierMetadata");
 const {buildRideAnalysisObject} = require("./rideAnalysis");
+const {
+    buildCreationSharePreviewHtml,
+    safeCreationId,
+} = require("./creationSharePreview");
 const {normalizeFrontierDlcCatalog} = require("./frontierDlcResolver");
 const {
     getEffectiveCommunityPermissionKeys,
@@ -382,6 +386,26 @@ app.get("/getPublicKey", (req, res) => {
     if (!publicKey) return res.status(500).send("Signing key is not configured.");
     res.set("Cache-Control", "public, max-age=3600");
     return res.type("text/plain").send(publicKey);
+});
+
+app.get("/creation-share/:creationId", async (req, res) => {
+    const creationId = safeCreationId(req.params.creationId);
+    if (!creationId) return res.status(400).type("text/plain").send("Invalid creation ID.");
+    try {
+        const creationSnap = await db.doc(`creations/${creationId}`).get();
+        if (!creationSnap.exists) {
+            return res.status(404).type("text/plain").send("Creation not found.");
+        }
+        const html = buildCreationSharePreviewHtml({
+            creationId,
+            creation: creationSnap.data(),
+        });
+        res.set("Cache-Control", "public, max-age=300, s-maxage=300");
+        return res.status(200).type("html").send(html);
+    } catch (error) {
+        console.error("Creation share preview failed:", error);
+        return res.status(500).type("text/plain").send("Creation preview unavailable.");
+    }
 });
 
 // The old endpoint accepted a caller-controlled uid and must never be used again.
@@ -2787,7 +2811,7 @@ exports.decideJoinRequest = onCall(async (data, context) => {
         message: decision === 'approve'
             ? `You are now a member of ${communityName}.`
             : `Your request to join ${communityName} was declined.`,
-        link: `/community/${communityData.slug || ''}`,
+        link: communityData.slug ? `/${communityData.slug}` : "/communitys",
     });
     return { ok: true };
 });
@@ -8114,7 +8138,7 @@ exports.notifyOnCommunityRoleChange = documentUpdated(
         await notifyUser(userId, 'communityRole', {
             title: `Your role changed in ${comData.name || 'a community'}`,
             message: `You are now: ${roleList}.`,
-            link: `/community/${comData.slug || communityId}`,
+            link: `/${comData.slug || communityId}`,
         });
         return null;
     });

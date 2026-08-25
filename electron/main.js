@@ -23,6 +23,12 @@ const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFind
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
 const {
+    buildBundledAppRouteUrl,
+    buildHostedAppRouteUrl,
+    getAppRoutePath,
+    normalizeAppRoute,
+} = require('./modules/AppRouteUrl');
+const {
     PRODUCTION_WEB_ORIGIN,
     isProductionWebOrigin,
 } = require('./modules/WebAppOrigin');
@@ -255,9 +261,9 @@ function clearHostedNavigationState(browserWindow) {
     }
 }
 
-function loadBundledApp(browserWindow, hashRoute = '/client/dashboard') {
+function loadBundledApp(browserWindow, route = '/client/dashboard') {
     clearHostedNavigationState(browserWindow);
-    return browserWindow.loadURL(`${getBundledAppUrl()}#${hashRoute}`);
+    return browserWindow.loadURL(buildBundledAppRouteUrl(getBundledAppUrl(), route));
 }
 
 function queueLocalBackupImport(filePath) {
@@ -267,8 +273,8 @@ function queueLocalBackupImport(filePath) {
     pendingBackupImportPath = resolvedPath;
     showMainWindow();
     const currentUrl = mainWindow.webContents.getURL();
-    const isOfflineManagerOpen = currentUrl.includes('#/client/dashboard') &&
-        (currentUrl.startsWith(getBundledAppUrl()) || isHostedAppUrl(currentUrl));
+    const isOfflineManagerOpen = getAppRoutePath(currentUrl) === '/client/dashboard' &&
+        isAllowedAppUrl(currentUrl);
     if (!isOfflineManagerOpen) {
         loadOfflineManager(mainWindow, '/client/dashboard')
             .catch(error => log.error('Could not open the Offline Manager for package import:', error));
@@ -281,15 +287,15 @@ function queueLocalBackupImport(filePath) {
 
 function loadHostedAppWithFallback(
     browserWindow,
-    hashRoute = '/',
+    route = '/',
     {
         requireOverlayCapability = false,
         requireOfflineManagerCapability = false,
         allowBundledFallback = false,
     } = {},
 ) {
-    const hostedUrl = `${getHostedAppUrl()}#${hashRoute}`;
-    const fallbackUrl = `${getBundledAppUrl()}#${hashRoute}`;
+    const hostedUrl = buildHostedAppRouteUrl(getHostedAppUrl(), route);
+    const fallbackUrl = buildBundledAppRouteUrl(getBundledAppUrl(), route);
     let usingFallback = false;
     let hostedRetryDelayMs = 1500;
     let fallbackProbeDelayMs = 5000;
@@ -413,8 +419,8 @@ function loadHostedAppWithFallback(
     return loadPromise;
 }
 
-function loadOfflineManager(browserWindow, hashRoute = '/client/dashboard') {
-    return loadHostedAppWithFallback(browserWindow, hashRoute, {
+function loadOfflineManager(browserWindow, route = '/client/dashboard') {
+    return loadHostedAppWithFallback(browserWindow, route, {
         requireOfflineManagerCapability: true,
         allowBundledFallback: true,
     });
@@ -422,9 +428,7 @@ function loadOfflineManager(browserWindow, hashRoute = '/client/dashboard') {
 
 function openRouteInMainWindow(route = '/') {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
-    const safeRoute = typeof route === 'string' && route.startsWith('/') && !route.startsWith('//')
-        ? route.slice(0, 500)
-        : '/';
+    const safeRoute = normalizeAppRoute(route);
     if (safeRoute.startsWith('/client')) {
         loadOfflineManager(mainWindow, safeRoute)
             .catch((error) => log.error('Could not open the Offline Manager:', error));

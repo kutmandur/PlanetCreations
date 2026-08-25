@@ -169,6 +169,24 @@ service cloud.firestore {
     }
 
     // Validiert Community-Daten
+    // Keep this reserved root-path list in sync with
+    // src/utils/communityRoutes.js. Existing legacy slugs remain editable when
+    // unchanged; new and renamed communities must use a free vanity path.
+    function isValidCommunitySlug(slug) {
+      return slug is string &&
+             slug.size() >= 1 && slug.size() <= 100 &&
+             slug.matches('^[a-z0-9]+(-[a-z0-9]+)*$') &&
+             !(slug in [
+               'admin', 'api', 'assets', 'client', 'client-info',
+               'collaboration', 'community', 'community-guidelines',
+               'communitys', 'create', 'create-community', 'creation',
+               'event', 'favicon', 'firebase-messaging-sw', 'impressum',
+               'index', 'login', 'manager', 'manifest', 'moderation',
+               'privacy', 'profile', 'robots', 'settings', 'share',
+               'showcase', 'sitemap', 'terms-of-service'
+             ]);
+    }
+
     function isValidCommunityData(data) {
       return data.keys().hasAll(['name', 'ownerId']) &&
              data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
@@ -216,9 +234,14 @@ service cloud.firestore {
       allow read: if true;
       allow create: if (isInfluencer() || isModerator()) &&
         isValidCommunityData(request.resource.data) &&
+        isValidCommunitySlug(request.resource.data.get('slug', '')) &&
         (isAdmin() || !('isPartner' in request.resource.data.keys()));
       allow update: if isLoggedIn() &&
         isValidCommunityData(request.resource.data) &&
+        (
+          request.resource.data.get('slug', '') == resource.data.get('slug', '') ||
+          isValidCommunitySlug(request.resource.data.get('slug', ''))
+        ) &&
         // Der Partnerstatus ist eine plattformweite Auszeichnung und darf weder
         // von Community-Ownern noch von Community-Moderatoren verändert werden.
         (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPartner'])) &&

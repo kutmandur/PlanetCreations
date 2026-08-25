@@ -46,7 +46,7 @@ const renderCard = () => {
                             }}
                         />
                     } />
-                    <Route path="/community/:slug" element={<div>Community destination</div>} />
+                    <Route path="/:slug" element={<div>Community destination</div>} />
                 </Routes>
             </MemoryRouter>
         </QueryClientProvider>
@@ -92,7 +92,7 @@ describe('PartnerCommunityCard', () => {
         renderCard();
 
         const viewCommunityLink = screen.getByRole('link', { name: 'View community →' });
-        expect(viewCommunityLink).toHaveAttribute('href', '/community/coaster-friends');
+        expect(viewCommunityLink).toHaveAttribute('href', '/coaster-friends');
         expect(
             viewCommunityLink.compareDocumentPosition(
                 screen.getByText('Planet Coaster 2 · Main game')

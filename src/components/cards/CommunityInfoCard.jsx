@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
+import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
 
@@ -100,7 +101,7 @@ const CommunityInfoCard = ({ communityInfo, setModalMessage }) => {
                 className="w-full p-4 flex flex-col items-center text-center"
                 style={{ backgroundColor: hexToRgba(themeColor) }}
             >
-                <Link to={`/community/${communityInfo.slug}`} className="flex flex-col items-center">
+                <Link to={buildCommunityPath(communityInfo.slug)} className="flex flex-col items-center">
                     <img
                         src={communityInfo.communityProfileImageUrl || 'https://placehold.co/96x96/e2e8f0/64748b?text=C'}
                         alt={`${communityInfo.communityName} profile`}

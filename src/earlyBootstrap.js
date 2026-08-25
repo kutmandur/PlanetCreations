@@ -1,3 +1,11 @@
+import {
+  installLegacyHashRouteBridge,
+  migrateLegacyHashRoute,
+} from './utils/routingMode';
+
+migrateLegacyHashRoute();
+installLegacyHashRouteBridge();
+
 (function prepareInitialLayout() {
   try {
     if (localStorage.getItem('pcViewMode') === 'desktop') {

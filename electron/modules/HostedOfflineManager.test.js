@@ -16,7 +16,8 @@ test('both desktop channels prefer the hosted Offline Manager with a bundled fal
     assert.match(mainSource, /allowBundledFallback:\s*true/);
     assert.match(mainSource, /mode === 'offline'\) return loadOfflineManager/);
     assert.match(mainSource, /mode === 'offline'\) loadOfflineManager/);
-    assert.match(mainSource, /currentUrl\.startsWith\(getBundledAppUrl\(\)\) \|\| isHostedAppUrl\(currentUrl\)/);
+    assert.match(mainSource, /getAppRoutePath\(currentUrl\) === '\/client\/dashboard'/);
+    assert.match(mainSource, /isAllowedAppUrl\(currentUrl\)/);
 });
 
 test('the Online Workshop never falls back to the unauthenticated file origin', () => {

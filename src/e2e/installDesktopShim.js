@@ -5,7 +5,7 @@ const noopSubscription = () => () => {};
  *
  * It is unreachable in production and requires both the emulator build flag
  * and an explicit URL query parameter, for example:
- *   http://127.0.0.1:3100/?e2eDesktop=overlay#/collaboration/example
+ *   http://127.0.0.1:3100/collaboration/example?e2eDesktop=overlay
  */
 export const installDesktopE2EShim = () => {
     if (
