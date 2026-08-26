@@ -13,6 +13,11 @@ export const isHostedElectronAppCheckContext = ({
     origin = typeof window !== 'undefined' ? window.location.origin : '',
 } = {}) => Boolean(electronApi?.isElectron && HOSTED_CLIENT_ORIGINS.has(origin));
 
+export const isFirebaseAppCheckAuthError = (error) => (
+    error?.code === AUTH_APP_CHECK_INVALID ||
+    String(error?.message || '').includes(AUTH_APP_CHECK_INVALID)
+);
+
 export const getAppCheckTokenIfAvailable = async () => {
     if (!appCheck) return null;
     const result = await getToken(appCheck, false);

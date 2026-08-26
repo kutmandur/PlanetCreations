@@ -261,6 +261,7 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             community={community}
                             setCommunity={setCommunity}
                             communityId={communityId}
+                            userProfile={userProfile}
                             setModalMessage={setModalMessage}
                             setPopoverView={setPopoverView}
                             setConfirmation={setConfirmation}

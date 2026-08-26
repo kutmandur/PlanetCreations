@@ -199,23 +199,6 @@ html.game-overlay-window #root { background: transparent !important; }
   font-weight: 800;
   box-shadow: 0 3px 10px rgba(0,0,0,.35);
 }
-.game-overlay-live-button {
-  position: absolute;
-  left: 50%;
-  bottom: 2%;
-  transform: translateX(-50%);
-  z-index: 3;
-  border: 2px solid white;
-  border-radius: 9999px;
-  padding: 3% 10%;
-  background: #dc2626;
-  color: white;
-  font-size: clamp(8px, 12vw, 13px);
-  line-height: 1.2;
-  font-weight: 900;
-  box-shadow: 0 3px 10px rgba(0,0,0,.4);
-}
-.game-overlay-live-button:hover { background: #b91c1c; }
 .game-overlay-chrome {
   position: fixed;
   z-index: 10000;

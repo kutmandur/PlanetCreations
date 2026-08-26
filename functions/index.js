@@ -75,6 +75,10 @@ const {
     verifyCommunityPassword,
 } = require("./communityMembership");
 const {
+    OVERLAY_SHOWCASE_KIND,
+    normalizeOverlayShowcaseRequest,
+} = require("./overlayShowcase");
+const {
     EventSubmissionError,
     getSubmissionLimit,
     validateAndNormalizeSubmission,
@@ -3979,16 +3983,57 @@ exports.setClientOverlayQr = onCall(async (data, context) => {
 
     let payload = null;
     if (entry) {
-        const creationId = requireCreationId(entry.creationId);
-        const creationSnap = await db.doc(`creations/${creationId}`).get();
-        if (!creationSnap.exists || creationSnap.data().userId !== uid) {
-            throw new functions.https.HttpsError("permission-denied", "You can only show the QR of your own creations.");
+        if (entry.kind === OVERLAY_SHOWCASE_KIND) {
+            let showcase;
+            try {
+                showcase = normalizeOverlayShowcaseRequest(entry);
+            } catch (error) {
+                throw new functions.https.HttpsError("invalid-argument", error.message);
+            }
+            if (!await canManageCommunityMembership(
+                showcase.communityId,
+                context,
+                "manageShowcases"
+            )) {
+                throw new functions.https.HttpsError(
+                    "permission-denied",
+                    "You do not have permission to manage this community's showcases."
+                );
+            }
+            const linkRefs = showcase.creationIds.map((creationId) =>
+                db.doc(`communitys/${showcase.communityId}/creations/${creationId}`));
+            const creationRefs = showcase.creationIds.map((creationId) =>
+                db.doc(`creations/${creationId}`));
+            const [linkSnaps, creationSnaps] = await Promise.all([
+                db.getAll(...linkRefs),
+                db.getAll(...creationRefs),
+            ]);
+            if (linkSnaps.some((snapshot) => !snapshot.exists) ||
+                creationSnaps.some((snapshot) => !snapshot.exists)) {
+                throw new functions.https.HttpsError(
+                    "failed-precondition",
+                    "Every overlay creation must still be linked to the selected community."
+                );
+            }
+            const activeIndex = showcase.creationIds.indexOf(showcase.activeCreationId);
+            payload = {
+                ...showcase,
+                creationId: showcase.activeCreationId,
+                title: String(creationSnaps[activeIndex].data().title || "").slice(0, 200),
+                setAt: Timestamp.now(),
+            };
+        } else {
+            const creationId = requireCreationId(entry.creationId);
+            const creationSnap = await db.doc(`creations/${creationId}`).get();
+            if (!creationSnap.exists || creationSnap.data().userId !== uid) {
+                throw new functions.https.HttpsError("permission-denied", "You can only show the QR of your own creations.");
+            }
+            payload = {
+                creationId,
+                title: String(creationSnap.data().title || "").slice(0, 200),
+                setAt: Timestamp.now(),
+            };
         }
-        payload = {
-            creationId,
-            title: String(creationSnap.data().title || "").slice(0, 200),
-            setAt: Timestamp.now(),
-        };
     }
 
     await getClientQueueRef(uid, clientId).set({
