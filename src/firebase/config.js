@@ -4,7 +4,12 @@ import {
     initializeAppCheck,
     ReCaptchaEnterpriseProvider,
 } from 'firebase/app-check';
-import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import {
+    browserLocalPersistence,
+    connectAuthEmulator,
+    getAuth,
+    setPersistence,
+} from 'firebase/auth';
 // ✅ 1. Import the correctly named function: enableIndexedDbPersistence
 import {
     connectFirestoreEmulator,
@@ -44,6 +49,7 @@ const forceRecaptchaForElectronTest = shouldForceRecaptchaForElectronTest({
 
 let app, auth, db, appCheck;
 let appCheckReady = Promise.resolve('unavailable');
+let authPersistenceReady = Promise.resolve();
 
 if (isConfigured) {
     app = initializeApp(firebaseConfig);
@@ -78,6 +84,16 @@ if (isConfigured) {
         }
     }
     auth = getAuth(app);
+    if (typeof window !== 'undefined' && window.electronAPI?.isElectron) {
+        // browserSessionPersistence lives in a renderer's sessionStorage and is
+        // therefore invisible to the separate in-game overlay renderer. Move an
+        // existing desktop session to the shared origin persistence as well as
+        // making all future desktop sign-ins available in every client window.
+        authPersistenceReady = setPersistence(auth, browserLocalPersistence)
+            .catch((error) => {
+                console.warn('Could not enable shared desktop authentication:', error);
+            });
+    }
     db = getFirestore(app);
 
     if (useFirebaseEmulators) {
@@ -137,4 +153,4 @@ export async function getMessagingIfSupported() {
     return messagingInstance;
 }
 
-export { app, appCheck, appCheckReady, auth, db };
+export { app, appCheck, appCheckReady, auth, authPersistenceReady, db };

@@ -5,7 +5,7 @@ import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/aut
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
-import { auth, db, isConfigured } from './firebase/config';
+import { auth, authPersistenceReady, db, isConfigured } from './firebase/config';
 import { enablePush, getPushPermission } from './firebase/push';
 import { isStandalone } from './utils/pwaInstall';
 import ProtectedRoute from './components/auth/ProtectedRoute';
@@ -38,7 +38,8 @@ import PrivacyPrompt from './components/modals/PrivacyPrompt';
 import BugReportModal from './components/modals/BugReportModal';
 import GoLiveModal from './components/modals/GoLiveModal';
 import { readLiveSession, setLiveSession } from './utils/liveStream';
-import { readOverlayQr, setOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
+import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
+import { buildOverlayShowcaseEntry, isOverlayShowcaseEntry } from './utils/overlayShowcase';
 import {
     generalOverlayNotificationsMuted,
     readGeneralOverlayNotificationPrefs,
@@ -82,6 +83,7 @@ const CommunitysPage = lazyWithReload(() => import('./components/pages/Community
 const CreateCommunityForm = lazyWithReload(() => import('./components/pages/CreateCommunityForm'));
 const CommunityDetailPage = lazyWithReload(() => import('./components/pages/CommunityDetailPage'));
 const ShowcasePage = lazyWithReload(() => import('./components/pages/ShowcasePage'));
+const OverlayShowcasePage = lazyWithReload(() => import('./components/pages/OverlayShowcasePage'));
 const CommunityManagerPage = lazyWithReload(() => import('./components/pages/CommunityManagerPage'));
 const EventDetailPage = lazyWithReload(() => import('./components/pages/EventDetailPage'));
 const EventForm = lazyWithReload(() => import('./components/pages/EventForm'));
@@ -197,6 +199,11 @@ const AppContent = () => {
     }), []);
 
     useEffect(() => {
+        if (isAuxiliaryWindow || !window.electronAPI?.syncStreamManagementSession) return;
+        window.electronAPI.syncStreamManagementSession(streamSessionMirror).catch(() => {});
+    }, [isAuxiliaryWindow, streamSessionMirror]);
+
+    useEffect(() => {
         if (!isStreamManagement) return undefined;
         let cancelled = false;
         Promise.all([
@@ -223,7 +230,16 @@ const AppContent = () => {
         if (!isAuxiliaryWindow) return undefined;
         document.documentElement.classList.add(isGameOverlay ? 'game-overlay-window' : 'stream-management-window');
         const unsubscribe = window.electronAPI?.onOverlayModeChanged?.(setIsOverlayExpanded);
+        let disposed = false;
+        if (isGameOverlay) {
+            window.electronAPI?.getOverlayExpanded?.()
+                .then((expanded) => {
+                    if (!disposed) setIsOverlayExpanded(Boolean(expanded));
+                })
+                .catch(() => {});
+        }
         return () => {
+            disposed = true;
             document.documentElement.classList.remove('game-overlay-window', 'stream-management-window');
             if (typeof unsubscribe === 'function') unsubscribe();
         };
@@ -287,6 +303,17 @@ const AppContent = () => {
             window.removeEventListener('online', checkForCollaborationUpdates);
         };
     }, [activeGameId, isGameOverlay, user?.uid]);
+
+    useEffect(() => {
+        if (!isGameOverlay || !isOverlayExpanded) return undefined;
+        const openActiveShowcase = (entry) => {
+            if (isOverlayShowcaseEntry(entry) && location.pathname !== '/overlay/showcase') {
+                navigate('/overlay/showcase');
+            }
+        };
+        openActiveShowcase(readOverlayQr());
+        return subscribeOverlayQr(openActiveShowcase);
+    }, [isGameOverlay, isOverlayExpanded, location.pathname, navigate]);
 
     useEffect(() => {
         if (isGameOverlay || !user?.uid || !window.electronAPI?.onGameProcessStopped) return undefined;
@@ -397,8 +424,12 @@ const AppContent = () => {
 
     useEffect(() => {
         if (!isConfigured) { setLoadingAuth(false); return; }
+        let authListenerDisposed = false;
+        let authUnsubscribe = () => {};
         let notificationUnsubscribe = () => {};
-        const authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+        authPersistenceReady.then(() => {
+            if (authListenerDisposed) return;
+            authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             knownNotificationIdsRef.current = new Set();
             notificationInboxInitializedRef.current = false;
             if (currentUser && currentUser.isAnonymous) {
@@ -493,7 +524,8 @@ const AppContent = () => {
             } else {
                 setUserProfile(null); setNotifications([]); setActiveTab(getDefaultGameId());
             }
-            setLoadingAuth(false);
+                setLoadingAuth(false);
+            });
         });
         const blacklistRef = doc(db, 'meta', 'blacklist');
         const unsubBlacklist = onSnapshot(blacklistRef, (docSnap) => {
@@ -517,7 +549,12 @@ const AppContent = () => {
         // Kritische Komponenten nach App-Start vorladen
         preloadCriticalComponents();
 
-        return () => { authUnsubscribe(); notificationUnsubscribe(); unsubBlacklist(); };
+        return () => {
+            authListenerDisposed = true;
+            authUnsubscribe();
+            notificationUnsubscribe();
+            unsubBlacklist();
+        };
     }, [isAuxiliaryWindow]);
 
     useEffect(() => {
@@ -636,16 +673,52 @@ const AppContent = () => {
                     // überschrieben werden; Feld-Abwesenheit räumt ausschließlich
                     // remote gesetzte QRs ab (manuell/goLive bleiben unberührt).
                     const remoteQr = data.overlayQr || null;
-                    const serialized = remoteQr ? JSON.stringify({ c: remoteQr.creationId, t: remoteQr.title || '' }) : null;
+                    const remoteSetAt = remoteQr?.setAt?.toMillis?.() || 0;
+                    const serialized = remoteQr ? JSON.stringify({
+                        k: remoteQr.kind || '',
+                        c: remoteQr.creationId,
+                        t: remoteQr.title || '',
+                        community: remoteQr.communityId || '',
+                        showcase: remoteQr.showcaseId || '',
+                        creations: remoteQr.creationIds || [],
+                        active: remoteQr.activeCreationId || '',
+                        setAt: remoteSetAt,
+                    }) : null;
                     if (remoteQr?.creationId) {
                         if (serialized !== lastRemoteOverlayQrRef.current) {
-                            setOverlayQr({
-                                creationId: remoteQr.creationId,
-                                title: remoteQr.title || '',
-                                url: buildCreationShareUrl(remoteQr.creationId),
-                                source: 'remote',
-                                enabledAt: Date.now(),
-                            });
+                            if (remoteQr.kind === 'community-showcase' && Array.isArray(remoteQr.creationIds)) {
+                                const current = readOverlayQr();
+                                const sameStoredShowcase = isOverlayShowcaseEntry(current) &&
+                                    current.communityId === remoteQr.communityId &&
+                                    current.showcaseId === (remoteQr.showcaseId || '') &&
+                                    current.creationIds.join('\u001f') === remoteQr.creationIds.join('\u001f') &&
+                                    (!remoteSetAt || remoteSetAt <= (current.enabledAt || 0));
+                                const preferredActiveId = sameStoredShowcase &&
+                                    remoteQr.creationIds.includes(current.activeCreationId) ?
+                                    current.activeCreationId : (remoteQr.activeCreationId || remoteQr.creationId);
+                                const nextEntry = buildOverlayShowcaseEntry({
+                                    communityId: remoteQr.communityId,
+                                    showcaseId: remoteQr.showcaseId || '',
+                                    showcaseTitle: remoteQr.showcaseTitle || '',
+                                    creations: remoteQr.creationIds.map(creationId => ({
+                                        id: creationId,
+                                        title: creationId === preferredActiveId && sameStoredShowcase ?
+                                            current.title : (creationId === remoteQr.creationId ? remoteQr.title : ''),
+                                    })),
+                                    activeCreationId: preferredActiveId,
+                                    source: 'remote',
+                                    enabledAt: remoteSetAt || Date.now(),
+                                });
+                                setOverlayQr(nextEntry);
+                            } else {
+                                setOverlayQr({
+                                    creationId: remoteQr.creationId,
+                                    title: remoteQr.title || '',
+                                    url: buildCreationShareUrl(remoteQr.creationId),
+                                    source: 'remote',
+                                    enabledAt: remoteSetAt || Date.now(),
+                                });
+                            }
                         }
                     } else if (readOverlayQr()?.source === 'remote') {
                         setOverlayQr(null);
@@ -800,7 +873,9 @@ const AppContent = () => {
                 unreadCount={notifications.filter(notification => !notification.isRead).length}
                 activeGameId={activeGameId}
                 notifications={notifications}
-                streamSession={streamSessionMirror}
+                onOpen={(entry) => {
+                    if (isOverlayShowcaseEntry(entry)) navigate('/overlay/showcase');
+                }}
             />
         );
     }
@@ -866,7 +941,6 @@ const AppContent = () => {
                 user={user}
                 activeGameId={activeGameId}
                 currentPath={location.pathname}
-                streamSession={streamSessionMirror}
                 onOpenCollaboration={(collaborationId, state = null) => navigate(
                     `/collaboration/${collaborationId}`,
                     { state },
@@ -958,6 +1032,7 @@ const AppContent = () => {
                             <Route path="/communitys" element={<CommunitysPage user={user} userProfile={userProfile} communitysState={communitysState} setCommunitysState={setCommunitysState} setModalMessage={setModalMessage} />} />
                             <Route path="/community/:communityName" element={<CommunityDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />} />
                             <Route path="/showcase/:showcaseId" element={<ShowcasePage />} />
+                            <Route path="/overlay/showcase" element={<OverlayShowcasePage localClientId={localClientIdentity?.clientId || ''} />} />
                             <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" fallbackContent={TERMS_OF_SERVICE_FALLBACK} requiredNotice={MINIMUM_AGE_NOTICE} setModalMessage={setModalMessage} />} />
                             <Route path="/privacy" element={<LegalPage userProfile={userProfile} docId="privacyPolicy" title="Privacy Policy" fallbackContent={PRIVACY_POLICY} setModalMessage={setModalMessage} />} />
                             <Route path="/community-guidelines" element={<LegalPage userProfile={userProfile} docId="communityGuidelines" title="Community Content Guidelines" fallbackContent={COMMUNITY_GUIDELINES} setModalMessage={setModalMessage} />} />

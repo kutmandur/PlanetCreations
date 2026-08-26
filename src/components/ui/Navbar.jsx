@@ -59,7 +59,13 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
     const handleDesktopModeSwitch = () => {
         if (window.electronAPI?.switchDesktopMode) {
             window.electronAPI.switchDesktopMode(isOfflineMode ? 'online' : 'offline')
-                .catch((error) => console.error('Could not switch desktop mode:', error));
+                .catch((error) => {
+                    console.error('Could not switch desktop mode:', error);
+                    // Released clients used to reject this IPC call outside the
+                    // main window. The hosted overlay can still switch routes in
+                    // place while the native client update rolls out.
+                    if (window.electronAPI?.isGameOverlay) navigate(switchModePath);
+                });
             return;
         }
         navigate(switchModePath);

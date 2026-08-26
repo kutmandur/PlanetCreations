@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../../firebase/config';
+import { auth, authPersistenceReady, db } from '../../firebase/config';
 import {
+    isFirebaseAppCheckAuthError,
     runFirebaseAuthWithAppCheckRecovery,
     waitForElectronAppCheck,
 } from '../../firebase/appCheck';
+import { createClientConnectionErrorNotice } from '../../utils/clientConnectionError';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
 import Spinner from '../ui/Spinner';
@@ -28,6 +30,14 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
     // Nach dem Login zur ursprünglich angeforderten Seite zurück (z. B. Collaboration-Join)
     const redirectTo = searchParams.get('redirect') || '/';
 
+    const showAuthError = (error) => {
+        if (isFirebaseAppCheckAuthError(error) && window.electronAPI?.isElectron) {
+            setModalMessage(createClientConnectionErrorNotice());
+            return;
+        }
+        setModalMessage(error?.message || 'Authentication failed.');
+    };
+
     const validatePassword = () => {
         const checks = {
             length: password.length >= 10,
@@ -48,7 +58,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
             setModalMessage("If an account with that email exists, a password reset link has been sent.");
             setAuthAction('login');
         } catch (error) {
-            setModalMessage(error.message);
+            showAuthError(error);
         } finally {
             setLoading(false);
         }
@@ -60,7 +70,10 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
 
         try {
             const consent = localStorage.getItem('cookie_consent');
-            const persistence = consent === 'accepted' ? browserLocalPersistence : browserSessionPersistence;
+            const persistence = window.electronAPI?.isElectron || consent === 'accepted'
+                ? browserLocalPersistence
+                : browserSessionPersistence;
+            await authPersistenceReady;
             await setPersistence(auth, persistence);
             // The Electron release performs a fresh App Check attestation at
             // startup. Wait for it before username lookups or Auth requests.
@@ -158,7 +171,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                 navigate('/');
             }
         } catch (error) {
-            setModalMessage(error.message);
+            showAuthError(error);
         } finally {
             setLoading(false);
         }

@@ -39,3 +39,25 @@ test('renders a non-dismissible progress notice for server-side work', () => {
     expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
     expect(screen.getByText(/close automatically/i)).toBeInTheDocument();
 });
+
+test('renders a non-dismissible recovery action', async () => {
+    const onAction = vi.fn().mockResolvedValue(undefined);
+    render(
+        <Modal
+            message={{
+                title: 'Connection error',
+                message: 'The online version could not be reached.',
+                dismissible: false,
+                actionLabel: 'Reload',
+                onAction,
+            }}
+            onClose={vi.fn()}
+            activeTab="planet-coaster-2"
+        />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
+});

@@ -113,6 +113,7 @@ const hostedApi = {
   }),
 
   reloadWindow: () => ipcRenderer.invoke('reload-window'),
+  retryOnlineConnection: () => ipcRenderer.invoke('retry-online-connection'),
   showSystemNotification: (payload) => ipcRenderer.invoke('show-system-notification', payload),
   getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
@@ -161,6 +162,7 @@ const hostedApi = {
   endOverlayDrag: () => ipcRenderer.send('overlay-drag-end'),
   resizeOverlay: (direction) => ipcRenderer.send('overlay-resize', direction),
   setOverlayExpanded: (expanded) => ipcRenderer.invoke('set-overlay-expanded', expanded),
+  getOverlayExpanded: () => ipcRenderer.invoke('get-overlay-expanded'),
   onOverlayModeChanged: (callback) => listen('overlay-mode-changed', callback, (_event, expanded) => [expanded]),
 
   ...offlineManagerApi,

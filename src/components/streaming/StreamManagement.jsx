@@ -330,7 +330,7 @@ const StreamManagement = ({
                         <p className="text-xs font-semibold uppercase tracking-widest text-red-300">Live tools</p>
                         <h1 className="font-bold">Stream Management</h1>
                     </div>
-                    <button type="button" onClick={onClose} className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20">Close</button>
+                    <button type="button" onClick={onClose} className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20">Hide overlay</button>
                 </header>
 
                 <main className="space-y-5 p-4">

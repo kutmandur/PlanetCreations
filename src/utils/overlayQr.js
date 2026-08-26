@@ -17,7 +17,10 @@ const PUBLIC_ORIGIN = 'https://www.planetcreations.net';
 export const buildCreationShareUrl = (creationId) =>
     `${PUBLIC_ORIGIN}/share/creation/${encodeURIComponent(creationId)}`;
 
-// Gespeicherter Eintrag: { creationId, title, url, source: 'manual'|'goLive'|'remote', enabledAt }
+// Gespeicherter Eintrag: { creationId, title, url, source: 'manual'|'goLive'|'remote'|'showcase', enabledAt }
+// Showcase-Einträge ergänzen kind/communityId/creationIds/activeCreationId. Die
+// drei Basisfelder bleiben absichtlich erhalten, damit das kompakte QR-Widget
+// und veröffentlichte Clients weiterhin denselben Vertrag verwenden können.
 // null/fehlend = Overlay zeigt das Logo.
 export function readOverlayQr() {
     try {

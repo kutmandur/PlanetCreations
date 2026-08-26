@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor, getYoutubeThumbnailUrl, SOCIAL_PLATFORMS } from '../../utils/helpers';
 import { getEnabledGameIds } from '../../utils/gamesRegistry';
@@ -10,7 +11,12 @@ import SharingQrCode from '../ui/SharingQrCode';
 import CreationCard from '../cards/CreationCard';
 import ApplicationsManager from './ApplicationsManager';
 import CommunityFilterBar, { creationMatchesFilters } from './CommunityFilterBar';
-import { buildCreationShareUrl } from '../../utils/overlayQr';
+import { buildCreationShareUrl, readOverlayQr, setOverlayQr, subscribeOverlayQr } from '../../utils/overlayQr';
+import {
+    buildOverlayShowcaseEntry,
+    isOverlayShowcaseEntry,
+    overlayShowcasePayload,
+} from '../../utils/overlayShowcase';
 
 const SUB_TABS = ['Applications', 'Waitlist', 'Groups', 'Showcased'];
 const PUBLIC_ORIGIN = 'https://www.planetcreations.net';
@@ -63,7 +69,7 @@ const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, 
     );
 };
 
-const ShowcaseManager = ({ creations: allCreations, setCreations, community, setCommunity, setModalMessage, setPopoverView, setConfirmation, blacklist }) => {
+const ShowcaseManager = ({ creations: allCreations, setCreations, community, setCommunity, communityId, userProfile, setModalMessage, setPopoverView, setConfirmation, blacklist }) => {
     const [activeSubTab, setActiveSubTab] = useState('Applications');
     const [qrModal, setQrModal] = useState(null); // { showcaseId, name }
     const [previewModal, setPreviewModal] = useState(null); // { showcaseId, name }
@@ -99,6 +105,20 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
     const [addToGroupMenu, setAddToGroupMenu] = useState(null);
     const groupMenuRef = useRef(null);
     const addToGroupMenuRef = useRef(null);
+    const [overlayEntry, setOverlayEntry] = useState(() => readOverlayQr());
+    const [selectedOverlayClientId, setSelectedOverlayClientId] = useState('');
+    const [isUpdatingOverlay, setIsUpdatingOverlay] = useState(false);
+
+    const compatibleClients = useMemo(() => Object.entries(userProfile?.clients || {})
+        .filter(([, client]) => client?.remoteInstall === true), [userProfile?.clients]);
+
+    useEffect(() => subscribeOverlayQr(setOverlayEntry), []);
+
+    useEffect(() => {
+        setSelectedOverlayClientId(current =>
+            compatibleClients.some(([clientId]) => clientId === current) ?
+                current : (compatibleClients[0]?.[0] || ''));
+    }, [compatibleClients]);
 
     // Gemeinsamer Such-/Filterzustand für alle Untertabs
     const [filterState, setFilterState] = useState({ searchTerm: '', status: 'all', rank: 'all', tag: '', dlc: 'all' });
@@ -477,10 +497,10 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     );
                                 })}
                             </div>
-                            <div className="p-3 border-t mt-auto flex gap-2">
+                            <div className="mt-auto grid grid-cols-2 gap-2 border-t p-3">
                                 <button
                                     onClick={(e) => setGroupMenu({ creationId: creation.id, x: e.clientX, y: e.clientY })}
-                                    className="flex-1 text-sm font-semibold py-2 px-3 rounded-lg text-white community-bg hover:brightness-90"
+                                    className="rounded-lg community-bg px-3 py-2 text-sm font-semibold text-white hover:brightness-90"
                                     title="Assign to Group"
                                 >
                                     Add to Group
@@ -493,11 +513,19 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     <Icon path={ICONS.video} className="w-4 h-4" /> Finalize
                                 </button>
                                 <button
+                                    onClick={() => activateOverlayShowcase([creation], creation.title, `creation-${creation.id}`)}
+                                    disabled={isUpdatingOverlay || (!window.electronAPI?.isElectron && !selectedOverlayClientId)}
+                                    className="flex items-center justify-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                                    title="Show this creation in the in-game overlay"
+                                >
+                                    <Icon path={ICONS.share} className="h-4 w-4" /> Overlay
+                                </button>
+                                <button
                                     onClick={() => handleRemoveFromShowcase(creation.id)}
-                                    className="p-2 rounded-lg bg-gray-100 text-gray-500 hover:bg-red-100 hover:text-red-600"
+                                    className="flex items-center justify-center gap-1 rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-red-100 hover:text-red-600"
                                     title="Remove from Waitlist"
                                 >
-                                    <Icon path={ICONS.trash} className="w-5 h-5" />
+                                    <Icon path={ICONS.trash} className="h-4 w-4" /> Remove
                                 </button>
                             </div>
                         </div>
@@ -559,6 +587,15 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                                     </button>
                                 </div>
                             </div>
+                            <button
+                                type="button"
+                                onClick={() => activateOverlayShowcase(groupCreations, group.name, group.id)}
+                                disabled={groupCreations.length === 0 || isUpdatingOverlay || (!window.electronAPI?.isElectron && !selectedOverlayClientId)}
+                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                                title="Show this group in the in-game overlay"
+                            >
+                                <Icon path={ICONS.share} className="h-4 w-4" /> Activate group in overlay
+                            </button>
                             <div className="mt-3 pt-3 border-t space-y-2">
                                 {groupCreations.length === 0 ? (
                                     <p className="text-sm text-gray-400 text-center py-2">Empty group — add creations via the + button.</p>
@@ -662,6 +699,90 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
         );
     };
 
+    const updateShowcaseOverlay = async (nextEntry) => {
+        if (isUpdatingOverlay) return;
+        setIsUpdatingOverlay(true);
+        try {
+            if (window.electronAPI?.isElectron) {
+                setOverlayQr(nextEntry);
+                setModalMessage(nextEntry ?
+                    'The in-game overlay now shows this showcase.' :
+                    'The in-game overlay showcase was cleared.');
+            } else {
+                if (!selectedOverlayClientId) {
+                    throw new Error('No compatible desktop client is registered.');
+                }
+                const callable = httpsCallable(getFunctions(), 'setClientOverlayQr');
+                await callable({
+                    clientId: selectedOverlayClientId,
+                    entry: nextEntry ? overlayShowcasePayload(nextEntry) : null,
+                });
+                const clientName = compatibleClients.find(([clientId]) =>
+                    clientId === selectedOverlayClientId)?.[1]?.displayName || 'the selected client';
+                setModalMessage(nextEntry ?
+                    `The showcase is now active on ${clientName}.` :
+                    `The overlay QR was cleared on ${clientName}.`);
+            }
+        } catch (error) {
+            setModalMessage(`Could not update the overlay showcase: ${error.message}`);
+        } finally {
+            setIsUpdatingOverlay(false);
+        }
+    };
+
+    const activateOverlayShowcase = (showcaseCreations, showcaseTitle, showcaseId = '') => {
+        const entry = buildOverlayShowcaseEntry({
+            communityId: communityId || community.id,
+            showcaseId,
+            showcaseTitle,
+            creations: showcaseCreations,
+            source: window.electronAPI?.isElectron ? 'showcase' : 'remote',
+        });
+        if (!entry) {
+            setModalMessage('This showcase does not contain any creations.');
+            return;
+        }
+        updateShowcaseOverlay(entry);
+    };
+
+    const renderOverlayControls = () => {
+        const activeLocalShowcase = isOverlayShowcaseEntry(overlayEntry) &&
+            overlayEntry.communityId === (communityId || community.id);
+        return (
+            <div className="mx-auto mb-6 flex max-w-3xl flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm dark:border-blue-800 dark:bg-blue-950/40 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-gray-900 dark:text-white">Overlay target</p>
+                    <p className="truncate text-xs text-gray-600 dark:text-gray-300">
+                        {activeLocalShowcase ?
+                            `Active: ${overlayEntry.showcaseTitle || overlayEntry.title}` :
+                            (window.electronAPI?.isElectron ? 'This desktop client' : 'Select a registered desktop client')}
+                    </p>
+                </div>
+                {!window.electronAPI?.isElectron && (
+                    <select
+                        value={selectedOverlayClientId}
+                        onChange={(event) => setSelectedOverlayClientId(event.target.value)}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+                        aria-label="Overlay desktop client"
+                    >
+                        {compatibleClients.length === 0 && <option value="">No compatible client</option>}
+                        {compatibleClients.map(([clientId, client]) => (
+                            <option key={clientId} value={clientId}>{client.displayName || 'Desktop client'}</option>
+                        ))}
+                    </select>
+                )}
+                <button
+                    type="button"
+                    onClick={() => updateShowcaseOverlay(null)}
+                    disabled={isUpdatingOverlay || (!window.electronAPI?.isElectron && !selectedOverlayClientId)}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                    {isUpdatingOverlay ? 'Updating…' : 'Clear overlay'}
+                </button>
+            </div>
+        );
+    };
+
     return (
         <div>
             {communityGames.length > 1 && (
@@ -719,6 +840,8 @@ const ShowcaseManager = ({ creations: allCreations, setCreations, community, set
                 ]}
                 placeholder={activeSubTab === 'Groups' ? 'Search groups or creations...' : 'Search by title, creator or tag...'}
             />
+
+            {(activeSubTab === 'Waitlist' || activeSubTab === 'Groups') && renderOverlayControls()}
 
             {activeSubTab === 'Applications' && (
                 <ApplicationsManager

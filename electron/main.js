@@ -70,6 +70,8 @@ let pendingOverlayDragPoint = null;
 let overlaySettingsWriteTimer = null;
 let pendingOverlaySettingsPatch = null;
 let isGameOverlayExpanded = false;
+let hasActiveStreamManagementSession = false;
+let isSyncingStreamManagementBounds = false;
 let pendingMainWebRefresh = false;
 let pendingBackupImportPath = null;
 let isQuitting = false;
@@ -89,6 +91,10 @@ const OVERLAY_MIN_SIZE = 56;
 // ziehen können, damit er vom Stream abscanbar bleibt.
 const OVERLAY_MAX_SIZE = 640;
 const OVERLAY_DEFAULT_SIZE = 88;
+const STREAM_MANAGEMENT_GAP = 12;
+const STREAM_MANAGEMENT_MIN_WIDTH = 320;
+const STREAM_MANAGEMENT_MAX_WIDTH = 520;
+const STREAM_MANAGEMENT_WORK_AREA_MARGIN = 16;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const HOSTED_BRIDGE_VERSION = 3;
 const MINIMUM_HOSTED_UI_VERSION = 2;
@@ -263,6 +269,7 @@ function clearHostedNavigationState(browserWindow) {
 
 function loadBundledApp(browserWindow, route = '/client/dashboard') {
     clearHostedNavigationState(browserWindow);
+    browserWindow.__usingHostedFallback = false;
     return browserWindow.loadURL(buildBundledAppRouteUrl(getBundledAppUrl(), route));
 }
 
@@ -300,6 +307,7 @@ function loadHostedAppWithFallback(
     let hostedRetryDelayMs = 1500;
     let fallbackProbeDelayMs = 5000;
     clearHostedNavigationState(browserWindow);
+    browserWindow.__usingHostedFallback = false;
 
     const scheduleFallbackRecoveryProbe = () => {
         if (!usingFallback || browserWindow.isDestroyed() ||
@@ -318,6 +326,7 @@ function loadHostedAppWithFallback(
                     throw new Error(`HTTP ${response.status}`);
                 }
                 usingFallback = false;
+                browserWindow.__usingHostedFallback = false;
                 fallbackProbeDelayMs = 5000;
                 browserWindow.webContents.__hostedUiCapabilities = null;
                 log.info('Hosted UI is reachable again; leaving bundled fallback.');
@@ -332,6 +341,8 @@ function loadHostedAppWithFallback(
     const loadFallback = (reason, retryHosted = false) => {
         if (!allowBundledFallback || usingFallback || browserWindow.isDestroyed()) return;
         usingFallback = true;
+        browserWindow.__usingHostedFallback = true;
+        if (browserWindow === mainWindow) pendingMainWebRefresh = false;
         if (browserWindow.__hostedCapabilityTimer) {
             clearTimeout(browserWindow.__hostedCapabilityTimer);
             browserWindow.__hostedCapabilityTimer = null;
@@ -377,6 +388,7 @@ function loadHostedAppWithFallback(
     browserWindow.webContents.__hostedUiCapabilities = null;
     const handleHostedFinish = () => {
         if (!isHostedAppUrl(browserWindow.webContents.getURL())) return;
+        browserWindow.__usingHostedFallback = false;
         if (browserWindow.__hostedRetryTimer) {
             clearTimeout(browserWindow.__hostedRetryTimer);
             browserWindow.__hostedRetryTimer = null;
@@ -386,7 +398,12 @@ function loadHostedAppWithFallback(
             browserWindow.__hostedCapabilityTimer = null;
             const capabilities = browserWindow.webContents.__hostedUiCapabilities;
             if (!capabilities) {
-                loadFallback('hosted UI did not complete the compatibility handshake');
+                // A renderer that has been hidden or occluded for a long time can
+                // have its timers suspended by Chromium. The document itself did
+                // finish loading, so a delayed handshake is not proof that the
+                // website is unreachable. Keep the hosted session alive; only a
+                // real main-frame load failure may activate the network fallback.
+                log.warn('Hosted UI compatibility handshake is delayed; keeping the hosted session active.');
                 return;
             }
             if (capabilities.uiVersion < MINIMUM_HOSTED_UI_VERSION) {
@@ -415,15 +432,48 @@ function loadHostedAppWithFallback(
     browserWindow.__hostedFinishListener = handleHostedFinish;
     browserWindow.webContents.on('did-finish-load', handleHostedFinish);
     const loadPromise = browserWindow.loadURL(hostedUrl);
-    loadPromise.catch((error) => scheduleHostedRetry(error.message));
+    loadPromise.catch((error) => {
+        // loadURL rejects with ERR_ABORTED when a redirect or a newer navigation
+        // supersedes it. That says nothing about reachability and must never
+        // activate the Offline Manager fallback.
+        if (error?.errno === -3 || error?.code === 'ERR_ABORTED' ||
+            String(error?.message || '').includes('ERR_ABORTED')) return;
+        scheduleHostedRetry(error.message);
+    });
     return loadPromise;
 }
 
 function loadOfflineManager(browserWindow, route = '/client/dashboard') {
     return loadHostedAppWithFallback(browserWindow, route, {
+        requireOverlayCapability: browserWindow === gameOverlayWindow,
         requireOfflineManagerCapability: true,
         allowBundledFallback: true,
     });
+}
+
+function loadOnlineWorkshop(browserWindow, route = '/') {
+    return loadHostedAppWithFallback(browserWindow, route, {
+        requireOverlayCapability: browserWindow === gameOverlayWindow,
+    });
+}
+
+function retryHostedConnection(browserWindow) {
+    const route = getAppRoutePath(browserWindow.webContents.getURL());
+    if (route.startsWith('/client')) {
+        loadOfflineManager(browserWindow, route)
+            .catch((error) => log.warn('Immediate hosted Offline Manager retry failed:', error.message));
+    } else {
+        loadOnlineWorkshop(browserWindow, route)
+            .catch((error) => log.warn('Immediate hosted Workshop retry failed:', error.message));
+    }
+    return true;
+}
+
+function retryHostedFallbackIfNeeded(browserWindow, reason) {
+    if (!browserWindow || browserWindow.isDestroyed() ||
+        browserWindow.__usingHostedFallback !== true) return false;
+    log.info(`Retrying hosted UI immediately because ${reason}.`);
+    return retryHostedConnection(browserWindow);
 }
 
 function openRouteInMainWindow(route = '/') {
@@ -569,15 +619,17 @@ function createStreamingIntegration() {
             if (name === 'stream-started') {
                 pendingStreamStartContext = { ...payload, startedAt: Date.now() };
                 const openInStreamManagement = Boolean(
-                    gameOverlayWindow && !gameOverlayWindow.isDestroyed() && gameOverlayWindow.isVisible(),
+                    isGameOverlayExpanded && gameOverlayWindow &&
+                    !gameOverlayWindow.isDestroyed() && gameOverlayWindow.isVisible(),
                 );
-                if (openInStreamManagement) openStreamManagementWindow({ focus: true });
+                if (openInStreamManagement) syncStreamManagementWithOverlay({ focus: true });
                 broadcastToAppWindows(`obs-${name}`, { ...payload, openInStreamManagement });
                 return;
             }
             broadcastToAppWindows(`obs-${name}`, payload);
             if (name === 'stream-stopped') {
                 pendingStreamStartContext = null;
+                hasActiveStreamManagementSession = false;
                 if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
             }
         },
@@ -696,10 +748,11 @@ function createGameOverlayWindow() {
     gameOverlayWindow.setMenu(null);
     secureAppWindow(gameOverlayWindow);
     gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
-    loadHostedAppWithFallback(gameOverlayWindow, '/', { requireOverlayCapability: true });
+    loadOnlineWorkshop(gameOverlayWindow, '/');
     const rememberExpandedBounds = () => {
         if (isGameOverlayExpanded && gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
             scheduleOverlaySettingsWrite({ panelBounds: gameOverlayWindow.getBounds() });
+            syncStreamManagementWithOverlay();
         }
     };
     gameOverlayWindow.on('move', rememberExpandedBounds);
@@ -709,20 +762,96 @@ function createGameOverlayWindow() {
 }
 
 function getStreamManagementBounds() {
+    return getStreamManagementLayout().managerBounds;
+}
+
+function getStreamManagementLayout() {
     const anchor = gameOverlayWindow && !gameOverlayWindow.isDestroyed() ?
         gameOverlayWindow.getBounds() : screen.getPrimaryDisplay().workArea;
     const area = screen.getDisplayMatching(anchor).workArea;
-    const width = Math.min(520, area.width - 32);
-    const height = Math.min(760, area.height - 32);
-    return keepBoundsOnScreen({
-        x: Math.round(anchor.x + anchor.width / 2 - width / 2),
-        y: Math.round(anchor.y + Math.min(anchor.height, 120) + 12 + (
-            overlayNotificationWindow && !overlayNotificationWindow.isDestroyed() && overlayNotificationWindow.isVisible() ?
-                overlayNotificationWindow.getBounds().height + 8 : 0
-        )),
-        width,
-        height,
-    });
+    const horizontalSpace = Math.max(0,
+        area.width - (STREAM_MANAGEMENT_WORK_AREA_MARGIN * 2) - STREAM_MANAGEMENT_GAP);
+    const minimumManagerWidth = Math.min(STREAM_MANAGEMENT_MIN_WIDTH, Math.floor(horizontalSpace * 0.4));
+    const maximumOverlayWidth = Math.max(480, horizontalSpace - minimumManagerWidth);
+    const overlayWidth = Math.min(anchor.width, maximumOverlayWidth);
+    const managerWidth = Math.min(
+        STREAM_MANAGEMENT_MAX_WIDTH,
+        Math.max(minimumManagerWidth, horizontalSpace - overlayWidth),
+    );
+    const combinedWidth = overlayWidth + STREAM_MANAGEMENT_GAP + managerWidth;
+    const maximumGroupX = area.x + area.width - STREAM_MANAGEMENT_WORK_AREA_MARGIN - combinedWidth;
+    const groupX = Math.min(
+        Math.max(anchor.x, area.x + STREAM_MANAGEMENT_WORK_AREA_MARGIN),
+        maximumGroupX,
+    );
+    const height = Math.min(anchor.height, area.height - (STREAM_MANAGEMENT_WORK_AREA_MARGIN * 2));
+    const y = Math.min(
+        Math.max(anchor.y, area.y + STREAM_MANAGEMENT_WORK_AREA_MARGIN),
+        area.y + area.height - STREAM_MANAGEMENT_WORK_AREA_MARGIN - height,
+    );
+
+    return {
+        overlayBounds: {
+            x: Math.round(groupX),
+            y: Math.round(y),
+            width: Math.round(overlayWidth),
+            height: Math.round(height),
+        },
+        managerBounds: {
+            x: Math.round(groupX + overlayWidth + STREAM_MANAGEMENT_GAP),
+            y: Math.round(y),
+            width: Math.round(managerWidth),
+            height: Math.round(height),
+        },
+    };
+}
+
+function windowHasBounds(browserWindow, bounds) {
+    if (!browserWindow || browserWindow.isDestroyed()) return false;
+    const current = browserWindow.getBounds();
+    return ['x', 'y', 'width', 'height'].every((key) => current[key] === bounds[key]);
+}
+
+function shouldShowStreamManagementWithOverlay() {
+    return Boolean(
+        isGameOverlayExpanded &&
+        gameOverlayWindow &&
+        !gameOverlayWindow.isDestroyed() &&
+        gameOverlayWindow.isVisible() &&
+        (hasActiveStreamManagementSession || pendingStreamStartContext),
+    );
+}
+
+function syncStreamManagementWithOverlay({ focus = false } = {}) {
+    if (isSyncingStreamManagementBounds) return false;
+    if (!shouldShowStreamManagementWithOverlay()) {
+        if (streamManagementWindow && !streamManagementWindow.isDestroyed()) {
+            streamManagementWindow.hide();
+        }
+        return false;
+    }
+
+    isSyncingStreamManagementBounds = true;
+    try {
+        const layout = getStreamManagementLayout();
+        if (!windowHasBounds(gameOverlayWindow, layout.overlayBounds)) {
+            gameOverlayWindow.setBounds(layout.overlayBounds, false);
+        }
+        const manager = createStreamManagementWindow();
+        if (!windowHasBounds(manager, layout.managerBounds)) {
+            manager.setBounds(layout.managerBounds, false);
+        }
+        if (focus) {
+            manager.show();
+            manager.focus();
+        } else if (!manager.isVisible()) {
+            manager.showInactive();
+        }
+        manager.webContents.send('stream-management-context-changed', pendingStreamStartContext);
+        return true;
+    } finally {
+        isSyncingStreamManagementBounds = false;
+    }
 }
 
 function getOverlayNotificationBounds() {
@@ -819,6 +948,9 @@ function createStreamManagementWindow() {
 }
 
 function openStreamManagementWindow({ focus = true } = {}) {
+    if (isGameOverlayExpanded) {
+        return syncStreamManagementWithOverlay({ focus });
+    }
     const manager = createStreamManagementWindow();
     manager.setBounds(getStreamManagementBounds(), false);
     if (focus) {
@@ -854,8 +986,11 @@ function setOverlayExpanded(expanded) {
         gameOverlayWindow.setBounds(keepBoundsOnScreen(desired), true);
         gameOverlayWindow.webContents.send('overlay-mode-changed', true);
         gameOverlayWindow.focus();
+        retryHostedFallbackIfNeeded(gameOverlayWindow, 'the game overlay was opened');
+        syncStreamManagementWithOverlay();
     } else {
         isGameOverlayExpanded = false;
+        if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
         const panelBounds = gameOverlayWindow.getBounds();
         writeOverlaySettings({ panelBounds });
         const compactBounds = keepBoundsOnScreen({ x: settings.x ?? panelBounds.x, y: settings.y ?? panelBounds.y, width: settings.size, height: settings.size });
@@ -901,6 +1036,7 @@ async function updateGameOverlayVisibility() {
         if (running) {
             const overlay = createGameOverlayWindow();
             if (!overlay.isVisible()) overlay.showInactive();
+            if (isGameOverlayExpanded) syncStreamManagementWithOverlay();
         } else if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
             gameOverlayWindow.hide();
             if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
@@ -946,7 +1082,17 @@ function showMainWindow() {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    refreshPendingMainHostedView();
+    retryHostedFallbackIfNeeded(mainWindow, 'the client was brought to the foreground');
     if (process.platform === 'darwin') app.dock?.show();
+}
+
+function refreshPendingMainHostedView() {
+    if (!pendingMainWebRefresh || !mainWindow || mainWindow.isDestroyed() ||
+        !isHostedAppUrl(mainWindow.webContents.getURL())) return false;
+    pendingMainWebRefresh = false;
+    mainWindow.webContents.reloadIgnoringCache();
+    return true;
 }
 
 function buildTrayMenu() {
@@ -991,10 +1137,6 @@ function createTray() {
 function hideMainWindowToTray() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.hide();
-    if (pendingMainWebRefresh && isHostedAppUrl(mainWindow.webContents.getURL())) {
-        pendingMainWebRefresh = false;
-        mainWindow.webContents.reloadIgnoringCache();
-    }
     if (process.platform === 'darwin') app.dock?.hide();
     if (!hasShownTrayHint && tray && process.platform === 'win32') {
         tray.displayBalloon({
@@ -1144,8 +1286,10 @@ function startDailyUpdateChecks() {
 
 function refreshHostedWebViews() {
     if (mainWindow && !mainWindow.isDestroyed() && isHostedAppUrl(mainWindow.webContents.getURL())) {
-        if (mainWindow.isVisible()) pendingMainWebRefresh = true;
-        else mainWindow.webContents.reloadIgnoringCache();
+        // Never reload a throttled/hidden renderer. It will refresh as soon as
+        // the user brings the client back, when the compatibility handshake can
+        // complete normally and the persisted Auth session can be restored.
+        pendingMainWebRefresh = true;
     }
     if (gameOverlayWindow && !gameOverlayWindow.isDestroyed() && isHostedAppUrl(gameOverlayWindow.webContents.getURL()) && !isGameOverlayExpanded) {
         gameOverlayWindow.webContents.reloadIgnoringCache();
@@ -1405,6 +1549,11 @@ function createWindow({ openOnline = false } = {}) {
         mainWindow = null;
     });
 
+    mainWindow.on('focus', () => {
+        refreshPendingMainHostedView();
+        retryHostedFallbackIfNeeded(mainWindow, 'the client received focus');
+    });
+
     mainWindow.once('ready-to-show', () => {
         if (!isDev && autoUpdater) {
             autoUpdater.checkForUpdates();
@@ -1466,12 +1615,40 @@ ipcMain.handle('show-system-notification', (event, payload) => {
 
 ipcMain.handle('switch-desktop-mode', (event, mode) => {
     requireTrustedIpcSender(event, true);
-    const isMainRenderer = mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
-    if (!isMainRenderer) throw new Error('Desktop mode can only be changed from the main window.');
-    if (mode === 'offline') return loadOfflineManager(mainWindow, '/client/dashboard').then(() => true);
-    if (mode === 'online') return loadHostedAppWithFallback(mainWindow, '/').then(() => true);
-    if (mode === 'bundled-online') return loadBundledApp(mainWindow, '/').then(() => true);
+    const targetWindow = [mainWindow, gameOverlayWindow].find((browserWindow) => (
+        browserWindow && !browserWindow.isDestroyed() && event.sender === browserWindow.webContents
+    ));
+    if (!targetWindow) throw new Error('Desktop mode can only be changed from an app window.');
+
+    const isOverlayRenderer = targetWindow === gameOverlayWindow;
+    const isHostedRenderer = isHostedAppUrl(targetWindow.webContents.getURL());
+    if (mode === 'offline') {
+        const capabilities = targetWindow.webContents.__hostedUiCapabilities;
+        const canNavigateInPlace = isOverlayRenderer && isHostedRenderer &&
+            Number(capabilities?.offlineManagerVersion || 0) >= MINIMUM_HOSTED_OFFLINE_MANAGER_VERSION &&
+            Number(capabilities?.minimumOfflineManagerBridgeVersion || 0) <= HOSTED_BRIDGE_VERSION;
+        if (canNavigateInPlace) {
+            targetWindow.webContents.send('navigate-to-route', '/client/dashboard');
+            return true;
+        }
+        return loadOfflineManager(targetWindow, '/client/dashboard').then(() => true);
+    }
+    if (mode === 'online') {
+        if (isOverlayRenderer && isHostedRenderer) {
+            targetWindow.webContents.send('navigate-to-route', '/');
+            return true;
+        }
+        return loadOnlineWorkshop(targetWindow, '/').then(() => true);
+    }
+    if (mode === 'bundled-online') return loadBundledApp(targetWindow, '/').then(() => true);
     throw new Error('Unknown desktop mode.');
+});
+
+ipcMain.handle('retry-online-connection', (event) => {
+    requireTrustedIpcSender(event, true);
+    const browserWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!browserWindow || browserWindow.isDestroyed()) return false;
+    return retryHostedConnection(browserWindow);
 });
 
 // Manueller Reload aus der Navbar: umgeht den HTTP-Cache, damit auch eine
@@ -1538,14 +1715,20 @@ ipcMain.handle('open-stream-management', (event) => {
 });
 ipcMain.handle('close-stream-management', (event) => {
     requireTrustedIpcSender(event, true);
-    if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
+    if (isGameOverlayExpanded) setOverlayExpanded(false);
+    else if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
     return true;
 });
 ipcMain.handle('sync-stream-management-session', (event, session) => {
     requireTrustedIpcSender(event, true);
+    hasActiveStreamManagementSession = Boolean(session?.sessionId && session.status === 'active');
     if (!session?.sessionId || session.status !== 'active') {
         lastStreamNotificationIds = new Set();
-        if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
+        if (pendingStreamStartContext && isGameOverlayExpanded) {
+            syncStreamManagementWithOverlay();
+        } else if (streamManagementWindow && !streamManagementWindow.isDestroyed()) {
+            streamManagementWindow.hide();
+        }
         return true;
     }
     const notifications = Array.isArray(session.notifications) ? session.notifications.slice(0, 30) : [];
@@ -1556,7 +1739,7 @@ ipcMain.handle('sync-stream-management-session', (event, session) => {
     const mutedUntilSeconds = Number(prefs.mutedUntil?.seconds || prefs.mutedUntil?._seconds || 0);
     const muted = prefs.mode === 'session' || prefs.mode === 'permanent' ||
         mutedUntilSeconds * 1000 > Date.now();
-    if (hasIncoming && !muted) openStreamManagementWindow({ focus: false });
+    if (isGameOverlayExpanded) syncStreamManagementWithOverlay({ focus: hasIncoming && !muted });
     return true;
 });
 ipcMain.handle('show-overlay-notification', (event, notification) => {
@@ -1668,6 +1851,13 @@ ipcMain.handle('set-overlay-expanded', (event, expanded) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return false;
     overlayDragState = null;
     return setOverlayExpanded(Boolean(expanded));
+});
+ipcMain.handle('get-overlay-expanded', (event) => {
+    requireTrustedIpcSender(event, true);
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) {
+        return false;
+    }
+    return isGameOverlayExpanded;
 });
 ipcMain.handle('get-client-identity', (event) => {
     requireTrustedIpcSender(event, true);

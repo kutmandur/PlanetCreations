@@ -16,6 +16,7 @@ vi.mock('./config', () => ({
 }));
 
 import {
+    isFirebaseAppCheckAuthError,
     isHostedElectronAppCheckContext,
     runFirebaseAuthWithAppCheckRecovery,
     waitForElectronAppCheck,
@@ -30,6 +31,16 @@ const hostedElectronContext = {
 beforeEach(() => {
     mocks.getToken.mockReset();
     mocks.readyStatus = 'ready';
+});
+
+test('recognizes Firebase Auth App Check failures for a connection notice', () => {
+    expect(isFirebaseAppCheckAuthError({
+        code: 'auth/firebase-app-check-token-is-invalid',
+    })).toBe(true);
+    expect(isFirebaseAppCheckAuthError(new Error(
+        'Firebase: Error (auth/firebase-app-check-token-is-invalid).',
+    ))).toBe(true);
+    expect(isFirebaseAppCheckAuthError({ code: 'auth/invalid-credential' })).toBe(false);
 });
 
 test('starts a fresh recovery batch instead of authenticating with a dummy token', async () => {

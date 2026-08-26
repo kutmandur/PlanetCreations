@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getGameColor } from '../../utils/helpers';
 
 const Modal = ({ message, onClose, activeTab }) => {
@@ -6,6 +6,17 @@ const Modal = ({ message, onClose, activeTab }) => {
     const content = typeof message === 'string' ? { message } : message;
     const isDismissible = content?.dismissible !== false;
     const showProgress = Boolean(content?.progress);
+    const [actionPending, setActionPending] = useState(false);
+
+    const handleAction = async () => {
+        if (actionPending || typeof content?.onAction !== 'function') return;
+        setActionPending(true);
+        try {
+            await content.onAction();
+        } finally {
+            setActionPending(false);
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" style={color.style}>
@@ -38,8 +49,20 @@ const Modal = ({ message, onClose, activeTab }) => {
                         <div className={`pc-modal-progress-bar h-full rounded-full ${color.bg}`} />
                     </div>
                 )}
+                {content?.actionLabel && (
+                    <button
+                        type="button"
+                        onClick={handleAction}
+                        disabled={actionPending}
+                        className={`${color.bg} ${color.hoverBg} mt-6 w-full rounded-lg px-6 py-2 font-bold text-white disabled:cursor-wait disabled:opacity-60`}
+                    >
+                        {actionPending
+                            ? (content.actionPendingLabel || content.actionLabel)
+                            : content.actionLabel}
+                    </button>
+                )}
                 {isDismissible && (
-                    <button onClick={onClose} className={`${color.bg} ${color.hoverBg} mt-6 w-full rounded-lg px-6 py-2 font-bold text-white`}>
+                    <button onClick={onClose} className={`${content?.actionLabel ? 'mt-3 bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600' : `${color.bg} ${color.hoverBg} mt-6 text-white`} w-full rounded-lg px-6 py-2 font-bold`}>
                         OK
                     </button>
                 )}

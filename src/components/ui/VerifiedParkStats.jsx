@@ -230,16 +230,39 @@ const RideStats = ({ ride, userEfn }) => {
     );
 };
 
-const RideCard = ({ entry, showType = false, nerdMode = false, analysis, analysisLoading = false, expanded = false, onToggle }) => {
+const RideCard = ({
+    entry,
+    showType = false,
+    nerdMode = false,
+    analysis,
+    analysisLoading = false,
+    expanded = false,
+    onToggle,
+    checked = false,
+    onToggleChecked = null,
+}) => {
     const { ride, index, category } = entry;
     const categoryKey = category?.key || 'tracked-ride';
     return (
         <article
             data-testid={`ride-card-${categoryKey}-${index}`}
-            className={`min-w-0 rounded-2xl border p-3 text-center shadow-sm ${nerdMode ? 'w-full sm:p-5' : ''} ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
+            data-checked={onToggleChecked ? String(checked) : undefined}
+            className={`min-w-0 rounded-2xl border p-3 text-center shadow-sm transition-all ${nerdMode ? 'w-full sm:p-5' : ''} ${checked ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : ''} ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
         >
+            {onToggleChecked && (
+                <label className="mb-2 ml-auto flex w-fit cursor-pointer items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700 shadow-sm dark:bg-gray-950/75 dark:text-gray-200">
+                    <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleChecked(entry.key)}
+                        className="h-3.5 w-3.5 accent-green-600"
+                        aria-label={`Mark ${entry.displayName} as checked`}
+                    />
+                    Checked
+                </label>
+            )}
             <div className="min-w-0 text-center">
-                <h4 className="break-words text-sm font-bold leading-tight text-gray-950 dark:text-white" title={entry.displayName}>{entry.displayName}</h4>
+                <h4 className={`break-words text-sm font-bold leading-tight text-gray-950 dark:text-white ${checked ? 'line-through opacity-60' : ''}`} title={entry.displayName}>{entry.displayName}</h4>
                 {ride.name && ride.category && ride.category !== ride.name && <p className="mt-0.5 break-words text-xs text-gray-500">{ride.category}</p>}
                 {showType && (
                     <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${CATEGORY_STYLES[categoryKey] || CATEGORY_STYLES['tracked-ride']}`}>
@@ -261,7 +284,7 @@ const RideCard = ({ entry, showType = false, nerdMode = false, analysis, analysi
     );
 };
 
-const TypeSections = ({ groups }) => (
+const TypeSections = ({ groups, checkedRideKeys = new Set(), onToggleChecked = null }) => (
     <div className="space-y-7">
         {groups.map(group => (
             <section key={group.key}>
@@ -272,14 +295,21 @@ const TypeSections = ({ groups }) => (
                     </div>
                 </div>
                 <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                    {group.rides.map(entry => <RideCard key={entry.key} entry={entry} />)}
+                    {group.rides.map(entry => (
+                        <RideCard
+                            key={entry.key}
+                            entry={entry}
+                            checked={checkedRideKeys.has(entry.key)}
+                            onToggleChecked={onToggleChecked}
+                        />
+                    ))}
                 </div>
             </section>
         ))}
     </div>
 );
 
-const AreaSections = ({ groups }) => (
+const AreaSections = ({ groups, checkedRideKeys = new Set(), onToggleChecked = null }) => (
     <div className="space-y-5">
         {groups.map(area => (
             <section
@@ -294,7 +324,15 @@ const AreaSections = ({ groups }) => (
                 </div>
                 {area.rides.length > 0 ? (
                     <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                        {area.rides.map(entry => <RideCard key={entry.key} entry={entry} showType />)}
+                        {area.rides.map(entry => (
+                            <RideCard
+                                key={entry.key}
+                                entry={entry}
+                                showType
+                                checked={checkedRideKeys.has(entry.key)}
+                                onToggleChecked={onToggleChecked}
+                            />
+                        ))}
                     </div>
                 ) : (
                     <p className="py-4 text-center text-sm text-gray-500">No visible attractions assigned to this area.</p>
@@ -303,6 +341,8 @@ const AreaSections = ({ groups }) => (
         ))}
     </div>
 );
+
+export { AreaSections, TypeSections };
 
 const RideListPopover = ({
     groups,

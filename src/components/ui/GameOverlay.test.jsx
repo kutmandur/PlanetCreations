@@ -60,3 +60,24 @@ test('coalesces compact overlay movement and resizing to animation frames', () =
     fireEvent.pointerUp(button, { pointerId: 1, screenX: 125, screenY: 130 });
     expect(window.electronAPI.endOverlayDrag).toHaveBeenCalledTimes(1);
 });
+
+test('opens the active showcase page when the compact overlay is clicked', () => {
+    const onOpen = vi.fn();
+    localStorage.setItem('pc.overlayQr', JSON.stringify({
+        kind: 'community-showcase',
+        creationId: 'park-1',
+        creationIds: ['park-1'],
+        activeCreationId: 'park-1',
+        title: 'Showcase Park',
+        url: 'https://www.planetcreations.net/share/creation/park-1',
+    }));
+
+    render(<GameOverlayWidget onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open PlanetCreations overlay' }));
+
+    expect(window.electronAPI.setOverlayExpanded).toHaveBeenCalledWith(true);
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'community-showcase',
+        creationId: 'park-1',
+    }));
+});

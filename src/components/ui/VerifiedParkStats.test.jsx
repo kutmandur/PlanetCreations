@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import VerifiedParkStats, { getPlanetCoaster2ScoreTone } from './VerifiedParkStats';
+import VerifiedParkStats, { getPlanetCoaster2ScoreTone, TypeSections } from './VerifiedParkStats';
 import { getPresentedParkRideEntries } from '../../utils/parkRidePresentation';
 
 vi.mock('firebase/functions', () => ({
@@ -26,6 +26,31 @@ test('uses the Planet Coaster 2 traffic-light bands for EFN scores', () => {
     expect(getPlanetCoaster2ScoreTone('nausea', 3)).toBe('green');
     expect(getPlanetCoaster2ScoreTone('nausea', 5)).toBe('yellow');
     expect(getPlanetCoaster2ScoreTone('nausea', 6.01)).toBe('red');
+});
+
+test('supports a local orientation checklist in an embedded ride list', () => {
+    const onToggleChecked = vi.fn();
+    render(<TypeSections
+        groups={[{
+            key: 'coaster',
+            label: 'Coasters',
+            rides: [{
+                key: 'ride-1',
+                index: 0,
+                displayName: 'Checked Coaster',
+                category: { key: 'coaster', label: 'Coasters' },
+                ride: { kind: 'tracked', name: 'Checked Coaster' },
+            }],
+        }]}
+        checkedRideKeys={new Set(['ride-1'])}
+        onToggleChecked={onToggleChecked}
+    />);
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Mark Checked Coaster as checked' });
+    expect(checkbox).toBeChecked();
+    expect(screen.getByText('Checked Coaster')).toHaveClass('line-through');
+    fireEvent.click(checkbox);
+    expect(onToggleChecked).toHaveBeenCalledWith('ride-1');
 });
 
 test('shows compact verified park stats and opens a full ride list grouped by category', () => {
