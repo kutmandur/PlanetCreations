@@ -37,6 +37,7 @@ const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { responseToBuffer } = require('./modules/ResponseBuffer');
 const { getDistributionInfo } = require('./modules/DistributionChannel');
 const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
+const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
@@ -218,6 +219,13 @@ function secureAppWindow(browserWindow) {
 }
 
 function configureSessionSecurity() {
+    const browserCompatibleUserAgent = buildDesktopWebUserAgent(
+        session.defaultSession.getUserAgent()
+    );
+    if (browserCompatibleUserAgent) {
+        session.defaultSession.setUserAgent(browserCompatibleUserAgent);
+    }
+
     const allowedPermissions = new Set(['notifications']);
     const isAllowedPermission = (webContents, permission, requestingOrigin) => {
         if (!allowedPermissions.has(permission)) return false;
