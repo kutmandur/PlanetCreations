@@ -42,6 +42,19 @@ test('a network-triggered bundled fallback keeps probing the hosted UI', () => {
     assert.match(mainSource, /fallbackProbeDelayMs = Math\.min\(fallbackProbeDelayMs \* 2, 60000\)/);
     assert.match(mainSource, /Hosted UI is reachable again; leaving bundled fallback/);
     assert.match(mainSource, /loadFallback\(reason, true\)/);
+    assert.match(
+        mainSource,
+        /Bundled UI fallback failed:[\s\S]*if \(retryHosted\) scheduleFallbackRecoveryProbe\(\)/,
+    );
+});
+
+test('the tray window keeps network sessions alive while hidden', () => {
+    const createWindowSource = mainSource.slice(
+        mainSource.indexOf('function createWindow'),
+        mainSource.indexOf('// --- AUTO-UPDATE EVENTS ---'),
+    );
+    assert.match(createWindowSource, /backgroundThrottling:\s*false/);
+    assert.doesNotMatch(createWindowSource, /backgroundThrottling:\s*true/);
 });
 
 test('foregrounding the client or opening the overlay retries a fallback immediately', () => {

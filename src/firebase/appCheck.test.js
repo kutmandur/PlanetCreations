@@ -21,7 +21,6 @@ import {
     runFirebaseAuthWithAppCheckRecovery,
     waitForElectronAppCheck,
 } from './appCheck';
-import { ELECTRON_APP_CHECK_RECOVERY_KEY } from '../utils/appCheckMode';
 
 const hostedElectronContext = {
     electronApi: { isElectron: true },
@@ -43,27 +42,16 @@ test('recognizes Firebase Auth App Check failures for a connection notice', () =
     expect(isFirebaseAppCheckAuthError({ code: 'auth/invalid-credential' })).toBe(false);
 });
 
-test('starts a fresh recovery batch instead of authenticating with a dummy token', async () => {
+test('does not reload the client when App Check startup failed', async () => {
     mocks.readyStatus = 'failed';
-    const values = new Map([[
-        ELECTRON_APP_CHECK_RECOVERY_KEY,
-        JSON.stringify({ attempts: 3, lastAttemptAt: Date.now() }),
-    ]]);
-    const sessionStorage = {
-        getItem: (key) => values.get(key) || null,
-        setItem: (key, value) => values.set(key, value),
-        removeItem: (key) => values.delete(key),
-    };
     const reload = vi.fn();
 
     await expect(waitForElectronAppCheck({
         ...hostedElectronContext,
-        sessionStorage,
         reload,
-    })).resolves.toBe('reloading');
+    })).resolves.toBe('failed');
 
-    expect(values.has(ELECTRON_APP_CHECK_RECOVERY_KEY)).toBe(false);
-    expect(reload).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
 });
 
 test('recognizes only the hosted desktop client as the Auth recovery context', () => {
