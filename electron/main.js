@@ -352,7 +352,12 @@ function loadHostedAppWithFallback(
             .then(() => {
                 if (retryHosted) scheduleFallbackRecoveryProbe();
             })
-            .catch((error) => log.error('Bundled UI fallback failed:', error));
+            .catch((error) => {
+                log.error('Bundled UI fallback failed:', error);
+                // A broken/missing local bundle must not stop the network
+                // recovery loop. Keep probing until the hosted UI is back.
+                if (retryHosted) scheduleFallbackRecoveryProbe();
+            });
     };
     const scheduleHostedRetry = (reason) => {
         if (allowBundledFallback) {
@@ -1521,7 +1526,10 @@ function createWindow({ openOnline = false } = {}) {
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
-          backgroundThrottling: true,
+          // The window normally lives in the tray. Keep Firebase heartbeats,
+          // auth refreshes and online/offline events running while hidden so a
+          // valid session is not silently disconnected in the background.
+          backgroundThrottling: false,
         },
     });
 

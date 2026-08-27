@@ -52,7 +52,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
         e.preventDefault();
         setLoading(true);
         try {
-            if (await waitForElectronAppCheck() === 'reloading') return;
+            await waitForElectronAppCheck();
             await runFirebaseAuthWithAppCheckRecovery(() =>
                 sendPasswordResetEmail(auth, emailOrUsername));
             setModalMessage("If an account with that email exists, a password reset link has been sent.");
@@ -75,9 +75,9 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                 : browserSessionPersistence;
             await authPersistenceReady;
             await setPersistence(auth, persistence);
-            // The Electron release performs a fresh App Check attestation at
-            // startup. Wait for it before username lookups or Auth requests.
-            if (await waitForElectronAppCheck() === 'reloading') return;
+            // Wait until App Check initialization is complete before username
+            // lookups or Auth requests. Token attestation itself happens on demand.
+            await waitForElectronAppCheck();
 
             if (authAction === 'login') {
                 let finalEmail = emailOrUsername.trim();

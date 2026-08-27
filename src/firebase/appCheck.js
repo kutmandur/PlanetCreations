@@ -1,6 +1,5 @@
 import { getToken } from 'firebase/app-check';
 import { appCheck, appCheckReady } from './config';
-import { resetElectronAppCheckRecovery } from '../utils/appCheckMode';
 
 const AUTH_APP_CHECK_INVALID = 'auth/firebase-app-check-token-is-invalid';
 const HOSTED_CLIENT_ORIGINS = new Set([
@@ -24,21 +23,8 @@ export const getAppCheckTokenIfAvailable = async () => {
     return result.token || null;
 };
 
-export const waitForElectronAppCheck = async (context = undefined) => {
-    const status = await appCheckReady;
-    if (status !== 'failed' || !isHostedElectronAppCheckContext(context)) {
-        return status;
-    }
-
-    // A 403 puts the Firebase web provider into a 24-hour in-memory throttle.
-    // The bounded startup recovery normally replaces that provider through a
-    // reload. If all automatic attempts failed, a deliberate Auth action starts
-    // one fresh batch instead of sending Firebase Auth the SDK's dummy token.
-    const sessionStorage = context?.sessionStorage || window.sessionStorage;
-    const reload = context?.reload || (() => window.location.reload());
-    resetElectronAppCheckRecovery(sessionStorage);
-    reload();
-    return 'reloading';
+export const waitForElectronAppCheck = async () => {
+    return appCheckReady;
 };
 
 export const runFirebaseAuthWithAppCheckRecovery = async (
