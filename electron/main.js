@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net, globalShortcut } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
@@ -38,6 +38,7 @@ const { responseToBuffer } = require('./modules/ResponseBuffer');
 const { getDistributionInfo } = require('./modules/DistributionChannel');
 const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
+const { normalizeOverlayShortcuts, validateOverlayShortcutPair } = require('./modules/OverlayShortcuts');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
@@ -85,6 +86,8 @@ let frontierSaveIndexWatcherPath = null;
 // PC2-Prozesserkennung — auf macOS/Linux der einzige Weg (kein tasklist.exe),
 // auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
 let overlayForcedVisible = false;
+let overlayIconEnabled = true;
+let overlayShortcuts = normalizeOverlayShortcuts();
 const activeNotifications = new Set();
 const OVERLAY_MIN_SIZE = 56;
 // 640 statt 180: Im QR-Modus zeigt der Puck das volle Sharing-Template, in dem
@@ -518,9 +521,19 @@ function readOverlaySettings() {
             size: Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, Number(stored.size) || OVERLAY_DEFAULT_SIZE)),
             panelBounds: stored.panelBounds || null,
             forcedVisible: stored.forcedVisible === true,
+            iconEnabled: stored.iconEnabled !== false,
+            shortcuts: normalizeOverlayShortcuts(stored.shortcuts),
         };
     } catch (error) {
-        return { x: null, y: null, size: OVERLAY_DEFAULT_SIZE, panelBounds: null, forcedVisible: false };
+        return {
+            x: null,
+            y: null,
+            size: OVERLAY_DEFAULT_SIZE,
+            panelBounds: null,
+            forcedVisible: false,
+            iconEnabled: true,
+            shortcuts: normalizeOverlayShortcuts(),
+        };
     }
 }
 
@@ -1011,6 +1024,9 @@ function setOverlayExpanded(expanded) {
         gameOverlayWindow.setResizable(false);
         gameOverlayWindow.setHasShadow(false);
         gameOverlayWindow.setBounds(compactBounds, true);
+        if (!overlayIconEnabled || (!overlayForcedVisible && !activeGameId)) {
+            gameOverlayWindow.hide();
+        }
     }
     return true;
 }
@@ -1045,7 +1061,8 @@ async function updateGameOverlayVisibility() {
             broadcastToAppWindows('active-game-changed', activeGameId);
         }
 
-        const running = overlayForcedVisible || Boolean(activeGameId);
+        const running = isGameOverlayExpanded ||
+            (overlayIconEnabled && (overlayForcedVisible || Boolean(activeGameId)));
         if (running) {
             const overlay = createGameOverlayWindow();
             if (!overlay.isVisible()) overlay.showInactive();
@@ -1523,6 +1540,59 @@ function getClientIdentity() {
     };
 }
 
+function toggleOverlayIcon() {
+    overlayIconEnabled = !overlayIconEnabled;
+    writeOverlaySettings({ iconEnabled: overlayIconEnabled });
+    if (!overlayIconEnabled && !isGameOverlayExpanded && gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
+        gameOverlayWindow.hide();
+    } else {
+        updateGameOverlayVisibility();
+    }
+    broadcastToAppWindows('overlay-hotkeys-changed', getOverlayHotkeySettings());
+}
+
+function toggleOverlayPanel() {
+    const overlay = createGameOverlayWindow();
+    if (isGameOverlayExpanded) {
+        setOverlayExpanded(false);
+        updateGameOverlayVisibility();
+        return;
+    }
+    if (!overlay.isVisible()) overlay.showInactive();
+    setOverlayExpanded(true);
+}
+
+function getOverlayHotkeySettings() {
+    return { iconEnabled: overlayIconEnabled, shortcuts: { ...overlayShortcuts } };
+}
+
+function registerOverlayShortcuts(nextShortcuts = overlayShortcuts) {
+    const validation = validateOverlayShortcutPair(nextShortcuts);
+    if (!validation.valid) throw new Error(validation.error);
+    const normalized = normalizeOverlayShortcuts(nextShortcuts);
+    for (const shortcut of Object.values(overlayShortcuts)) globalShortcut.unregister(shortcut);
+    const registrations = [
+        [normalized.icon, toggleOverlayIcon],
+        [normalized.overlay, toggleOverlayPanel],
+    ];
+    const registered = [];
+    for (const [accelerator, callback] of registrations) {
+        if (!globalShortcut.register(accelerator, callback)) {
+            for (const value of registered) globalShortcut.unregister(value);
+            for (const [oldAccelerator, oldCallback] of [
+                [overlayShortcuts.icon, toggleOverlayIcon],
+                [overlayShortcuts.overlay, toggleOverlayPanel],
+            ]) globalShortcut.register(oldAccelerator, oldCallback);
+            throw new Error(`The shortcut ${accelerator} is already used by another application.`);
+        }
+        registered.push(accelerator);
+    }
+    overlayShortcuts = normalized;
+    writeOverlaySettings({ shortcuts: overlayShortcuts });
+    broadcastToAppWindows('overlay-hotkeys-changed', getOverlayHotkeySettings());
+    return getOverlayHotkeySettings();
+}
+
 function createWindow({ openOnline = false } = {}) {
     mainWindow = new BrowserWindow({
         width: 1200,
@@ -1878,6 +1948,14 @@ ipcMain.handle('get-overlay-expanded', (event) => {
 ipcMain.handle('get-client-identity', (event) => {
     requireTrustedIpcSender(event, true);
     return getClientIdentity();
+});
+ipcMain.handle('get-overlay-hotkeys', (event) => {
+    requireTrustedIpcSender(event, true);
+    return getOverlayHotkeySettings();
+});
+ipcMain.handle('set-overlay-hotkeys', (event, shortcuts) => {
+    requireTrustedIpcSender(event, true);
+    return registerOverlayShortcuts(shortcuts);
 });
 ipcMain.handle('show-main-window', (event) => {
     requireTrustedIpcSender(event, true);
@@ -2559,7 +2637,15 @@ ipcMain.handle('get-media-status', (event, savePath) => {
 app.whenReady().then(() => {
     if (process.platform === 'win32' && !isStoreBuild) app.setAppUserModelId('com.planetcreations.app');
     configureSessionSecurity();
-    overlayForcedVisible = readOverlaySettings().forcedVisible;
+    const storedOverlaySettings = readOverlaySettings();
+    overlayForcedVisible = storedOverlaySettings.forcedVisible;
+    overlayIconEnabled = storedOverlaySettings.iconEnabled;
+    overlayShortcuts = storedOverlaySettings.shortcuts;
+    try {
+        registerOverlayShortcuts(overlayShortcuts);
+    } catch (error) {
+        log.warn('Could not register In-Game Overlay shortcuts:', error.message);
+    }
     createTray();
     // Normal launches always start with the explicit Online Workshop / Offline
     // Manager choice. Only intentional background/dev launch modes bypass it.
@@ -2583,6 +2669,7 @@ app.on('window-all-closed', () => {
 });
 app.on('activate', showMainWindow);
 app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
     if (tray && !tray.isDestroyed()) tray.destroy();
 });
 
