@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { acceleratorFromKeyboardEvent, displayAccelerator } from '../../utils/keyboardShortcut';
 
 const PROVIDERS = {
     obs: {
@@ -35,6 +36,8 @@ const StreamingSettings = ({ setModalMessage }) => {
     const [secretDirty, setSecretDirty] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [overlayForced, setOverlayForced] = useState(false);
+    const [overlayHotkeys, setOverlayHotkeys] = useState(null);
+    const [hotkeysSaving, setHotkeysSaving] = useState(false);
 
     const supported = Boolean(window.electronAPI?.getObsStatus);
 
@@ -57,13 +60,18 @@ const StreamingSettings = ({ setModalMessage }) => {
         window.electronAPI.getOverlayForced?.()
             .then((value) => { if (!cancelled) setOverlayForced(value === true); })
             .catch(() => {});
+        window.electronAPI.getOverlayHotkeys?.()
+            .then((value) => { if (!cancelled && value?.shortcuts) setOverlayHotkeys(value); })
+            .catch(() => {});
         const unsubStatus = window.electronAPI.onObsStatusChanged?.((next) =>
             setStatus((current) => ({ ...current, ...next })));
         const unsubForced = window.electronAPI.onOverlayForcedChanged?.((value) => setOverlayForced(value === true));
+        const unsubHotkeys = window.electronAPI.onOverlayHotkeysChanged?.(setOverlayHotkeys);
         return () => {
             cancelled = true;
             if (typeof unsubStatus === 'function') unsubStatus();
             if (typeof unsubForced === 'function') unsubForced();
+            if (typeof unsubHotkeys === 'function') unsubHotkeys();
         };
     }, [supported]);
 
@@ -120,6 +128,30 @@ const StreamingSettings = ({ setModalMessage }) => {
             await window.electronAPI.setOverlayForced?.(value);
         } catch (error) {
             setModalMessage(`Could not toggle the In-Game Overlay: ${error.message}`);
+        }
+    };
+
+    const recordHotkey = (field) => (event) => {
+        event.preventDefault();
+        const accelerator = acceleratorFromKeyboardEvent(event);
+        if (!accelerator) return;
+        setOverlayHotkeys((current) => ({
+            ...(current || {}),
+            shortcuts: { ...(current?.shortcuts || {}), [field]: accelerator },
+        }));
+    };
+
+    const saveOverlayHotkeys = async () => {
+        if (!overlayHotkeys?.shortcuts) return;
+        setHotkeysSaving(true);
+        try {
+            const result = await window.electronAPI.setOverlayHotkeys(overlayHotkeys.shortcuts);
+            setOverlayHotkeys(result);
+            setModalMessage('Overlay shortcuts saved and activated.');
+        } catch (error) {
+            setModalMessage(`Could not activate the overlay shortcuts: ${error.message}`);
+        } finally {
+            setHotkeysSaving(false);
         }
     };
 
@@ -330,6 +362,42 @@ const StreamingSettings = ({ setModalMessage }) => {
                     />
                 </span>
             </label>
+
+            {overlayHotkeys?.shortcuts && (
+                <div className="mt-6 border-t pt-6">
+                    <h3 className="text-lg font-bold text-gray-800">Global overlay shortcuts</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                        These work while the game is focused. Click a field, then press the complete key combination.
+                        The defaults use three modifiers to avoid Planet Coaster controls.
+                    </p>
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        {[
+                            ['icon', 'Toggle overlay icon'],
+                            ['overlay', 'Toggle full overlay'],
+                        ].map(([field, label]) => (
+                            <label key={field} className="block">
+                                <span className="mb-1 block text-sm font-bold text-gray-600">{label}</span>
+                                <input
+                                    readOnly
+                                    value={displayAccelerator(overlayHotkeys.shortcuts[field])}
+                                    onKeyDown={recordHotkey(field)}
+                                    onFocus={(event) => event.target.select()}
+                                    className="w-full cursor-pointer rounded-lg border p-3 text-center font-mono"
+                                    aria-label={label}
+                                />
+                            </label>
+                        ))}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={saveOverlayHotkeys}
+                        disabled={hotkeysSaving}
+                        className="mt-4 w-full rounded-lg bg-gray-800 px-4 py-3 font-bold text-white transition-colors hover:bg-gray-900 disabled:opacity-50"
+                    >
+                        {hotkeysSaving ? 'Activating…' : 'Save overlay shortcuts'}
+                    </button>
+                </div>
+            )}
         </div>
     );
 };
