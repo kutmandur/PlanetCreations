@@ -21,7 +21,11 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
     const navigate = useNavigate();
     
     const location = useLocation();
-    const isElectron = navigator.userAgent.toLowerCase().includes('electron');
+    // The desktop session intentionally removes Electron from its user agent so
+    // Firebase App Check sees a browser-compatible Chromium client. Detect the
+    // trusted desktop preload bridge instead; it remains available in both the
+    // hosted online UI and the bundled offline UI.
+    const isElectron = Boolean(window.electronAPI?.isElectron);
     const isOfflineMode = location.pathname.startsWith('/client');
     
     const switchModePath = isOfflineMode ? '/' : '/client/dashboard';
