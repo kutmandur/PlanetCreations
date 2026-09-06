@@ -40,6 +40,7 @@ const {
     getSessionStreams,
     withPrimaryStreamFields,
 } = require("./liveStreamPlatforms");
+const {isYoutubeVideoLive} = require("./youtubeLiveStatus");
 const {isValidEventSubSignature} = require("./twitchEventSub");
 const {
     S3Client,
@@ -3187,7 +3188,8 @@ async function fetchStreamMetadata(platform, parsed) {
     }
     if (platform === "youtube") {
         const response = await fetch(
-            `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(parsed.youtubeVideoId)}` +
+            `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails` +
+            `&id=${encodeURIComponent(parsed.youtubeVideoId)}` +
             `&key=${encodeURIComponent(youtubeApiKey.value())}`,
         );
         if (!response.ok) throw new Error(`YouTube API request failed (${response.status}).`);
@@ -3195,7 +3197,7 @@ async function fetchStreamMetadata(platform, parsed) {
         const video = body.items?.[0] || null;
         const snippet = video?.snippet || {};
         return {
-            isLive: snippet.liveBroadcastContent === "live",
+            isLive: isYoutubeVideoLive(video),
             streamId: parsed.youtubeVideoId,
             broadcasterId: snippet.channelId || null,
             broadcasterLogin: null,
