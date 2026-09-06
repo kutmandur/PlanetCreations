@@ -11,6 +11,36 @@ const net = require('net');
 const RECONNECT_DELAY_MS = 15 * 1000;
 const REQUEST_TIMEOUT_MS = 10 * 1000;
 
+// Streamlabs historically emitted a single string ("live"/"offline"). Newer
+// versions can return a model for Dual Output with independent horizontal and
+// vertical states. Keep both contracts working because released Streamlabs
+// versions in the wild use either shape.
+function collectStreamingStates(value, states = []) {
+    if (typeof value === 'string') {
+        states.push(value.toLowerCase());
+        return states;
+    }
+    if (!value || typeof value !== 'object') return states;
+
+    for (const key of ['streamingStatus', 'streaming']) {
+        if (typeof value[key] === 'string') states.push(value[key].toLowerCase());
+    }
+    for (const key of ['horizontal', 'vertical']) {
+        if (value[key] !== undefined) collectStreamingStates(value[key], states);
+    }
+    if (value.status && typeof value.status === 'object') {
+        collectStreamingStates(value.status, states);
+    }
+    return states;
+}
+
+function normalizeStreamingStatus(value) {
+    const states = collectStreamingStates(value);
+    if (states.includes('live')) return 'live';
+    if (states.length > 0 && states.every((state) => state === 'offline')) return 'offline';
+    return null;
+}
+
 class StreamlabsIntegration {
     constructor({ getConfig, log, onEvent }) {
         this.getConfig = getConfig;
@@ -117,7 +147,7 @@ class StreamlabsIntegration {
             this.connected = true;
             this.lastError = null;
             const model = await this.request('StreamingService', 'getModel').catch(() => null);
-            this.streaming = model?.streamingStatus === 'live';
+            this.streaming = normalizeStreamingStatus(model) === 'live';
             await this.request('StreamingService', 'streamingStatusChange').catch(() => null);
             await this.refreshService();
             this.log.info(`Connected to Streamlabs Desktop via ${this.transport}.`);
@@ -132,12 +162,13 @@ class StreamlabsIntegration {
     }
 
     async handleStreamingStatus(status) {
-        if (status === 'live' && !this.streaming) {
+        const normalizedStatus = normalizeStreamingStatus(status);
+        if (normalizedStatus === 'live' && !this.streaming) {
             this.streaming = true;
             await this.refreshService();
             this.emitStatus();
             this.onEvent('stream-started', { service: this.service });
-        } else if (status === 'offline' && this.streaming) {
+        } else if (normalizedStatus === 'offline' && this.streaming) {
             this.streaming = false;
             this.emitStatus();
             this.onEvent('stream-stopped', {});
@@ -239,4 +270,4 @@ class StreamlabsIntegration {
     }
 }
 
-module.exports = { StreamlabsIntegration };
+module.exports = { StreamlabsIntegration, normalizeStreamingStatus };
