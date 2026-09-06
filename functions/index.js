@@ -141,7 +141,9 @@ const {
     fetchYoutubeChannelVideos,
 } = require("./youtubeFeed");
 const {
+    VIDEO_LOCATIONS_COLLECTION,
     backfillCommunityYoutubeVideos,
+    getLocationId,
     normalizeYoutubeVideos,
     removeCommunityYoutubeVideos,
     upsertCommunityYoutubeVideo,
@@ -8572,6 +8574,56 @@ exports.renewYoutubeWebSubSubscriptions = scheduled(
             }
         }
         console.log(`Renewed ${renewed} YouTube WebSub subscriptions.`);
+        return null;
+    },
+);
+
+// WebSub is best-effort: the public hub can occasionally verify a subscription
+// but fail to deliver later upload notifications. Polling the small public RSS
+// feeds provides a quota-free safety net while existing location documents let
+// us skip videos that are already indexed without rewriting their shards.
+exports.pollCommunityYoutubeIndexes = scheduled(
+    {
+        schedule: "45 4 * * *",
+        timeZone: "Europe/Berlin",
+    },
+    async () => {
+        const mappingsSnap = await db.collection(
+            YOUTUBE_COMMUNITY_CHANNELS_COLLECTION,
+        ).get();
+        let indexed = 0;
+        for (const mappingDoc of mappingsSnap.docs) {
+            const mapping = mappingDoc.data();
+            const communityId = mapping.communityId || mappingDoc.id;
+            const channelId = mapping.channelId;
+            if (!communityId || !channelId) continue;
+            try {
+                const feed = await fetchYoutubeChannelVideos(channelId, 15);
+                const videos = normalizeYoutubeVideos(feed.videos);
+                const locationRefs = videos.map((video) => db.doc(
+                    `${VIDEO_LOCATIONS_COLLECTION}/${getLocationId(communityId, video.id)}`,
+                ));
+                const locationSnaps = locationRefs.length > 0 ?
+                    await db.getAll(...locationRefs) : [];
+                for (let index = 0; index < videos.length; index += 1) {
+                    if (locationSnaps[index]?.exists) continue;
+                    await upsertCommunityYoutubeVideo(
+                        db,
+                        communityId,
+                        channelId,
+                        videos[index],
+                    );
+                    indexed += 1;
+                }
+            } catch (error) {
+                console.error("Community YouTube RSS poll failed.", {
+                    channelId,
+                    communityId,
+                    error: error.message,
+                });
+            }
+        }
+        console.log(`Indexed ${indexed} new YouTube videos from RSS polling.`);
         return null;
     },
 );

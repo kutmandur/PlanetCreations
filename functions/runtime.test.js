@@ -8,7 +8,7 @@ const exportedFunctions = require("./index");
 test("exports every function as a second-generation endpoint", () => {
   const endpoints = Object.entries(exportedFunctions);
 
-  assert.equal(endpoints.length, 94);
+  assert.equal(endpoints.length, 95);
   for (const [name, fn] of endpoints) {
     assert.equal(
       fn.__endpoint?.platform,
@@ -80,6 +80,7 @@ test("prevents scheduled maintenance jobs from overlapping", () => {
     "cleanupUnverifiedUsers",
     "maintainSecurityState",
     "sweepLiveStreams",
+    "pollCommunityYoutubeIndexes",
   ]) {
     const endpoint = exportedFunctions[name].__endpoint;
     assert.equal(endpoint.maxInstances, 1);
