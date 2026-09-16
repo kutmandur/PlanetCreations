@@ -7,6 +7,7 @@ const GAME_BY_EXTENSION = new Map([
     ['.zoo', 'planet-zoo'],
     ['.pzblueprint', 'planet-zoo'],
     ['.zooauto', 'planet-zoo'],
+    ['.zoo_auto', 'planet-zoo'],
 ]);
 
 function normalized(value) {

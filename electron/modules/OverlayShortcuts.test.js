@@ -7,11 +7,49 @@ const {
     isValidOverlayAccelerator,
     normalizeOverlayShortcuts,
     validateOverlayShortcutPair,
+    applyOverlayShortcuts,
 } = require('./OverlayShortcuts');
 
 test('uses uncommon modifier-rich overlay defaults', () => {
     assert.equal(DEFAULT_OVERLAY_SHORTCUTS.icon, 'CommandOrControl+Alt+Shift+O');
     assert.equal(DEFAULT_OVERLAY_SHORTCUTS.overlay, 'CommandOrControl+Alt+Shift+P');
+});
+
+for (const failure of ['conflict', 'native exception', 'disk full']) {
+    test(`restores both previous shortcuts after ${failure}`, () => {
+        const current = { ...DEFAULT_OVERLAY_SHORTCUTS };
+        const next = { icon: 'Control+K', overlay: 'Control+L' };
+        const active = new Map(Object.values(current).map(value => [value, () => {}]));
+        let writes = 0;
+        const registry = {
+            unregister: value => active.delete(value),
+            register: (value, callback) => {
+                if (value === next.overlay && failure === 'conflict') return false;
+                if (value === next.overlay && failure === 'native exception') throw new Error('Native registration failed');
+                active.set(value, callback);
+                return true;
+            },
+        };
+        assert.throws(() => applyOverlayShortcuts({ current, next, registry,
+            callbacks: { icon: () => {}, overlay: () => {} },
+            save: () => { writes++; throw new Error('Disk full'); },
+        }));
+        assert.deepEqual([...active.keys()].sort(), Object.values(current).sort());
+        assert.equal(writes, failure === 'disk full' ? 1 : 0);
+    });
+}
+test('activates and persists a new shortcut pair exactly once', () => {
+    const next = { icon: 'Control+K', overlay: 'Control+L' };
+    let saved, writes = 0;
+    const active = new Set(Object.values(DEFAULT_OVERLAY_SHORTCUTS));
+    const result = applyOverlayShortcuts({ current: DEFAULT_OVERLAY_SHORTCUTS, next,
+        registry: { unregister: value => active.delete(value), register: value => { active.add(value); return true; } },
+        callbacks: { icon: () => {}, overlay: () => {} }, save: value => { saved = value; writes++; },
+    });
+    assert.deepEqual(result, next);
+    assert.deepEqual(saved, next);
+    assert.equal(writes, 1);
+    assert.deepEqual([...active].sort(), Object.values(next).sort());
 });
 
 test('explains invalid and duplicate shortcut pairs', () => {

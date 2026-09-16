@@ -22,7 +22,7 @@ const ReportCard = ({ item, onAction, setPopoverView }) => {
     };
 
     return (
-        <article className="bg-white rounded-lg shadow-md border border-gray-200 flex flex-col">
+        <article className="pc-theme-card bg-white rounded-lg shadow-md border border-gray-200 flex flex-col">
             <div className="p-4 flex-grow">
                 <div className="flex justify-between items-start">
                     <div>

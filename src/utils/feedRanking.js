@@ -27,6 +27,7 @@ const MIN_POOL_SCORE = 0.01;
 // SPA-Navigation behält den Modul-State (Feed bleibt in der Sitzung stabil),
 // ein harter Reload/neuer Tab initialisiert neu → Pools werden neu gewürfelt.
 const LOAD_SEED = Math.floor(Math.random() * 0xffffffff);
+export const FEED_LOAD_SEED = LOAD_SEED;
 
 // Slider-Werte sind relative Anteile (0–100); vor der Slot-Vergabe auf Summe 1 normiert.
 export const DEFAULT_WEIGHTS = {
@@ -182,12 +183,14 @@ export function rankCreations(creations, ctx = {}) {
     const acc = {};
     WEIGHT_KEYS.forEach((key) => { acc[key] = 0; });
 
-    const topRemaining = (pool) => {
+    const cursors = new Map();
+    const topRemaining = pool => {
+        let cursor = cursors.get(pool) || 0;
+        while (cursor < pool.length && picked.has(pool[cursor].c.id)) cursor++;
+        cursors.set(pool, cursor);
         const out = [];
-        for (const s of pool) {
-            if (picked.has(s.c.id)) continue;
-            out.push(s);
-            if (out.length >= POOL_WINDOW) break;
+        for (let i = cursor; i < pool.length && out.length < POOL_WINDOW; i++) {
+            if (!picked.has(pool[i].c.id)) out.push(pool[i]);
         }
         return out;
     };

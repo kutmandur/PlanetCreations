@@ -2,6 +2,8 @@ import { initializeApp } from 'firebase/app';
 import {
     initializeAppCheck,
     ReCaptchaEnterpriseProvider,
+    getToken as getAppCheckToken,
+    setTokenAutoRefreshEnabled,
 } from 'firebase/app-check';
 import {
     browserLocalPersistence,
@@ -16,8 +18,9 @@ import {
     enableIndexedDbPersistence
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
-import { getMessaging, isSupported } from 'firebase/messaging';
+
 import { shouldForceRecaptchaForElectronTest } from '../utils/appCheckMode';
+import { startAppCheckLifecycle } from '../utils/appCheckLifecycle';
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -68,6 +71,19 @@ if (isConfigured) {
             // provider and caused a visible loop before login. Auth requests a
             // token on demand and the auth wrapper retries a rejected token once.
             appCheckReady = Promise.resolve('ready');
+            if (typeof window !== 'undefined' && window.electronAPI?.isElectron &&
+                /^https?:$/.test(window.location.protocol)) {
+                const stopLifecycle = startAppCheckLifecycle({
+                    window, document, navigator, electronApi: window.electronAPI,
+                    getToken: force => getAppCheckToken(appCheck, force),
+                    setAutoRefresh: enabled => setTokenAutoRefreshEnabled(appCheck, enabled),
+                    onError: error => console.warn('App Check is temporarily unavailable.', {
+                        code: error?.code || 'unknown',
+                        httpStatus: error?.customData?.httpStatus,
+                    }),
+                });
+                if (import.meta.hot) import.meta.hot.dispose(stopLifecycle);
+            }
         } catch (error) {
             console.error('Firebase App Check could not be initialized:', error);
         }
@@ -133,6 +149,7 @@ export async function getMessagingIfSupported() {
     if (!isConfigured || isElectron) return null;
     if (messagingInstance) return messagingInstance;
     try {
+        const { getMessaging, isSupported } = await import('firebase/messaging');
         if (await isSupported()) {
             messagingInstance = getMessaging(app);
         }

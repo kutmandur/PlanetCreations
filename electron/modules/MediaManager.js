@@ -1,17 +1,11 @@
-const { app } = require('electron');
+const {isMainThread, workerData} = require('node:worker_threads');
+const app = isMainThread ? require('electron').app : {getPath: name => workerData.data.paths[name]};
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { inspectFrontierFile } = require('./FrontierSaveParser');
 
-const MEDIA_MANIFEST_FORMAT = 'PlanetCreationsMediaManifest';
-const MEDIA_MANIFEST_VERSION = 2;
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg']);
-const USER_MEDIA_EXTENSIONS = new Set([
-    '.jpg', '.jpeg', '.png', '.gif', '.webp',
-    '.mp4', '.webm', '.mov',
-]);
-const ALLOWED_MEDIA_EXTENSIONS = new Set([...AUDIO_EXTENSIONS, ...USER_MEDIA_EXTENSIONS]);
+const {MEDIA_MANIFEST_FORMAT, MEDIA_MANIFEST_VERSION, AUDIO_EXTENSIONS, USER_MEDIA_EXTENSIONS, ALLOWED_MEDIA_EXTENSIONS, safeLogicalName, getTargetForFile, validatePortableManifest} = require('./MediaManifest');
 
 const MASTER_MEDIA_LIBRARY = path.join(app.getPath('userData'), 'MasterMediaLibrary');
 const MEDIA_OBJECTS_DIR = path.join(MASTER_MEDIA_LIBRARY, 'objects');
@@ -31,19 +25,6 @@ function sha256Buffer(buffer) {
 
 function sha256File(filePath) {
     return sha256Buffer(fs.readFileSync(filePath));
-}
-
-function safeLogicalName(fileName) {
-    return typeof fileName === 'string' && fileName.length > 0 && fileName.length <= 255 &&
-        fileName === path.basename(fileName) && !fileName.includes('/') && !fileName.includes('\\') &&
-        fileName !== '.' && fileName !== '..';
-}
-
-function getTargetForFile(fileName) {
-    const extension = path.extname(fileName).toLowerCase();
-    if (AUDIO_EXTENSIONS.has(extension)) return 'UserAudio';
-    if (USER_MEDIA_EXTENSIONS.has(extension)) return 'UserMedia';
-    throw new Error(`Unsupported custom-media type: ${extension || '(none)'}`);
 }
 
 function hasExpectedMediaSignature(fileName, buffer) {
@@ -117,26 +98,6 @@ function writeJsonAtomic(filePath, value) {
     const temporaryPath = `${filePath}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2));
     fs.renameSync(temporaryPath, filePath);
-}
-
-function validatePortableManifest(manifest) {
-    if (!manifest || manifest.format !== MEDIA_MANIFEST_FORMAT ||
-        manifest.formatVersion !== MEDIA_MANIFEST_VERSION ||
-        typeof manifest.mediaSetId !== 'string' || !Array.isArray(manifest.assets)) {
-        throw new Error('Unsupported media manifest.');
-    }
-    const names = new Set();
-    for (const asset of manifest.assets) {
-        const lowerName = String(asset?.logicalName || '').toLowerCase();
-        if (!safeLogicalName(asset?.logicalName) || names.has(lowerName) ||
-            !/^[a-f0-9]{64}$/.test(asset?.sha256 || '') ||
-            !Number.isSafeInteger(asset?.size) || asset.size < 0 ||
-            asset.target !== getTargetForFile(asset.logicalName)) {
-            throw new Error('The media manifest contains invalid or duplicate assets.');
-        }
-        names.add(lowerName);
-    }
-    return manifest;
 }
 
 function storeAssetBuffer(asset, buffer) {

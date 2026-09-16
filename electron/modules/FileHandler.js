@@ -28,7 +28,7 @@ const GAME_CONFIG = {
         fileTypes: {
             park: '.zoo',
             blueprint: '.pzblueprint',
-            autosave: '.zooauto'
+            autosave: ['.zoo_auto', '.zooauto']
         }
     }
 };
@@ -75,7 +75,7 @@ function enumerateGamesFromPath(basePath) {
                 if (!fs.existsSync(dirPath)) return;
                 const files = fs.readdirSync(dirPath);
                 for (const file of files) {
-                    if (file.toLowerCase().endsWith(config.fileTypes[fileTypeKey])) {
+                    if ([].concat(config.fileTypes[fileTypeKey]).includes(path.extname(file).toLowerCase())) {
                         const filePath = path.join(dirPath, file);
                         const stats = fs.statSync(filePath);
                         const fileRecord = {

@@ -7,6 +7,7 @@ import { getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
 import { parseRideAnalysisBuffer } from '../../utils/rideAnalysis';
 import AnimatedPillTabs from './AnimatedPillTabs';
 import RideNerdAnalysis from './RideNerdAnalysis';
+import PlanetZooExplorer from './PlanetZooExplorer';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const moneyFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -380,6 +381,7 @@ const ZooOverview = ({ park, blueprint }) => {
 const CreationMetadataPanel = ({
     metadata,
     filePath,
+    fileRevision,
     metadataStatus = 'ready',
     metadataError,
     customMediaReferences = [],
@@ -398,6 +400,7 @@ const CreationMetadataPanel = ({
     const [rideAnalysisError, setRideAnalysisError] = useState('');
     const [expandedRideKey, setExpandedRideKey] = useState('');
     const rideAnalysisStatusRef = useRef('idle');
+    const dialogRef = useRef(null);
 
     useEffect(() => setBannerImageFailed(false), [bannerImageUrl]);
 
@@ -412,9 +415,26 @@ const CreationMetadataPanel = ({
 
     useEffect(() => {
         if (!isOpen) return undefined;
-        const onKeyDown = event => { if (event.key === 'Escape') setIsOpen(false); };
+        const previouslyFocused = document.activeElement;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        dialogRef.current?.focus();
+        const onKeyDown = event => {
+            if (event.key === 'Escape') setIsOpen(false);
+            if (event.key === 'Tab' && dialogRef.current) {
+                const items = [...dialogRef.current.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex="0"]')].filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+                const first = items[0], last = items.at(-1);
+                if (!first) { event.preventDefault(); dialogRef.current.focus(); }
+                else if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last.focus(); }
+                else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+            }
+        };
         document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.body.style.overflow = previousOverflow;
+            if (previouslyFocused?.isConnected) previouslyFocused.focus();
+        };
     }, [isOpen]);
 
     useEffect(() => {
@@ -428,7 +448,14 @@ const CreationMetadataPanel = ({
         return () => { cancelled = true; };
     }, [bannerImageFailed, bannerImageUrl, filePath, isOpen, preview]);
 
-    if (!metadata && metadataStatus !== 'pending' && !metadataError) return null;
+    // The animal reader is independent of the background metadata scan. Local
+    // zoo saves remain inspectable while that scan is queued or has failed.
+    const localZooSave = Boolean(
+        filePath && /\.(zoo|zooauto|zoo_auto)$/i.test(filePath) &&
+        !metadata?.blueprint && metadata?.kind !== 'blueprint' &&
+        (!metadata?.gameId || metadata.gameId === 'planet-zoo'),
+    );
+    if (!metadata && metadataStatus !== 'pending' && !metadataError && !localZooSave) return null;
     const park = metadata?.park;
     const blueprint = metadata?.blueprint;
     const rides = park?.rides || blueprint?.rides || [];
@@ -445,7 +472,7 @@ const CreationMetadataPanel = ({
     const requiredDlcBits = metadata?.requiredDlcBits || [];
     const unknownDlcBits = metadata?.unknownDlcBits || [];
     const unknownDlcIdentifiers = metadata?.unknownDlcIdentifiers;
-    const isPlanetZoo = metadata?.gameId === 'planet-zoo';
+    const isPlanetZoo = metadata?.gameId === 'planet-zoo' || localZooSave;
     const unresolvedDlcIdentifiers = Array.isArray(unknownDlcIdentifiers) ? unknownDlcIdentifiers :
         (isPlanetZoo ? requiredDlcIdentifiers.filter(identifier => {
         const bit = planetZooDlcIdentifierBit(identifier);
@@ -456,7 +483,7 @@ const CreationMetadataPanel = ({
         .filter(Number.isSafeInteger));
     const displayedUnknownDlcBits = unknownDlcBits.filter(bit => !identifiedUnknownBits.has(bit));
     const headerImageUrl = bannerImageUrl && !bannerImageFailed ? bannerImageUrl : preview;
-    const headerTitle = creationName || metadata?.name || park?.parkName || 'Creation analysis';
+    const headerTitle = creationName || metadata?.name || park?.parkName || (localZooSave ? filePath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') : 'Creation analysis');
 
     const changeStatsMode = mode => {
         if (mode !== 'nerd') {
@@ -488,8 +515,8 @@ const CreationMetadataPanel = ({
 
     const modal = isOpen && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm dark:bg-black/75 sm:p-3" onMouseDown={event => { if (event.target === event.currentTarget) setIsOpen(false); }}>
-            <div role="dialog" aria-modal="true" aria-label="Creation stats" className="flex max-h-[calc(100vh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-gray-300 bg-gray-100 text-center text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 sm:max-h-[calc(100vh-1.5rem)]">
-                <header className={`relative min-h-48 overflow-hidden bg-gradient-to-br ${isPlanetZoo ? 'from-emerald-100 via-white to-lime-100 dark:from-emerald-950 dark:via-gray-900 dark:to-lime-950' : 'from-blue-100 via-white to-purple-100 dark:from-blue-950 dark:via-gray-900 dark:to-purple-950'}`}>
+            <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Creation stats" className="flex max-h-[calc(100vh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-gray-300 bg-gray-100 text-center text-gray-900 shadow-2xl outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 sm:max-h-[calc(100vh-1.5rem)]">
+                <header className={`relative shrink-0 ${isPlanetZoo && !blueprint ? 'min-h-28' : 'min-h-48'} overflow-hidden bg-gradient-to-br ${isPlanetZoo ? 'from-emerald-100 via-white to-lime-100 dark:from-emerald-950 dark:via-gray-900 dark:to-lime-950' : 'from-blue-100 via-white to-purple-100 dark:from-blue-950 dark:via-gray-900 dark:to-purple-950'}`}>
                     {headerImageUrl && (
                         <img
                             src={headerImageUrl}
@@ -504,7 +531,7 @@ const CreationMetadataPanel = ({
                     <div className="absolute inset-x-0 bottom-0 p-5 sm:p-7">
                         <div className="flex flex-col items-center justify-center gap-3 text-center">
                             <div className="text-center">
-                                <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${headerImageUrl ? (isPlanetZoo ? 'text-emerald-200' : 'text-blue-200') : (isPlanetZoo ? 'text-emerald-700 dark:text-emerald-300' : 'text-blue-700 dark:text-blue-300')}`}>{isPlanetZoo ? (blueprint ? 'Zoo blueprint' : park ? 'Zoo save' : 'Planet Zoo creation') : (blueprint ? 'Blueprint' : park ? 'Park save' : 'Creation')}</p>
+                                <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${headerImageUrl ? (isPlanetZoo ? 'text-emerald-200' : 'text-blue-200') : (isPlanetZoo ? 'text-emerald-700 dark:text-emerald-300' : 'text-blue-700 dark:text-blue-300')}`}>{isPlanetZoo ? (blueprint ? 'Zoo blueprint' : park || localZooSave ? 'Zoo save' : 'Planet Zoo creation') : (blueprint ? 'Blueprint' : park ? 'Park save' : 'Creation')}</p>
                                 <h2 className={`mt-1 text-2xl font-bold sm:text-3xl ${headerImageUrl ? 'text-white drop-shadow-md' : 'text-gray-950 dark:text-white'}`}>{headerTitle}</h2>
                                 <BannerEfnPills ratings={blueprint?.ratings} />
                             </div>
@@ -517,8 +544,11 @@ const CreationMetadataPanel = ({
                 <div className="overflow-y-auto p-5 text-center sm:p-7">
                     {!metadata && metadataStatus === 'pending' && <div className="mx-auto max-w-2xl rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-700 shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:shadow-none">This file is waiting for its turn in the sequential metadata scan. The view updates automatically.</div>}
                     {metadataError && <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{metadataError}</div>}
+                    {localZooSave && <div className="mb-8"><PlanetZooExplorer key={`${filePath}:${fileRevision ?? ''}`} filePath={filePath} /></div>}
                     {metadata && <div className="space-y-8">
-                        {isPlanetZoo ? <ZooOverview park={park} blueprint={blueprint} /> : <section className="text-center">
+                        {isPlanetZoo ? <>
+                            {localZooSave ? <details className="rounded-2xl border border-gray-200 p-4 dark:border-gray-800"><summary className="cursor-pointer text-sm font-semibold text-emerald-700 dark:text-emerald-300">More zoo statistics</summary><div className="mt-5"><ZooOverview park={park} blueprint={blueprint} /></div></details> : <ZooOverview park={park} blueprint={blueprint} />}
+                        </> : <section className="text-center">
                             <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-blue-600 dark:text-blue-300">Overview</p>
                             <div className="flex flex-wrap justify-center gap-2">
                                 {park && <>
@@ -629,7 +659,7 @@ const CreationMetadataPanel = ({
     return <>
         <button type="button" onClick={() => setIsOpen(true)} className={triggerClassName || 'mt-3 inline-flex items-center gap-2 rounded-full border border-blue-500/50 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/20'}>
             {metadataStatus === 'pending' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600 dark:bg-blue-300" />}
-            {triggerLabel || (metadataStatus === 'pending' ? 'Stats queued' : 'View stats')}
+            {triggerLabel || (metadataStatus === 'pending' && !localZooSave ? 'Stats queued' : 'View stats')}
         </button>
         {modal}
     </>;

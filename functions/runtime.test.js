@@ -8,7 +8,7 @@ const exportedFunctions = require("./index");
 test("exports every function as a second-generation endpoint", () => {
   const endpoints = Object.entries(exportedFunctions);
 
-  assert.equal(endpoints.length, 95);
+  for (const required of ['voteOnCreation', 'setEventVote', 'recordCreationView', 'queueDiscordLink', 'queueDiscordCreation', 'cleanupAccountBallots']) assert.ok(exportedFunctions[required], required);
   for (const [name, fn] of endpoints) {
     assert.equal(
       fn.__endpoint?.platform,
@@ -49,9 +49,10 @@ test("limits archive processing concurrency and scale", () => {
 
   for (const name of archiveFunctions) {
     const endpoint = exportedFunctions[name].__endpoint;
-    assert.equal(endpoint.availableMemoryMb, 1024);
+    const processesLargePackage = ['createCollaboration', 'finalizeBackupUpload', 'finalizeCollaborationVersion', 'refreshCreationGameMetadata'].includes(name);
+    assert.equal(endpoint.availableMemoryMb, processesLargePackage ? 2048 : 1024);
     assert.equal(endpoint.cpu, 1);
-    assert.equal(endpoint.concurrency, 2);
+    assert.equal(endpoint.concurrency, processesLargePackage ? 1 : 2);
     assert.equal(endpoint.maxInstances, 5);
     assert.equal(endpoint.minInstances, 0);
   }

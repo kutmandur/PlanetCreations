@@ -1,3 +1,4 @@
+import { subscribeEventVoteCounts } from '../../firebase/eventVoting';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -222,25 +223,11 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
     };
 
     useEffect(() => {
-        if (submissions.length === 0) return;
-
-        const voteUnsubscribers = submissions.map(sub => {
-            // Nur echte Event-Votes zählen (die Subcollection enthält auch Likes).
-            const votesQuery = query(
-                collection(db, 'creations', sub.id, 'votes'),
-                where('type', '==', 'event_vote'),
-                where('eventId', '==', eventId)
-            );
-            return onSnapshot(votesQuery, (snapshot) => {
-                setVoteCounts(prev => ({ ...prev, [sub.id]: snapshot.size }));
-            });
-        });
-
-        return () => {
-            voteUnsubscribers.forEach(unsub => unsub());
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [submissions, eventId]);
+        setVoteCounts({});
+        if (!eventId || !eventData) return;
+        return subscribeEventVoteCounts(eventId, eventData.voteSchemaVersion, submissions, setVoteCounts,
+            error => setModalMessage(error.message));
+    }, [submissions, eventId, eventData?.voteSchemaVersion]);
     
     useEffect(() => {
         if (loading) return;

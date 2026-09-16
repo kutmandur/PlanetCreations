@@ -71,7 +71,7 @@ const CreationCard = memo(({
 
     const CardContent = () => (
         <article
-            className={`bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ${
+            className={`pc-theme-card bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full ${
                 isLive
                     ? 'ring-2 ring-red-500'
                     : accentBorderColor

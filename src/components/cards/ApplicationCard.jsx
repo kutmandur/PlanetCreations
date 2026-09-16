@@ -44,7 +44,7 @@ const ApplicationCard = ({ application, onAccept, onDeny, onCopy }) => {
     ].filter(d => d.value);
 
     return (
-        <div className="bg-white rounded-lg shadow-md border border-gray-200 flex flex-col">
+        <div className="pc-theme-card bg-white rounded-lg shadow-md border border-gray-200 flex flex-col">
             <div className="p-4 flex-grow">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-lg font-bold truncate pr-2">{username}</h3>

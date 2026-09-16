@@ -1,4 +1,5 @@
 import React from 'react';
+import {reloadAfterChunkFailure} from '../utils/chunkRecovery';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -21,14 +22,9 @@ class ErrorBoundary extends React.Component {
     const isChunkError =
       error &&
       (error.name === 'ChunkLoadError' ||
-        /Loading (CSS )?chunk [\w-]+ failed/i.test(error.message || ''));
+        /Loading (CSS )?chunk [\w-]+ failed|Failed to fetch dynamically imported module|Importing a module script failed/i.test(error.message || ''));
     if (isChunkError) {
-      let last = 0;
-      try { last = Number(window.sessionStorage.getItem('chunkReloadAt') || 0); } catch (e) { /* ignore */ }
-      if (Date.now() - last > 10000) {
-        try { window.sessionStorage.setItem('chunkReloadAt', String(Date.now())); } catch (e) { /* ignore */ }
-        window.location.reload();
-      }
+      reloadAfterChunkFailure();
     }
   }
 

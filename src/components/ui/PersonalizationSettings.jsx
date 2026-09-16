@@ -94,7 +94,7 @@ const PersonalizationSettings = ({ user, setModalMessage, setConfirmation, embed
     };
 
     return (
-        <div className={embedded ? '' : 'bg-white p-6 rounded-lg shadow-md'}>
+        <div className={embedded ? '' : 'pc-theme-card bg-white p-6 rounded-lg shadow-md'}>
             {!embedded && <h2 className="text-2xl font-bold mb-2">Personalized Recommendations</h2>}
             <p className={`text-gray-600 dark:text-gray-300 mb-4 ${embedded ? 'text-center' : ''}`}>
                 When enabled, your tag clicks, searches and viewed creations personalize
@@ -135,7 +135,7 @@ const PersonalizationSettings = ({ user, setModalMessage, setConfirmation, embed
                     <button
                         onClick={handleWeightsSave}
                         disabled={saving || !weightsDirty}
-                        className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50"
+                        className="pc-theme-action flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50"
                     >
                         {saving ? 'Saving...' : 'Save feed mix'}
                     </button>

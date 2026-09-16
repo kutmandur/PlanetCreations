@@ -18,7 +18,7 @@ export const LIVE_PLATFORMS = {
     youtube: {
         label: 'YouTube',
         hosts: ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'],
-        placeholder: 'https://youtube.com/watch?v=...',
+        placeholder: 'https://youtube.com/@yourchannel',
     },
 };
 

@@ -12,15 +12,15 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
 $expectedEd25519Fingerprint =
     'SHA256:1gx2w8Rtv3wCgi7Jh8myf/KVd72cRQbow03UP8P095Q'
 $openSshDirectory = 'C:\Windows\System32\OpenSSH'
+$sshPath = Join-Path $openSshDirectory 'ssh.exe'
 $sftpPath = Join-Path $openSshDirectory 'sftp.exe'
-$sshKeyscanPath = Join-Path $openSshDirectory 'ssh-keyscan.exe'
 $sshKeygenPath = Join-Path $openSshDirectory 'ssh-keygen.exe'
 $fileZillaDirectory = Join-Path $env:APPDATA 'FileZilla'
 $recentServersPath = Join-Path $fileZillaDirectory 'recentservers.xml'
 
 foreach ($requiredPath in @(
+    $sshPath,
     $sftpPath,
-    $sshKeyscanPath,
     $sshKeygenPath,
     $recentServersPath
 )) {
@@ -117,6 +117,7 @@ function Invoke-SftpCommands {
     $arguments = @(
         '-o', 'StrictHostKeyChecking=yes',
         '-o', "UserKnownHostsFile=$knownHostsPath",
+        '-o', 'KexAlgorithms=curve25519-sha256',
         '-o', 'PreferredAuthentications=password',
         '-o', 'PubkeyAuthentication=no',
         '-P', [string]$port,
@@ -136,20 +137,27 @@ function Invoke-SftpCommands {
 try {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $keyLines = @(& $sshKeyscanPath -p $port -t ed25519 $hostName 2>$null)
-    $keyscanExitCode = $LASTEXITCODE
+    # ssh-keyscan from Windows OpenSSH 9.5 aborts when a newer IONOS server
+    # advertises sntrup761x25519 first. The regular SSH client can constrain
+    # negotiation to curve25519 and record the same Ed25519 host key safely.
+    $hostProbeOutput = @(& $sshPath `
+        -o 'BatchMode=yes' `
+        -o 'ConnectTimeout=15' `
+        -o 'StrictHostKeyChecking=accept-new' `
+        -o "UserKnownHostsFile=$knownHostsPath" `
+        -o 'KexAlgorithms=curve25519-sha256' `
+        -p $port `
+        "$userName@$hostName" `
+        exit 2>&1)
+    $hostProbeExitCode = $LASTEXITCODE
     $ErrorActionPreference = $previousErrorActionPreference
-    if ($keyscanExitCode -ne 0) {
-        throw "IONOS host-key lookup failed with exit code $keyscanExitCode."
+    if (-not (Test-Path -LiteralPath $knownHostsPath)) {
+        throw "IONOS host-key lookup failed with exit code $hostProbeExitCode`: " +
+            ($hostProbeOutput -join ' ')
     }
-    if ($keyLines.Count -eq 0) {
+    if ((Get-Item -LiteralPath $knownHostsPath).Length -eq 0) {
         throw 'IONOS did not return an Ed25519 host key.'
     }
-    [IO.File]::WriteAllLines(
-        $knownHostsPath,
-        $keyLines,
-        (New-Object Text.UTF8Encoding($false))
-    )
     $fingerprintOutput = @(& $sshKeygenPath -lf $knownHostsPath)
     if (-not ($fingerprintOutput -match [regex]::Escape(
         $expectedEd25519Fingerprint

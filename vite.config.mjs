@@ -15,6 +15,11 @@ export default defineConfig(({mode}) => ({
         host: '127.0.0.1',
         port: 3000,
         strictPort: true,
+        // Generated verification packages contain large/temporarily locked
+        // Chromium files and must not trigger dev-server reloads or watchers.
+        watch: {
+            ignored: ['**/.security-build/**', '**/.audit-build/**'],
+        },
         proxy: {
             '/api': {
                 target: 'https://us-central1-planetcreationsdotnet.cloudfunctions.net',

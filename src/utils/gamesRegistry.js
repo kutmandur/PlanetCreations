@@ -17,7 +17,7 @@ const STORAGE_KEY = 'pcn_games_v1';
 export const FALLBACK_GAMES = [
     { id: 'planet-coaster', name: 'Planet Coaster', shortName: 'PC1', shareCodeLabel: 'Steam Sharecode', color: '#3B82F6', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: [], enabled: true, order: 0 },
     { id: 'planet-coaster-2', name: 'Planet Coaster 2', shortName: 'PC2', shareCodeLabel: 'Frontier Workshop Sharecode', color: '#1E40AF', platforms: ['pc'], modsSupported: false, fileExtensions: ['.park2', '.blpr2', '.prkauto2'], enabled: true, order: 1 },
-    { id: 'planet-zoo', name: 'Planet Zoo', shortName: 'PZ', shareCodeLabel: 'Steam Sharecode', color: '#22C55E', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: ['.zoo', '.pzblueprint', '.zooauto'], enabled: true, order: 2 },
+    { id: 'planet-zoo', name: 'Planet Zoo', shortName: 'PZ', shareCodeLabel: 'Steam Sharecode', color: '#22C55E', platforms: ['pc', 'console'], modsSupported: true, fileExtensions: ['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'], enabled: true, order: 2 },
 ];
 export const FALLBACK_DEFAULT_GAME_ID = 'planet-coaster-2';
 
@@ -31,6 +31,10 @@ function sanitize(data) {
             shortName: '', color: '#6B7280', platforms: ['pc'], modsSupported: false,
             fileExtensions: [], enabled: true, order: i,
             ...g,
+            // Older remote/cached registries use the legacy autosave spelling.
+            fileExtensions: g.id === 'planet-zoo' && g.fileExtensions?.includes('.zooauto')
+                ? [...new Set([...g.fileExtensions, '.zoo_auto'])]
+                : (g.fileExtensions || []),
         })),
         defaultGameId: typeof data.defaultGameId === 'string' ? data.defaultGameId : FALLBACK_DEFAULT_GAME_ID,
     };

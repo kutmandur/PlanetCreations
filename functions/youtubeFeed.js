@@ -6,6 +6,15 @@ const YOUTUBE_REQUEST_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
 };
 
+// Without SOCS, requests originating in regions covered by Google's consent
+// flow can be redirected to consent.youtube.com. That page has no player data,
+// which makes an active broadcast look offline. SOCS=CAI records the server-side
+// choice needed to receive the public channel page; no user cookie is involved.
+const YOUTUBE_PAGE_HEADERS = {
+    ...YOUTUBE_REQUEST_HEADERS,
+    Cookie: "SOCS=CAI",
+};
+
 const decodeXmlEntities = (value = "") => value.replace(
     /&(#x[\da-f]+|#\d+|amp|apos|gt|lt|quot);/gi,
     (entity, code) => {
@@ -102,6 +111,24 @@ const getYoutubeInitialData = (html) => {
     throw new Error("Could not read video data from the YouTube channel page.");
 };
 
+const getYoutubeInitialPlayerResponse = (html) => {
+    const markers = [
+        "var ytInitialPlayerResponse =",
+        "window[\"ytInitialPlayerResponse\"] =",
+        "ytInitialPlayerResponse =",
+    ];
+    for (const marker of markers) {
+        const json = extractJsonObject(html, marker);
+        if (!json) continue;
+        try {
+            return JSON.parse(json);
+        } catch {
+            // Try the next known assignment form.
+        }
+    }
+    return null;
+};
+
 const getText = (value) => {
     if (!value) return "";
     if (typeof value.simpleText === "string") return value.simpleText;
@@ -159,28 +186,30 @@ const parseYoutubeChannelPage = (html, maxVideos = 12) => {
 const extractYoutubeChannelId = async (inputUrl, fetchImpl = fetch) => {
     const parsed = new URL(inputUrl);
     const host = parsed.hostname.replace(/^www\./, "");
-    if (host !== "youtube.com" && host !== "m.youtube.com" && host !== "youtu.be") {
+    if (parsed.protocol !== "https:" || (host !== "youtube.com" && host !== "m.youtube.com")) {
         throw new Error("Only YouTube URLs are allowed.");
     }
-    const channelMatch = parsed.pathname.match(/\/channel\/(UC[\w-]{22})/);
+    const channelMatch = parsed.pathname.match(/^\/channel\/(UC[\w-]{22})\/?$/);
     if (channelMatch) return channelMatch[1];
     if (!/^\/(?:@[^/]+|c\/[^/]+|user\/[^/]+)\/?$/.test(parsed.pathname)) {
         throw new Error("The YouTube URL must point to a channel.");
     }
 
     const pageResponse = await fetchImpl(parsed.href, {
-        headers: YOUTUBE_REQUEST_HEADERS,
+        headers: YOUTUBE_PAGE_HEADERS,
+        signal: AbortSignal.timeout(10000),
     });
     if (!pageResponse.ok) {
         throw new Error(`Could not load channel page (HTTP ${pageResponse.status}).`);
     }
     const html = await pageResponse.text();
-    const idMatch = html.match(/"channelId":"(UC[\w-]{22})"/) ||
-        html.match(/channel_id=(UC[\w-]{22})/);
-    if (!idMatch) {
+    // A channel page can contain recommendations from other channels. Its
+    // metadata identifies the owner; the first arbitrary channelId does not.
+    const channelId = getYoutubeInitialData(html).metadata?.channelMetadataRenderer?.externalId;
+    if (!/^UC[\w-]{22}$/.test(channelId || "")) {
         throw new Error("Could not determine the channel ID from this URL.");
     }
-    return idMatch[1];
+    return channelId;
 };
 
 const fetchYoutubeChannelVideos = async (
@@ -190,10 +219,7 @@ const fetchYoutubeChannelVideos = async (
 ) => {
     const channelPageUrl = `https://www.youtube.com/channel/${channelId}/videos?hl=en&gl=US`;
     const pageResponse = await fetchImpl(channelPageUrl, {
-        headers: {
-            ...YOUTUBE_REQUEST_HEADERS,
-            Cookie: "CONSENT=YES+cb",
-        },
+        headers: YOUTUBE_PAGE_HEADERS,
     });
     if (!pageResponse.ok) {
         throw new Error(`YouTube channel page failed (HTTP ${pageResponse.status}).`);
@@ -225,10 +251,120 @@ const fetchYoutubeChannelFeed = async (channelId, fetchImpl = fetch) => {
     }
 };
 
+// isLiveContent includes archives. Only explicit current-live signals count.
+const parseYoutubePlayerMetadata = (html, expectedVideoId = null) => {
+    const player = getYoutubeInitialPlayerResponse(html);
+    const video = player?.videoDetails || {};
+    const details = player?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails;
+    if (!player || !/^[\w-]{11}$/.test(video.videoId || "") ||
+        (expectedVideoId && video.videoId !== expectedVideoId) ||
+        !/^UC[\w-]{22}$/.test(video.channelId || "")) {
+        throw new Error("YouTube did not provide a verifiable video identity.");
+    }
+    const status = player.playabilityStatus?.status;
+    const ended = Boolean(details?.endTimestamp || video.isPostLiveDvr);
+    const upcoming = video.isUpcoming === true || status === "LIVE_STREAM_OFFLINE";
+    let isLive = null;
+    if (ended || upcoming) isLive = false;
+    else if (status === "OK") {
+        if (details?.isLiveNow === true || video.isLive === true) isLive = true;
+        else if (details?.isLiveNow === false || video.isLiveContent === false) isLive = false;
+    }
+    return {
+        isLive, streamId: video.videoId, broadcasterId: video.channelId,
+        broadcasterLogin: null, title: String(video.title || "").slice(0, 300),
+        tags: Array.isArray(video.keywords) ? video.keywords.slice(0, 20) : [],
+        categoryId: null, categoryName: "",
+    };
+};
+
+const parseYoutubeLiveCandidates = (html, channelId) => {
+    const data = getYoutubeInitialData(html);
+    if (data.metadata?.channelMetadataRenderer?.externalId !== channelId) {
+        throw new Error("YouTube returned a different channel.");
+    }
+    const ids = new Set();
+    const hasLiveBadge = (value) => {
+        if (!value || typeof value !== "object") return false;
+        if (value.style === "LIVE" || value.style === "BADGE_STYLE_TYPE_LIVE_NOW" ||
+            value.badgeStyle === "THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE") return true;
+        return Object.values(value).some(hasLiveBadge);
+    };
+    const visit = (value) => {
+        if (!value || typeof value !== "object") return;
+        const video = value.videoRenderer || value.gridVideoRenderer ||
+            (value.lockupViewModel?.contentType === "LOCKUP_CONTENT_TYPE_VIDEO" ?
+                value.lockupViewModel : null);
+        if (video) {
+            const id = video.videoId || video.contentId;
+            if (/^[\w-]{11}$/.test(id || "") && !video.upcomingEventData &&
+                hasLiveBadge([video.badges, video.thumbnailOverlays, video.contentImage])) ids.add(id);
+            return;
+        }
+        Object.values(value).forEach(visit);
+    };
+    visit(data.contents);
+    return [...ids].slice(0, 5);
+};
+
+const fetchYoutubeChannelLiveMetadata = async (channelId, videoId = null, fetchImpl = fetch) => {
+    if (!/^UC[\w-]{22}$/.test(channelId || "")) throw new Error("Invalid YouTube channel identity.");
+    const response = await fetchImpl("https://www.youtube.com/channel/" + channelId + "/streams?hl=en&gl=US",
+        {headers: YOUTUBE_PAGE_HEADERS, signal: AbortSignal.timeout(10000)});
+    if (!response.ok) throw new Error("YouTube streams page failed (HTTP " + response.status + ").");
+    const html = await response.text();
+    const ids = parseYoutubeLiveCandidates(html, channelId);
+    const selectedId = videoId || ids[0];
+    if (!selectedId || !ids.includes(selectedId)) return {isLive: false, streamId: videoId, broadcasterId: channelId};
+    const videos = parseYoutubeChannelPage(html, 50).videos;
+    const title = videos.find((item) => item.id === selectedId)?.title;
+    if (!title) throw new Error("YouTube live listing is incomplete.");
+    return {isLive: true, streamId: selectedId, broadcasterId: channelId,
+        broadcasterLogin: null, title: title.slice(0, 300), tags: [], categoryId: null, categoryName: ""};
+};
+
+const fetchYoutubeVideoChannelId = async (videoId, fetchImpl = fetch) => {
+    if (!/^[\w-]{11}$/.test(videoId || "")) throw new Error("A valid YouTube video ID is required.");
+    const response = await fetchImpl("https://www.youtube.com/oembed?" +
+        new URLSearchParams({url: "https://www.youtube.com/watch?v=" + videoId, format: "json"}),
+    {headers: YOUTUBE_PAGE_HEADERS, signal: AbortSignal.timeout(10000)});
+    if (!response.ok) throw new Error("YouTube could not identify the video owner.");
+    const body = await response.json();
+    return extractYoutubeChannelId(body.author_url, fetchImpl);
+};
+
+const fetchYoutubeLiveVideoMetadata = async (videoId, fetchImpl = fetch) => {
+    if (!/^[\w-]{11}$/.test(videoId || "")) throw new Error("A valid YouTube video ID is required.");
+    const response = await fetchImpl("https://www.youtube.com/watch?v=" + videoId + "&hl=en&gl=US",
+        {headers: YOUTUBE_PAGE_HEADERS, signal: AbortSignal.timeout(10000)});
+    if (!response.ok) throw new Error("YouTube watch page failed (HTTP " + response.status + ").");
+    return parseYoutubePlayerMetadata(await response.text(), videoId);
+};
+
+// /live may select a stale scheduled broadcast while another output is live.
+const fetchYoutubeActiveLiveVideo = async (channelId, fetchImpl = fetch) => {
+    if (!/^UC[\w-]{22}$/.test(channelId || "")) throw new Error("A valid YouTube channel ID is required.");
+    try {
+        const response = await fetchImpl("https://www.youtube.com/channel/" + channelId + "/live?hl=en&gl=US",
+            {headers: YOUTUBE_PAGE_HEADERS, signal: AbortSignal.timeout(10000)});
+        if (response.ok) {
+            const metadata = parseYoutubePlayerMetadata(await response.text());
+            if (metadata.isLive === true && metadata.broadcasterId === channelId) {
+                return {videoId: metadata.streamId,
+                    url: "https://www.youtube.com/watch?v=" + metadata.streamId, metadata};
+            }
+        }
+    } catch {
+        // An incomplete player is not an offline verdict; use the Streams tab.
+    }
+    const metadata = await fetchYoutubeChannelLiveMetadata(channelId, null, fetchImpl);
+    return metadata.isLive ? {videoId: metadata.streamId,
+        url: "https://www.youtube.com/watch?v=" + metadata.streamId, metadata} : null;
+};
+
 module.exports = {
-    extractYoutubeChannelId,
-    fetchYoutubeChannelFeed,
-    fetchYoutubeChannelVideos,
-    parseYoutubeChannelPage,
-    parseYoutubeRss,
+    extractYoutubeChannelId, fetchYoutubeActiveLiveVideo, fetchYoutubeLiveVideoMetadata,
+    fetchYoutubeChannelFeed, fetchYoutubeChannelVideos, parseYoutubeChannelPage, parseYoutubeRss,
+    parseYoutubePlayerMetadata, parseYoutubeLiveCandidates,
+    fetchYoutubeChannelLiveMetadata, fetchYoutubeVideoChannelId,
 };

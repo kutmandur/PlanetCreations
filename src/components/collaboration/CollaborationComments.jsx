@@ -1,9 +1,18 @@
+import {useQueries} from '@tanstack/react-query';
+import {doc, getDoc} from 'firebase/firestore';
+import {db} from '../../firebase/config';
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
 const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
+    const authorIds = [...new Set(comments.map(comment => comment.authorId).filter(Boolean))];
+    const profiles = useQueries({queries: authorIds.map(uid => ({
+        queryKey: ['public-author-profile', uid], staleTime: 5 * 60 * 1000,
+        queryFn: async () => (await getDoc(doc(db, 'profiles', uid))).data() || null,
+    }))});
+    const authors = new Map(authorIds.map((uid, i) => [uid, profiles[i].data]));
     const [newComment, setNewComment] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const commentsEndRef = useRef(null);
@@ -43,7 +52,9 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
     };
 
     // Group comments by date
-    const groupedComments = comments.reduce((groups, comment) => {
+    const groupedComments = comments.reduce((groups, rawComment) => {
+        const author = authors.get(rawComment.authorId);
+        const comment = {...rawComment, authorUsername: author?.username || 'Community member', authorAvatarUrl: author?.profilePictureUrl || null};
         const date = comment.createdAt?.toDate?.() || new Date();
         const dateKey = date.toDateString();
 

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { acceleratorFromKeyboardEvent, displayAccelerator } from '../../utils/keyboardShortcut';
 
 const PROVIDERS = {
     obs: {
@@ -22,9 +21,7 @@ const PROVIDERS = {
 // ausschließlich, wenn die Streaming-Bridge im preload vorhanden ist).
 // Verbindet den Client wahlweise mit OBS (obs-websocket) oder Streamlabs
 // Desktop (eigene Remote-Control-API), damit Go Live beim Stream-Start
-// angeboten und beim Stream-Ende automatisch beendet wird; zusätzlich der
-// manuelle Overlay-Schalter (OBS-/Streamlabs-Capture auf macOS/Linux bzw.
-// Positionieren ohne laufendes Spiel auf Windows).
+// angeboten und beim Stream-Ende automatisch beendet wird.
 const StreamingSettings = ({ setModalMessage }) => {
     const [status, setStatus] = useState(null);
     const [provider, setProvider] = useState('obs');
@@ -35,10 +32,6 @@ const StreamingSettings = ({ setModalMessage }) => {
     const [secret, setSecret] = useState('');
     const [secretDirty, setSecretDirty] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [overlayForced, setOverlayForced] = useState(false);
-    const [overlayHotkeys, setOverlayHotkeys] = useState(null);
-    const [hotkeysSaving, setHotkeysSaving] = useState(false);
-
     const supported = Boolean(window.electronAPI?.getObsStatus);
 
     useEffect(() => {
@@ -57,21 +50,11 @@ const StreamingSettings = ({ setModalMessage }) => {
                     : (result.obsPort || PROVIDERS.obs.defaultPort));
             })
             .catch(() => {});
-        window.electronAPI.getOverlayForced?.()
-            .then((value) => { if (!cancelled) setOverlayForced(value === true); })
-            .catch(() => {});
-        window.electronAPI.getOverlayHotkeys?.()
-            .then((value) => { if (!cancelled && value?.shortcuts) setOverlayHotkeys(value); })
-            .catch(() => {});
         const unsubStatus = window.electronAPI.onObsStatusChanged?.((next) =>
             setStatus((current) => ({ ...current, ...next })));
-        const unsubForced = window.electronAPI.onOverlayForcedChanged?.((value) => setOverlayForced(value === true));
-        const unsubHotkeys = window.electronAPI.onOverlayHotkeysChanged?.(setOverlayHotkeys);
         return () => {
             cancelled = true;
             if (typeof unsubStatus === 'function') unsubStatus();
-            if (typeof unsubForced === 'function') unsubForced();
-            if (typeof unsubHotkeys === 'function') unsubHotkeys();
         };
     }, [supported]);
 
@@ -121,40 +104,6 @@ const StreamingSettings = ({ setModalMessage }) => {
         }
     };
 
-    const handleOverlayForcedChange = async (event) => {
-        const value = event.target.checked;
-        setOverlayForced(value);
-        try {
-            await window.electronAPI.setOverlayForced?.(value);
-        } catch (error) {
-            setModalMessage(`Could not toggle the In-Game Overlay: ${error.message}`);
-        }
-    };
-
-    const recordHotkey = (field) => (event) => {
-        event.preventDefault();
-        const accelerator = acceleratorFromKeyboardEvent(event);
-        if (!accelerator) return;
-        setOverlayHotkeys((current) => ({
-            ...(current || {}),
-            shortcuts: { ...(current?.shortcuts || {}), [field]: accelerator },
-        }));
-    };
-
-    const saveOverlayHotkeys = async () => {
-        if (!overlayHotkeys?.shortcuts) return;
-        setHotkeysSaving(true);
-        try {
-            const result = await window.electronAPI.setOverlayHotkeys(overlayHotkeys.shortcuts);
-            setOverlayHotkeys(result);
-            setModalMessage('Overlay shortcuts saved and activated.');
-        } catch (error) {
-            setModalMessage(`Could not activate the overlay shortcuts: ${error.message}`);
-        } finally {
-            setHotkeysSaving(false);
-        }
-    };
-
     const statusText = !status?.enabled ? 'Disabled'
         : !status?.connected ? (status?.error || `Waiting for ${PROVIDERS[status?.provider === 'streamlabs' ? 'streamlabs' : 'obs'].label}...`)
             : status?.streaming ? `Connected — streaming${status?.service ? ` on ${status.service}` : ''}`
@@ -164,7 +113,7 @@ const StreamingSettings = ({ setModalMessage }) => {
             : 'text-green-600';
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
             <h2 className="text-2xl font-bold mb-2">Streaming</h2>
             <p className="text-gray-600 mb-4">
                 Connect your streaming software so PlanetCreations can offer to link a creation when your stream starts
@@ -343,61 +292,6 @@ const StreamingSettings = ({ setModalMessage }) => {
                 {isSaving ? 'Saving...' : 'Save & Connect'}
             </button>
 
-            <label className="flex items-start justify-between gap-6 cursor-pointer mt-6 pt-6 border-t">
-                <span>
-                    <span className="block text-lg font-semibold text-gray-800">Keep In-Game Overlay visible</span>
-                    <span className="block text-gray-600 mt-1">
-                        Keeps your PlanetCreations gateway available even when Planet Coaster 2 is not detected. This also
-                        enables manual access on macOS and Linux and optional QR capture in streaming software.
-                    </span>
-                </span>
-                <span className="flex items-center gap-3 shrink-0 mt-1">
-                    <span className="text-sm font-semibold text-gray-600">{overlayForced ? 'Visible' : 'Auto'}</span>
-                    <input
-                        type="checkbox"
-                        checked={overlayForced}
-                        onChange={handleOverlayForcedChange}
-                        className="h-5 w-5 accent-blue-600"
-                        aria-label="Keep the In-Game Overlay visible regardless of game detection"
-                    />
-                </span>
-            </label>
-
-            {overlayHotkeys?.shortcuts && (
-                <div className="mt-6 border-t pt-6">
-                    <h3 className="text-lg font-bold text-gray-800">Global overlay shortcuts</h3>
-                    <p className="mt-1 text-sm text-gray-600">
-                        These work while the game is focused. Click a field, then press the complete key combination.
-                        The defaults use three modifiers to avoid Planet Coaster controls.
-                    </p>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        {[
-                            ['icon', 'Toggle overlay icon'],
-                            ['overlay', 'Toggle full overlay'],
-                        ].map(([field, label]) => (
-                            <label key={field} className="block">
-                                <span className="mb-1 block text-sm font-bold text-gray-600">{label}</span>
-                                <input
-                                    readOnly
-                                    value={displayAccelerator(overlayHotkeys.shortcuts[field])}
-                                    onKeyDown={recordHotkey(field)}
-                                    onFocus={(event) => event.target.select()}
-                                    className="w-full cursor-pointer rounded-lg border p-3 text-center font-mono"
-                                    aria-label={label}
-                                />
-                            </label>
-                        ))}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={saveOverlayHotkeys}
-                        disabled={hotkeysSaving}
-                        className="mt-4 w-full rounded-lg bg-gray-800 px-4 py-3 font-bold text-white transition-colors hover:bg-gray-900 disabled:opacity-50"
-                    >
-                        {hotkeysSaving ? 'Activating…' : 'Save overlay shortcuts'}
-                    </button>
-                </div>
-            )}
         </div>
     );
 };

@@ -22,7 +22,7 @@ const CreationShowcaseCard = ({ creation, community, setPopoverView, setModalMes
     const customData = creation.communitySpecificData?.[community.id] || {};
 
     return (
-        <div className="bg-white p-3 rounded-lg shadow border w-full">
+        <div className="pc-theme-card bg-white p-3 rounded-lg shadow border w-full">
             <div className="flex justify-between items-start">
                 <button 
                     onClick={() => setPopoverView({ name: 'detail', id: creation.id })} 

@@ -14,10 +14,13 @@ import PasswordStrengthIndicator from '../ui/PasswordStrengthIndicator';
 import InfluencerApplicationModal from '../modals/InfluencerApplicationModal';
 import NotificationSettings from '../ui/NotificationSettings';
 import PersonalizationSettings from '../ui/PersonalizationSettings';
+import ThemeSettings from '../ui/ThemeSettings';
+import { hydratePersonalTheme } from '../../utils/personalTheme';
+import ClientSettings from '../ui/ClientSettings';
 import StreamingSettings from '../ui/StreamingSettings';
 import Icon from '../ui/Icon';
 
-const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeTab }) => {
+const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clientOnly = false, onBackToLibrary }) => {
     const [loading, setLoading] = useState(false);
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -33,26 +36,26 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     const [linkedDiscordInfo, setLinkedDiscordInfo] = useState(null);
     const [isJoining, setIsJoining] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [launchAtLogin, setLaunchAtLoginState] = useState(false);
-    const [launchAtLoginSupported, setLaunchAtLoginSupported] = useState(false);
-    const [launchAtLoginManagedBySystem, setLaunchAtLoginManagedBySystem] = useState(false);
-    const [isUpdatingLaunchAtLogin, setIsUpdatingLaunchAtLogin] = useState(false);
-    const [activeSettingsId, setActiveSettingsId] = useState('account');
-    const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
+    const [activeSettingsId, setActiveSettingsId] = useState(clientOnly ? 'client' : 'account');
+    const [mobileSettingsOpen, setMobileSettingsOpen] = useState(clientOnly);
 
-    const isDesktopClient = Boolean(window.electronAPI?.getObsStatus);
+    const isDesktopClient = window.electronAPI?.isElectron === true;
+    const canUseStreaming = isDesktopClient && Boolean(window.electronAPI?.getObsStatus);
     const discordPlatform = SOCIAL_PLATFORMS.find((platform) => platform.id === 'discord');
     const settingsCategories = [
-        { id: 'account', label: 'Account', hint: 'Email & password', icon: ICONS.user, tint: 'bg-gray-500' },
-        ...(user ? [
-            { id: 'discord', label: 'Discord', hint: 'Account & rank sync', icon: discordPlatform?.icon || ICONS.users, solid: true, tint: 'bg-indigo-500' },
+        ...(!clientOnly && user ? [{ id: 'account', label: 'Account', hint: 'Email & password', icon: ICONS.user, tint: 'bg-gray-500', activeText: 'text-white' }] : []),
+        ...(!clientOnly && user ? [
+            { id: 'discord', label: 'Discord', hint: 'Account & rank sync', icon: discordPlatform?.icon || ICONS.users, solid: true, tint: 'bg-indigo-500', activeText: 'text-white' },
             { id: 'notifications', label: 'Notifications', hint: 'Inbox & push alerts', icon: ICONS.bell, tint: 'bg-sky-500' },
         ] : []),
         ...(isDesktopClient ? [
-            { id: 'desktop', label: 'Desktop & Streaming', hint: 'App, OBS & Streamlabs', icon: ICONS.desktop, tint: 'bg-emerald-500' },
+            { id: 'client', label: 'Client', hint: 'Overlay, shortcuts & local files', icon: ICONS.desktop, tint: 'bg-emerald-500' },
         ] : []),
-        ...(user ? [
-            { id: 'personalization', label: 'Personalization', hint: 'Feed recommendations', icon: ICONS.star, tint: 'bg-amber-500' },
+        ...(canUseStreaming ? [
+            { id: 'streaming', label: 'Streaming', hint: 'OBS & Streamlabs', icon: ICONS.video, tint: 'bg-violet-600', activeText: 'text-white' },
+        ] : []),
+        ...(!clientOnly && user ? [
+            { id: 'personalization', label: 'Personalization', hint: 'Themes & feed recommendations', icon: ICONS.star, tint: 'bg-amber-500' },
             { id: 'danger', label: 'Danger Zone', hint: 'Delete your account', icon: ICONS.trash, tint: 'bg-red-500' },
         ] : []),
     ];
@@ -63,33 +66,19 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
     };
 
     useEffect(() => {
-        let cancelled = false;
-
-        const loadLaunchAtLoginSetting = async () => {
-            if (!window.electronAPI?.getLaunchAtLogin) return;
-            try {
-                const result = await window.electronAPI.getLaunchAtLogin();
-                if (!cancelled) {
-                    setLaunchAtLoginSupported(Boolean(result?.supported));
-                    setLaunchAtLoginManagedBySystem(result?.managedBySystem === true);
-                    if (typeof result?.enabled === 'boolean') setLaunchAtLoginState(result.enabled);
-                }
-            } catch (error) {
-                console.error('Could not read launch-at-login setting:', error);
-            }
-        };
-
-        loadLaunchAtLoginSetting();
-        return () => { cancelled = true; };
-    }, []);
-
-    useEffect(() => {
-        if (!user) return;
+        if (!user || clientOnly) return;
 
         const userRef = doc(db, 'users', user.uid);
+        let lastAccountState = null;
         const unsubscribe = onSnapshot(userRef, async (userSnap) => {
             if (userSnap.exists()) {
                 const data = userSnap.data();
+                // Apply confirmed settings only; a rejected save must not change the theme.
+                if (!userSnap.metadata?.hasPendingWrites) hydratePersonalTheme(user.uid, data.personalTheme);
+                // Theme-only changes do not require another public profile read.
+                const accountState = JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => key !== 'personalTheme')));
+                if (accountState === lastAccountState) return;
+                lastAccountState = accountState;
                 
                 if (data.discordId && data.discordUsername) {
                     setLinkedDiscordInfo({ id: data.discordId, username: data.discordUsername });
@@ -131,7 +120,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
 
 
         return () => unsubscribe();
-    }, [user, setModalMessage]);
+    }, [user, setModalMessage, clientOnly]);
 
     const handleLinkDiscord = async () => {
         try {
@@ -304,36 +293,14 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
         }
     };
 
-    const handleLaunchAtLoginChange = async (event) => {
-        const enabled = event.target.checked;
-        setIsUpdatingLaunchAtLogin(true);
-        try {
-            const result = await window.electronAPI.setLaunchAtLogin(enabled);
-            setLaunchAtLoginSupported(Boolean(result?.supported));
-            setLaunchAtLoginState(Boolean(result?.enabled));
-        } catch (error) {
-            setModalMessage(`Could not update the Windows startup setting: ${error.message}`);
-        } finally {
-            setIsUpdatingLaunchAtLogin(false);
-        }
-    };
-
-    const handleOpenStartupSettings = async () => {
-        try {
-            const opened = await window.electronAPI?.openStartupAppSettings?.();
-            if (!opened) setModalMessage('Windows startup settings could not be opened.');
-        } catch (error) {
-            setModalMessage(`Could not open Windows startup settings: ${error.message}`);
-        }
-    };
-
     return (
         <div className="max-w-6xl mx-auto mt-10 p-4 sm:p-8" style={color.style}>
+            {clientOnly && onBackToLibrary && <button type="button" onClick={onBackToLibrary} className="mb-4 text-sm font-semibold text-gray-600 hover:underline">← Back to Offline Manager</button>}
             <h1 className="text-4xl font-bold text-center text-gray-800 mb-8">Settings</h1>
 
             <div className="lg:flex lg:gap-6 lg:items-start">
                 <nav className={`${mobileSettingsOpen ? 'hidden' : 'block'} lg:block lg:w-72 lg:flex-shrink-0`}>
-                    <div className="bg-white rounded-2xl shadow-md p-2">
+                    <div className="pc-theme-card bg-white rounded-2xl shadow-md p-2">
                         {settingsCategories.map((category) => {
                             const isActive = category.id === activeSettingsId;
                             return (
@@ -341,19 +308,20 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                                     key={category.id}
                                     type="button"
                                     onClick={() => openSettingsCategory(category.id)}
+                                    aria-current={isActive ? 'page' : undefined}
                                     className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-colors mb-1 last:mb-0
-                                        ${isActive ? 'lg:bg-[--game-color] lg:text-white' : 'hover:bg-gray-100 text-gray-800'}`}
+                                        ${isActive ? `${category.tint} ${category.activeText || 'text-slate-950'}` : 'hover:bg-gray-100 text-gray-800'}`}
                                 >
-                                    <span className={`w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center text-white ${category.tint}`}>
+                                    <span className={`w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center ${isActive ? 'text-inherit' : 'text-white'} ${category.tint}`}>
                                         <Icon path={category.icon} solid={category.solid === true} className="w-5 h-5" />
                                     </span>
                                     <span className="flex-grow min-w-0">
                                         <span className="block font-semibold leading-tight">{category.label}</span>
-                                        <span className={`block text-xs truncate ${isActive ? 'lg:text-white/80 text-gray-400' : 'text-gray-400'}`}>
+                                        <span className={`block text-xs truncate ${isActive ? 'text-inherit' : 'text-gray-400'}`}>
                                             {category.hint}
                                         </span>
                                     </span>
-                                    <Icon path={ICONS.chevronRight} className="w-4 h-4 flex-shrink-0 lg:hidden text-gray-300" />
+                                    <Icon path={ICONS.chevronRight} className={`w-4 h-4 flex-shrink-0 lg:hidden ${isActive ? 'text-inherit' : 'text-gray-300'}`} />
                                 </button>
                             );
                         })}
@@ -370,10 +338,10 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                         Settings
                     </button>
 
-                    <div className={activeSettingsId === 'account' ? 'space-y-8' : 'hidden'}>
+                    {!clientOnly && user && <div className={activeSettingsId === 'account' ? 'space-y-8' : 'hidden'}>
 
             {user && !user.emailVerified && (
-                 <div className="bg-white p-6 rounded-lg shadow-md">
+                 <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
                     <h2 className="text-2xl font-bold mb-2">Email Verification</h2>
                     <p className="text-gray-600 mb-4">Your email address has not been verified. Please check your inbox or resend the verification email.</p>
                     <button 
@@ -385,7 +353,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 </div>
             )}
             
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-4">Change Password</h2>
                 <form onSubmit={handlePasswordChange} className="space-y-4">
                     <div>
@@ -425,10 +393,10 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 </form>
             </div>
 
-                    </div>
+                    </div>}
 
-                    <div className={activeSettingsId === 'discord' ? 'space-y-8' : 'hidden'}>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+                    {!clientOnly && user && <div className={activeSettingsId === 'discord' ? 'space-y-8' : 'hidden'}>
+            <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Discord Integration</h2>
                 <p className="text-gray-600 mb-4">Link your Discord account to sync roles and find communities your friends are in.</p>
                 
@@ -470,60 +438,22 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 </div>
             </div>
 
-                    </div>
+                    </div>}
 
                     <div className={activeSettingsId === 'notifications' ? 'space-y-8' : 'hidden'}>
-                        {user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
+                        {!clientOnly && user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
                     </div>
 
-                    <div className={activeSettingsId === 'desktop' ? 'space-y-8' : 'hidden'}>
-            {launchAtLoginSupported && (
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-2xl font-bold mb-2">Desktop App</h2>
-                    <div className="flex items-start justify-between gap-6">
-                        <span>
-                            <span className="block text-lg font-semibold text-gray-800">Start with Windows</span>
-                            <span className="block text-gray-600 mt-1">
-                                {launchAtLoginManagedBySystem
-                                    ? 'The Microsoft Store version registers startup with Windows. You remain in control through Windows Startup Apps settings.'
-                                    : 'Open PlanetCreations when you sign in to Windows. Closing the window keeps the client running in the system tray for notifications and background tasks.'}
-                            </span>
-                        </span>
-                        {launchAtLoginManagedBySystem ? (
-                            <button
-                                type="button"
-                                onClick={handleOpenStartupSettings}
-                                className="shrink-0 mt-1 rounded-lg bg-gray-800 px-4 py-2 text-sm font-bold text-white hover:bg-gray-700"
-                            >
-                                Open Windows settings
-                            </button>
-                        ) : <span className="flex items-center gap-3 shrink-0 mt-1">
-                            <span className="text-sm font-semibold text-gray-600">
-                                {launchAtLogin ? 'Enabled' : 'Disabled'}
-                            </span>
-                            <input
-                                type="checkbox"
-                                checked={launchAtLogin}
-                                onChange={handleLaunchAtLoginChange}
-                                disabled={isUpdatingLaunchAtLogin}
-                                className="h-5 w-5 accent-blue-600 disabled:opacity-50"
-                                aria-label="Start PlanetCreations with Windows"
-                            />
-                        </span>}
-                    </div>
-                </div>
-            )}
-
-            <StreamingSettings setModalMessage={setModalMessage} />
-
-                    </div>
+                    {isDesktopClient && activeSettingsId === 'client' && <ClientSettings setModalMessage={setModalMessage} />}
+                    {canUseStreaming && activeSettingsId === 'streaming' && <StreamingSettings setModalMessage={setModalMessage} />}
 
                     <div className={activeSettingsId === 'personalization' ? 'space-y-8' : 'hidden'}>
-                        {user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
+                        {!clientOnly && user && <ThemeSettings key={user.uid} user={user} />}
+                        {!clientOnly && user && <PersonalizationSettings user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} />}
                     </div>
 
-                    <div className={activeSettingsId === 'account' ? 'mt-8 space-y-8' : 'hidden'}>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+                    {!clientOnly && user && <div className={activeSettingsId === 'account' ? 'mt-8 space-y-8' : 'hidden'}>
+            <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-2">Influencer Application</h2>
                 <p className="text-gray-600 mb-4">Apply to become an official Influencer. You must have at least one social media link in your profile to apply. You can apply once every 30 days.</p>
                 <button
@@ -545,9 +475,9 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                 />
             )}
 
-                    </div>
+                    </div>}
 
-                    <div className={activeSettingsId === 'danger' ? 'space-y-8' : 'hidden'}>
+                    {!clientOnly && user && <div className={activeSettingsId === 'danger' ? 'space-y-8' : 'hidden'}>
             <div className="bg-red-50 p-6 rounded-lg shadow-md border border-red-200">
                 <h2 className="text-2xl font-bold mb-2 text-red-700">Delete Account</h2>
                 <p className="text-red-600 mb-4">This action is permanent and cannot be undone. All your creations and profile data will be lost.</p>
@@ -570,7 +500,7 @@ const SettingsPage = ({ user, setView, setModalMessage, setConfirmation, activeT
                     {loading ? 'Deleting...' : 'Delete My Account'}
                 </button>
             </div>
-                    </div>
+                    </div>}
                 </section>
             </div>
         </div>

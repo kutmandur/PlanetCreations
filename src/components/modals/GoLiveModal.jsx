@@ -3,7 +3,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQuery } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
-import { ICONS, getYoutubeId } from '../../utils/helpers';
+import { ICONS } from '../../utils/helpers';
 import { LIVE_PLATFORMS, isValidStreamUrl, setLiveSession } from '../../utils/liveStream';
 import { setOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
 import { setStreamSession } from '../../utils/streamSession';
@@ -12,12 +12,8 @@ import Spinner from '../ui/Spinner';
 
 // Ordnet den OBS-Stream-Service ("Twitch", "YouTube - RTMPS", ...) einer
 // unserer Plattformen zu; null wenn unbekannt (dann wählt der Nutzer manuell).
-export const platformFromObsService = (service) => {
-    if (typeof service !== 'string') return null;
-    if (/twitch/i.test(service)) return 'twitch';
-    if (/youtube/i.test(service)) return 'youtube';
-    return null;
-};
+import {platformFromObsService} from '../../utils/obsPlatform';
+export {platformFromObsService} from '../../utils/obsPlatform';
 
 // "Creation mit dem Stream verbinden": wird beim OBS-Stream-Start von App.js
 // geöffnet oder von der Kreationsseite mit vorgewählter Creation. Der Live-Status
@@ -92,17 +88,9 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
             setUrlError(`Please enter a valid https ${LIVE_PLATFORMS[platform].label} URL (e.g. ${LIVE_PLATFORMS[platform].placeholder}).`);
             return;
         }
-        if (platform === 'youtube' && !getYoutubeId(trimmedUrl)) {
-            setUrlError('For YouTube, please paste the URL of your live video (watch?v=... or youtu.be/...), not just your channel.');
-            return;
-        }
         const trimmedSecondaryUrl = secondaryUrl.trim();
         if (dualStream && !isValidStreamUrl(secondaryPlatform, trimmedSecondaryUrl)) {
             setUrlError(`Please enter a valid https ${LIVE_PLATFORMS[secondaryPlatform].label} URL for the second output.`);
-            return;
-        }
-        if (dualStream && secondaryPlatform === 'youtube' && !getYoutubeId(trimmedSecondaryUrl)) {
-            setUrlError('For the YouTube output, please paste the URL of the live video, not just the channel.');
             return;
         }
         setUrlError('');

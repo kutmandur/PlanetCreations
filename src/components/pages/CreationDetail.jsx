@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import {getViewSessionToken} from '../../utils/viewSession';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
 import { onSnapshot, doc, getDoc, setDoc, collection, writeBatch, serverTimestamp, deleteDoc, query, where, documentId, getDocs, increment, arrayUnion, arrayRemove, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -10,7 +11,8 @@ import Icon from '../ui/Icon';
 import ProfileImage from '../ui/ProfileImage';
 import CommunityInfoCard from '../cards/CommunityInfoCard';
 import CreationSharingQrCode from '../ui/CreationSharingQrCode';
-import GoLiveModal from '../modals/GoLiveModal';
+import lazyWithReload from '../../utils/lazyWithReload';
+const GoLiveModal = lazyWithReload(() => import('../modals/GoLiveModal'));
 import { recordView, recordVote } from '../../utils/interestTracker';
 import { LIVE_PLATFORMS, getActiveLiveStreams, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
@@ -101,6 +103,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [loadingCommunities, setLoadingCommunities] = useState(false);
     const [eventDetails, setEventDetails] = useState(null);
     const [userVote, setUserVote] = useState(null);
+    const [reactionRevision, setReactionRevision] = useState(0);
     const navigate = useNavigate();
     const functions = getFunctions();
 
@@ -143,14 +146,16 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const getYoutubeThumbnail = (url) => getYoutubeThumbnailUrl(url);
 
     // View-Tracking: pro Browser-Session und Creation nur einmal zählen.
-    // Die Rules erlauben genau dieses Feld als +1-Inkrement für jeden Besucher.
+    // The server validates and deduplicates anonymous and authenticated views.
     useEffect(() => {
         if (!id) return;
         const viewKey = `viewed-${id}`;
-        if (sessionStorage.getItem(viewKey)) return;
-        sessionStorage.setItem(viewKey, '1');
-        updateDoc(doc(db, 'creations', id), { views: increment(1) })
-            .catch(() => sessionStorage.removeItem(viewKey));
+        try {
+            if (sessionStorage.getItem(viewKey)) return;
+            sessionStorage.setItem(viewKey, '1');
+        } catch { /* The server still deduplicates when browser storage is unavailable. */ }
+        httpsCallable(functions, 'recordCreationView')({ creationId: id, sessionToken: getViewSessionToken() })
+            .catch(() => { try { sessionStorage.removeItem(viewKey); } catch { /* Private browser. */ } });
     }, [id]);
 
     // Interessen-Signal (personalisierter Feed): Tags der angesehenen Creation,
@@ -308,7 +313,10 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
         const voteRef = doc(db, 'creations', id, 'votes', user.uid);
         const unsubVote = onSnapshot(voteRef, (doc) => {
-            if (isMounted) setUserVote(doc.exists() ? doc.data().type : null);
+            if (isMounted) {
+                setUserVote(doc.exists() ? doc.data().type : null);
+                setReactionRevision(doc.exists() ? doc.data().revision || 0 : 0);
+            }
         });
 
         const checkReportStatus = async () => {
@@ -349,7 +357,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         setIsVoting(true);
         const voteOnCreation = httpsCallable(functions, 'voteOnCreation');
         try {
-            await voteOnCreation({ creationId: id, voteType: newVoteType });
+            await voteOnCreation({ creationId: id, voteType: newVoteType, selected: userVote !== newVoteType, revision: reactionRevision });
             if (newVoteType === 'like') {
                 recordVote(creation?.tags || [], 'like'); // Interessen-Signal (No-op ohne Opt-in)
             }
@@ -1023,7 +1031,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 </div>
             </div>
             {showGoLiveModal && (
-                <GoLiveModal
+                <Suspense fallback={<Spinner />}><GoLiveModal
                     user={user}
                     userProfile={userProfile}
                     isElectron={isElectron}
@@ -1031,7 +1039,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                     initialCreation={creation}
                     onClose={() => setShowGoLiveModal(false)}
                     setModalMessage={setModalMessage}
-                />
+                /></Suspense>
             )}
         </div>
     );

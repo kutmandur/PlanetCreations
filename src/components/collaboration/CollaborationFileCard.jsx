@@ -8,7 +8,8 @@ const FILE_TYPE_ICONS = {
     '.blpr2': '📐',
     '.pzblueprint': '📐',
     '.prkauto2': '💾',
-    '.zooauto': '💾'
+    '.zooauto': '💾',
+    '.zoo_auto': '💾'
 };
 
 const CollaborationFileCard = ({

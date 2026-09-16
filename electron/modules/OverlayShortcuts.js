@@ -33,9 +33,42 @@ function validateOverlayShortcutPair(value = {}) {
     return { valid: true };
 }
 
+// Registration and persistence succeed together; failed edits keep the old pair.
+function applyOverlayShortcuts({ current, next, registry, callbacks, save }) {
+    const validation = validateOverlayShortcutPair(next);
+    if (!validation.valid) throw new Error(validation.error);
+    const normalized = normalizeOverlayShortcuts(next);
+    const registered = [];
+    for (const shortcut of Object.values(current)) registry.unregister(shortcut);
+    try {
+        for (const field of ['icon', 'overlay']) {
+            const accelerator = normalized[field];
+            if (!registry.register(accelerator, callbacks[field])) {
+                throw new Error(`The shortcut ${accelerator} is already used by another application.`);
+            }
+            registered.push(accelerator);
+        }
+        save(normalized);
+    } catch (error) {
+        for (const shortcut of registered) registry.unregister(shortcut);
+        let restored = true;
+        for (const field of ['icon', 'overlay']) {
+            try {
+                if (!registry.register(current[field], callbacks[field])) throw new Error('Shortcut unavailable');
+            } catch {
+                restored = false;
+            }
+        }
+        if (!restored) throw new Error(`${error.message} The previous shortcuts could not all be restored. Choose another combination or restart the client.`);
+        throw error;
+    }
+    return normalized;
+}
+
 module.exports = {
     DEFAULT_OVERLAY_SHORTCUTS,
     isValidOverlayAccelerator,
     normalizeOverlayShortcuts,
     validateOverlayShortcutPair,
+    applyOverlayShortcuts,
 };

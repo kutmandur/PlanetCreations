@@ -103,7 +103,7 @@ async function buildSignedPackage(sourceSave, idToken, publicKey, temporaryRoot)
     ".prkauto2": "planet-coaster-2",
     ".zoo": "planet-zoo",
     ".pzblueprint": "planet-zoo",
-    ".zooauto": "planet-zoo",
+    ".zooauto": "planet-zoo", ".zoo_auto": "planet-zoo",
   };
   const kindByExtension = {
     ".park2": "park",
@@ -111,7 +111,7 @@ async function buildSignedPackage(sourceSave, idToken, publicKey, temporaryRoot)
     ".blpr2": "blueprint",
     ".pzblueprint": "blueprint",
     ".prkauto2": "autosave",
-    ".zooauto": "autosave",
+    ".zooauto": "autosave", ".zoo_auto": "autosave",
   };
   if (!gameByExtension[extension]) {
     throw new Error(`Unsupported production-smoke save extension: ${extension}`);
@@ -367,7 +367,7 @@ async function main() {
     validateCreationArchive(
       downloadedBuffer,
       publicKey,
-      [".park2", ".zoo", ".blpr2", ".pzblueprint", ".prkauto2", ".zooauto"],
+      [".park2", ".zoo", ".blpr2", ".pzblueprint", ".prkauto2", ".zooauto", ".zoo_auto"],
     );
     console.log("OK member-only signed R2 download and package integrity");
 

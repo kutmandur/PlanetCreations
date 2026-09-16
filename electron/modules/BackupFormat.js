@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const AdmZip = require('adm-zip');
-const { validatePortableManifest } = require('./MediaManager');
+const { validatePortableManifest } = require('./MediaManifest');
 
 const FORMAT_NAME = 'PlanetCreationsBackup';
 const FORMAT_VERSION = 2;

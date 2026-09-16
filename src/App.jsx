@@ -14,6 +14,8 @@ import { preloadCriticalComponents } from './utils/preload';
 import lazyWithReload from './utils/lazyWithReload';
 import { isSafeHttpUrl } from './utils/helpers';
 import { watchSystemTheme } from './utils/theme';
+import { hydratePersonalTheme, setPersonalThemeUser, watchPersonalThemeCache } from './utils/personalTheme';
+import PersonalThemeBackground from './components/ui/PersonalThemeBackground';
 import { getReportableContent } from './utils/contentReporting';
 import { usesHashRouting } from './utils/routingMode';
 
@@ -36,7 +38,7 @@ import OverlayNotificationPopover from './components/streaming/OverlayNotificati
 import ErrorBoundary from './components/ErrorBoundary';
 import PrivacyPrompt from './components/modals/PrivacyPrompt';
 import BugReportModal from './components/modals/BugReportModal';
-import GoLiveModal from './components/modals/GoLiveModal';
+const GoLiveModal = lazyWithReload(() => import('./components/modals/GoLiveModal'));
 import { readLiveSession, setLiveSession } from './utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
 import { buildOverlayShowcaseEntry, isOverlayShowcaseEntry } from './utils/overlayShowcase';
@@ -166,6 +168,7 @@ const AppContent = () => {
     // While the user follows the OS setting (no explicit theme choice), apply live
     // dark/light changes from the system.
     useEffect(() => watchSystemTheme(), []);
+    useEffect(() => watchPersonalThemeCache(), []);
     useMicroInteractionFeedback();
     
     const [homeState, setHomeState] = useState({
@@ -430,6 +433,7 @@ const AppContent = () => {
         authPersistenceReady.then(() => {
             if (authListenerDisposed) return;
             authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            setPersonalThemeUser(currentUser && !currentUser.isAnonymous ? currentUser.uid : null);
             knownNotificationIdsRef.current = new Set();
             notificationInboxInitializedRef.current = false;
             if (currentUser && currentUser.isAnonymous) {
@@ -445,6 +449,7 @@ const AppContent = () => {
                     const userRef = doc(db, 'users', currentUser.uid);
                     const profileRef = doc(db, 'profiles', currentUser.uid);
                     const [userDoc, profileDoc] = await Promise.all([getDoc(userRef), getDoc(profileRef)]);
+                    hydratePersonalTheme(currentUser.uid, userDoc.exists() ? userDoc.data().personalTheme : null);
                     if (profileDoc.exists()) {
                         const combinedProfile = { uid: currentUser.uid, ...profileDoc.data(), ...(userDoc.exists() ? userDoc.data() : {}) };
                         if (combinedProfile.role === 'banned') {
@@ -948,7 +953,8 @@ const AppContent = () => {
                 setModalMessage={setModalMessage}
             />
         )}
-        <div className={`h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900 ${isGameOverlay ? 'pt-10' : ''}`}>
+        <div className={`pc-app-shell h-screen w-screen overflow-hidden flex flex-col bg-gray-100 dark:bg-gray-900 ${isGameOverlay ? 'pt-10' : ''}`}>
+            {!isAuxiliaryWindow && <PersonalThemeBackground />}
             {modalMessage && <Modal message={modalMessage} onClose={() => setModalMessage(null)} activeTab={activeTab} />}
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { if (isSafeHttpUrl(externalLink)) { window.open(externalLink, '_blank', 'noopener,noreferrer'); } setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
@@ -962,7 +968,7 @@ const AppContent = () => {
             </PopoverModal>}
             {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
             {goLivePrompt && user && (
-                <GoLiveModal
+                <Suspense fallback={<Spinner />}><GoLiveModal
                     user={user}
                     userProfile={userProfile}
                     isElectron={Boolean(window.electronAPI?.isElectron)}
@@ -970,7 +976,7 @@ const AppContent = () => {
                     initialCreation={null}
                     onClose={() => setGoLivePrompt(null)}
                     setModalMessage={setModalMessage}
-                />
+                /></Suspense>
             )}
             
             {!isStoreBuild && (updateDownloaded ? (
@@ -1024,7 +1030,10 @@ const AppContent = () => {
                             />
                         ) : (
                         <Routes>
-                            <Route path="/client/dashboard" element={<ClientDashboard user={user} />} />
+                            <Route path="/client/dashboard" element={<ClientDashboard user={user} onOpenSettings={() => navigate(user ? '/settings' : '/client/settings')} />} />
+                            <Route path="/client/settings" element={window.electronAPI?.isElectron && !user
+                                ? <SettingsPage key="client-settings" clientOnly setModalMessage={setModalMessage} activeTab={activeTab} onBackToLibrary={() => navigate('/client/dashboard')} />
+                                : <Navigate to="/settings" replace />} />
                             <Route path="/" element={<HomePage user={user} userProfile={userProfile} activeTab={activeTab} setActiveTab={setActiveTab} homeState={homeState} setHomeState={setHomeState} />} />
                             <Route path="/login" element={<AuthPage setModalMessage={setModalMessage} activeTab={activeTab} blacklist={blacklist} />} />
                             <Route path="/creation/:id" element={<CreationDetail user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setExternalLink={setExternalLink} setReportModal={setReportModal} />} />

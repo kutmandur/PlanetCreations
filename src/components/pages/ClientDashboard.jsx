@@ -118,7 +118,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                 const discovery = viewMode === 'media' ? mediaDiscoveryStatus?.[file.path] : null;
 
                 return (
-                    <div key={file.path} className={`pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900/40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
+                    <div key={file.path} className={`pc-offline-card pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900/40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
                         {viewMode === 'backup' && (
                             <div className="self-end flex-shrink-0">
                                 <input
@@ -137,6 +137,8 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                             <CreationMetadataPanel
                                 metadata={file.frontierMetadata}
                                 filePath={file.path}
+                                fileRevision={`${file.size}:${file.modifiedAtMs ?? file.modifiedAt ?? ''}`}
+                                creationName={displayName}
                                 metadataStatus={file.metadataStatus}
                                 metadataError={file.frontierMetadataError}
                                 customMediaReferences={file.customMediaReferences}
@@ -335,7 +337,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
     };
     
     return (
-        <div className="flex flex-col h-full bg-gray-800">
+        <div className="pc-workspace-surface flex flex-col h-full bg-gray-800">
             {backupModalState.isOpen && (<BackupNoteModal onConfirm={handleConfirmBackup} onCancel={() => setBackupModalState({ isOpen: false, file: null, isBatch: false, selectedFiles: [] })} isOnline={!!user} showMediaPackageOption />)}
             <SubHeader {...subHeaderProps} />
             <FilterControls 
@@ -441,7 +443,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 case 'blueprints':
                     return firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint');
                 case 'autosaves':
-                    return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto');
+                    return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto') || firstBackup.originalFileName.endsWith('.zoo_auto');
                 default:
                     return false;
             }
@@ -560,7 +562,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
     const hasBackups = processedBackups && processedBackups.length > 0;
 
     return (
-        <div className="flex flex-col h-full bg-gray-800">
+        <div className="pc-workspace-surface flex flex-col h-full bg-gray-800">
             {deleteModalState.isOpen && <DeleteConfirmationModal item={deleteModalState.backup} title="Delete Backup" warning='This action cannot be undone. To confirm, please type "DELETE" in the box below.' onConfirm={handleConfirmDelete} onCancel={() => setDeleteModalState({ isOpen: false, backup: null })} />}
             <SubHeader {...subHeaderProps} />
             <FilterControls 
@@ -579,7 +581,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 ) : (
                     <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 items-start ${activeView === 'restore' ? 'xl:grid-cols-3 2xl:grid-cols-4' : 'lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6'}`}>
                         {processedBackups.map(({saveName, backups}) => (
-                            <div key={saveName} className="bg-gray-700 rounded-xl overflow-hidden shadow-lg border border-gray-600 hover:border-gray-500 transition-colors">
+                            <div key={saveName} className="pc-offline-card bg-gray-700 rounded-xl overflow-hidden shadow-lg border border-gray-600 hover:border-gray-500 transition-colors">
                                 {activeView === 'workshop' && (
                                     <div className="h-32 bg-gray-900 flex items-center justify-center overflow-hidden">
                                         {workshopPreviews[backups[0]?.filePath] ?
@@ -820,7 +822,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
     const deleteWarning = finalDeleteState.mode === 'safe' ? "This will delete all associated media for this creation that is NOT used by other creations." : "WARNING: This will delete ALL associated media files, even if they ARE USED by other creations.";
 
     return (
-        <div className="flex flex-col h-full bg-gray-800">
+        <div className="pc-workspace-surface flex flex-col h-full bg-gray-800">
             {mediaBackupModalState.isOpen && <BackupNoteModal onConfirm={handleConfirmMediaBackup} onCancel={() => setMediaBackupModalState({ isOpen: false, file: null })} isOnline={!!user} />}
             {snapshotModalState.isOpen && ( <MediaSnapshotModal file={snapshotModalState.file} gameName={snapshotModalState.gameName} onClose={() => setSnapshotModalState({ isOpen: false, file: null, gameName: null })} onSave={handleSaveSnapshot} /> )}
             {deleteMediaModalState.isOpen && <DeleteMediaModal file={deleteMediaModalState.file} onCancel={() => setDeleteMediaModalState({ isOpen: false, file: null })} onConfirm={handleDeletionModeSelected} />}
@@ -845,7 +847,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
 
 // --- HAUPT-WRAPPER-KOMPONENTE ---
 
-const ClientDashboard = ({ user }) => {
+const ClientDashboard = ({ user, onOpenSettings }) => {
     const [activeView, setActiveView] = useState('backup');
     const [backupRefreshKey, setBackupRefreshKey] = useState(0);
     const [scanResults, setScanResults] = useState(null);
@@ -854,9 +856,7 @@ const ClientDashboard = ({ user }) => {
     const [selectedPath, setSelectedPath] = useState(null);
     const [selectingPath, setSelectingPath] = useState(false);
     const [pathSelectionError, setPathSelectionError] = useState(null);
-    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [globalLoader, setGlobalLoader] = useState({ isLoading: false, message: '' });
-    const settingsRef = useRef(null);
     const pendingMetadataUpdatesRef = useRef(new Map());
     
     // Desktop-Client indexiert lokale Dateien nach Anzeigenamen; nur Spiele mit
@@ -1024,7 +1024,6 @@ const ClientDashboard = ({ user }) => {
     }, [handleAutoImport]);
     
     const handleSelectFolder = async () => {
-        setIsSettingsOpen(false);
         setPathSelectionError(null);
         setSelectingPath(true);
         try {
@@ -1045,60 +1044,6 @@ const ClientDashboard = ({ user }) => {
         }
     };
     
-    const handleOpenBackupFolder = () => {
-        window.electronAPI.openBackupFolder();
-        setIsSettingsOpen(false);
-    };
-
-    const handleRefreshAllStats = () => {
-        if (selectedPath) {
-            handleScan(selectedPath, { forceMetadataRefresh: true, preserveResults: true });
-        }
-        setIsSettingsOpen(false);
-    };
-    
-    const handleLoadExternalBackup = async () => {
-        const result = await window.electronAPI.loadExternalBackup();
-        if (result.status === 'canceled' || !result.message) return;
-    
-        if (result.status === 'invalid') {
-            alert(`SIGNATURE INVALID: ${result.message}`);
-            return;
-        }
-    
-        let confirmed = true;
-        if (result.status === 'unsigned') {
-            confirmed = window.confirm('WARNING: This backup is not signed. It should only be used if you created it yourself or received it from a trusted source.\n\nDo you want to continue importing this backup?');
-        }
-    
-        if (confirmed) {
-            alert(result.message);
-            if (result.success) {
-                handleBackupCreated();
-            }
-        }
-        setIsSettingsOpen(false);
-    };
-    
-    const handleImportMediaBackup = async () => {
-        const result = await window.electronAPI.importMediaBackup();
-        alert(result.message);
-        if (result.success) {
-            handleScan(selectedPath);
-        }
-        setIsSettingsOpen(false);
-    };
-    
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (settingsRef.current && !settingsRef.current.contains(event.target)) {
-                setIsSettingsOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
     const subHeaderProps = { gameTabs: GAME_TABS, activeGame, setActiveGame, gameTabRefs, gameGliderRef, fileTypeTabs: FILE_TYPE_TABS, activeTab, setActiveTab, fileTypeTabRefs, fileTypeGliderRef, activeGameColor };
     
     const MAIN_TABS = useMemo(() => [ { id: 'backup', name: 'Backup' }, { id: 'restore', name: 'Restore' }, { id: 'workshop', name: 'Workshop' }, { id: 'media', name: 'Media Manager' }, ], []);
@@ -1149,22 +1094,9 @@ const ClientDashboard = ({ user }) => {
                     </div>
                 </div>
                 <div className="flex-1 flex justify-end">
-                    <div className="relative" ref={settingsRef}>
-                        <button onClick={() => setIsSettingsOpen(prev => !prev)} title="Settings" className="bg-gray-700 hover:bg-gray-600 text-white font-bold p-2 rounded-full">
-                            <Icon path={ICONS.cog} className="w-6 h-6" />
-                        </button>
-                        {isSettingsOpen && (
-                            <div className="absolute top-full right-0 mt-2 w-64 bg-gray-700 border border-gray-600 rounded-lg shadow-xl z-50">
-                                <ul className="text-sm text-white">
-                                    <li onClick={handleSelectFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-t-lg">Change Game Files Path</li>
-                                    <li onClick={handleRefreshAllStats} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Refresh all stats</li>
-                                    <li onClick={handleLoadExternalBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Backup</li>
-                                    <li onClick={handleImportMediaBackup} className="px-4 py-3 hover:bg-gray-600 cursor-pointer">Import Media Backup</li>
-                                    <li onClick={handleOpenBackupFolder} className="px-4 py-3 hover:bg-gray-600 cursor-pointer rounded-b-lg">Open Backup Folder</li>
-                                </ul>
-                            </div>
-                        )}
-                    </div>
+                    <button type="button" onClick={onOpenSettings} title="Settings" aria-label="Client settings" className="bg-gray-700 hover:bg-gray-600 text-white font-bold p-2 rounded-full">
+                        <Icon path={ICONS.cog} className="w-6 h-6" />
+                    </button>
                 </div>
             </div>
 
@@ -1173,7 +1105,7 @@ const ClientDashboard = ({ user }) => {
                     <div className="flex h-full items-center justify-center"><Spinner /></div>
                 ) : !selectedPath ? (
                     <div className="flex h-full items-center justify-center p-6">
-                        <div className="max-w-xl rounded-2xl border border-gray-600 bg-gray-900 p-8 text-center shadow-xl">
+                        <div className="pc-offline-card max-w-xl rounded-2xl border border-gray-600 bg-gray-900 p-8 text-center shadow-xl">
                             <Icon path={ICONS.database} className="mx-auto h-12 w-12 text-blue-300" />
                             <h2 className="mt-4 text-xl font-bold">Choose your Frontier game folder</h2>
                             <p className="mt-3 text-sm leading-6 text-gray-300">

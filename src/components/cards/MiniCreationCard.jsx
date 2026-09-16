@@ -13,7 +13,7 @@ const MiniCreationCard = ({ creation }) => {
     return (
         <PreloadLink to={`/creation/${creation.id}`}>
             <article 
-                className="bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full"
+                className="pc-theme-card bg-white rounded-lg shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 cursor-pointer flex flex-col relative group h-full"
             >
                 <div className="relative">
                     <div className="overflow-hidden h-28">

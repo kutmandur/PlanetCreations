@@ -76,3 +76,8 @@ nul
 *.pzblueprint
 *.zooauto
 *.PlanetCreations
+
+# Local security verification builds
+/.security-build/
+/.audit-build/
+/luac.out

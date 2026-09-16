@@ -26,9 +26,11 @@ const hostedElectronContext = {
     electronApi: { isElectron: true },
     origin: 'https://www.planetcreations.net',
 };
+let fixtureNumber = 0;
 
 beforeEach(() => {
     mocks.getToken.mockReset();
+    mocks.getToken.mockResolvedValue({ token: `cached-${++fixtureNumber}` });
     mocks.readyStatus = 'ready';
 });
 
@@ -73,7 +75,7 @@ test('refreshes App Check and retries one rejected Electron Auth request', async
     const operation = vi.fn()
         .mockRejectedValueOnce(invalidTokenError)
         .mockResolvedValueOnce('signed-in');
-    mocks.getToken.mockResolvedValue({ token: 'fresh-token' });
+    mocks.getToken.mockImplementation((_instance, force) => Promise.resolve({ token: force ? 'fresh-token' : 'rejected-token' }));
 
     await expect(runFirebaseAuthWithAppCheckRecovery(
         operation,
@@ -101,7 +103,8 @@ test('does not retry unrelated Auth failures or normal browser requests', async 
 
     expect(wrongPasswordOperation).toHaveBeenCalledOnce();
     expect(browserOperation).toHaveBeenCalledOnce();
-    expect(mocks.getToken).not.toHaveBeenCalled();
+    expect(mocks.getToken).toHaveBeenCalledTimes(1);
+    expect(mocks.getToken).toHaveBeenCalledWith(mocks.appCheck, false);
 });
 
 test('keeps the original Auth error when token refresh itself fails', async () => {
@@ -109,11 +112,44 @@ test('keeps the original Auth error when token refresh itself fails', async () =
         code: 'auth/firebase-app-check-token-is-invalid',
     };
     const operation = vi.fn().mockRejectedValue(invalidTokenError);
-    mocks.getToken.mockRejectedValue({ code: 'appCheck/throttled' });
+    mocks.getToken.mockImplementation((_instance, force) => force
+        ? Promise.reject({ code: 'appCheck/throttled' })
+        : Promise.resolve({ token: 'rejected-refresh-failure' }));
 
     await expect(runFirebaseAuthWithAppCheckRecovery(
         operation,
         hostedElectronContext,
     )).rejects.toBe(invalidTokenError);
     expect(operation).toHaveBeenCalledOnce();
+});
+
+test('provider failure does not impose client-side enforcement in monitoring mode', async () => {
+    const unavailable = {code: 'appCheck/throttled'};
+    mocks.getToken.mockRejectedValue(unavailable);
+    const operation = vi.fn().mockResolvedValue('accepted-by-server');
+    await expect(runFirebaseAuthWithAppCheckRecovery(operation, hostedElectronContext)).resolves.toBe('accepted-by-server');
+    expect(operation).toHaveBeenCalledOnce();
+});
+
+test('provider failure still propagates an enforced backend rejection', async () => {
+    mocks.getToken.mockRejectedValue({code: 'appCheck/throttled'});
+    const rejected = {code: 'auth/firebase-app-check-token-is-invalid'};
+    const operation = vi.fn().mockRejectedValue(rejected);
+    await expect(runFirebaseAuthWithAppCheckRecovery(operation, hostedElectronContext)).rejects.toBe(rejected);
+    expect(operation).toHaveBeenCalledOnce();
+});
+
+test('does not repeat an Auth request with the same token returned by a failed forced refresh', async () => {
+    const rejected = {code: 'auth/firebase-app-check-token-is-invalid'};
+    const operation = vi.fn().mockRejectedValue(rejected);
+    await expect(runFirebaseAuthWithAppCheckRecovery(operation, hostedElectronContext)).rejects.toBe(rejected);
+    expect(operation).toHaveBeenCalledOnce();
+});
+
+test('never retries the second Auth rejection', async () => {
+    const rejected = {code: 'auth/firebase-app-check-token-is-invalid'};
+    mocks.getToken.mockImplementation((_instance, force) => Promise.resolve({token: force ? 'new-but-rejected' : 'rejected-again'}));
+    const operation = vi.fn().mockRejectedValue(rejected);
+    await expect(runFirebaseAuthWithAppCheckRecovery(operation, hostedElectronContext)).rejects.toBe(rejected);
+    expect(operation).toHaveBeenCalledTimes(2);
 });

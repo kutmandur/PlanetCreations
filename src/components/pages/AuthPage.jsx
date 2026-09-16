@@ -8,7 +8,6 @@ import {
     runFirebaseAuthWithAppCheckRecovery,
     waitForElectronAppCheck,
 } from '../../firebase/appCheck';
-import { createClientConnectionErrorNotice } from '../../utils/clientConnectionError';
 import { getGameColor, containsBlacklistedWord } from '../../utils/helpers';
 import { getDefaultGameId } from '../../utils/gamesRegistry';
 import Spinner from '../ui/Spinner';
@@ -32,7 +31,12 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
 
     const showAuthError = (error) => {
         if (isFirebaseAppCheckAuthError(error) && window.electronAPI?.isElectron) {
-            setModalMessage(createClientConnectionErrorNotice());
+            setModalMessage({
+                title: 'Connection verification unavailable',
+                message: 'PlanetCreations could not verify this connection. Please try again when your connection is available.',
+                detail: 'Your entries are kept. You can close this message and retry without reloading the client.',
+                dismissible: true,
+            });
             return;
         }
         setModalMessage(error?.message || 'Authentication failed.');

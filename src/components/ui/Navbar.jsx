@@ -189,6 +189,10 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                             </div>
                         </>
                     ) : (
+                        <>
+                        {isElectron && <button type="button" onClick={() => navigate('/client/settings')} className="text-gray-300 hover:text-white" aria-label="Client settings">
+                            <Icon path={ICONS.cog} className="h-6 w-6" />
+                        </button>}
                         <button
                             onClick={() => navigate('/login')}
                             onMouseEnter={() => preloadRoute('/login')}
@@ -197,6 +201,7 @@ const Navbar = ({ user, userProfile, onLogout, notifications, className, setModa
                         >
                             Login / Register
                         </button>
+                        </>
                     )}
                 </nav>
             </div>

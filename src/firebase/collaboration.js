@@ -871,11 +871,6 @@ export const addComment = async (collaborationId, userId, commentData) => {
         updatedAt: serverTimestamp()
     });
 
-    // Update collaboration's updatedAt
-    await updateDoc(doc(db, 'collaborations', collaborationId), {
-        updatedAt: serverTimestamp()
-    });
-
     return commentRef.id;
 };
 

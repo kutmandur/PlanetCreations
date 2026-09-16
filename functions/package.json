@@ -3,7 +3,7 @@
   "description": "Cloud Functions for Firebase",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test backupFormat.test.js creationSharePreview.test.js frontierMetadata.test.js collaborationAccess.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationPublish.test.js collaborationVersioning.test.js communityMembership.test.js eventSubmission.test.js firestoreIndexes.test.js liveChannelClaims.test.js liveStreamMatcher.test.js liveStreamPlatforms.test.js overlayShowcase.test.js r2Cors.test.js rideAnalysis.test.js runtime.test.js scalableMapIndex.test.js security.test.js twitchEventSub.test.js youtubeFeed.test.js youtubeLiveStatus.test.js youtubeVideoIndex.test.js youtubeWebSub.test.js",
+    "test": "node --test backupFormat.test.js creationSharePreview.test.js frontierMetadata.test.js collaborationAccess.test.js collaborationChangelogState.test.js collaborationPublicView.test.js collaborationPublish.test.js collaborationVersioning.test.js communityMembership.test.js eventSubmission.test.js firestoreIndexes.test.js liveChannelClaims.test.js liveStreamMatcher.test.js liveStreamPlatforms.test.js overlayShowcase.test.js r2Cors.test.js rideAnalysis.test.js runtime.test.js scalableMapIndex.test.js security.test.js twitchEventSub.test.js youtubeFeed.test.js youtubeStream.test.js youtubeLiveStatus.test.js youtubeVideoIndex.test.js youtubeWebSub.test.js uploadIntegrity.test.js uploadRecovery.test.js",
     "r2:configure-cors": "node scripts/configureR2Cors.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
@@ -18,7 +18,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1096.0",
     "@aws-sdk/s3-request-presigner": "^3.1096.0",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
@@ -30,7 +30,9 @@
     "globals": "^17.8.0"
   },
   "overrides": {
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "js-yaml": "^4.3.2",
+    "qs": "^6.16.0"
   },
   "private": true
 }

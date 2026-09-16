@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net, globalShortcut, powerMonitor } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
@@ -18,6 +18,8 @@ const {
     scanAllMediaFiles,
 } = require('./modules/FileHandler');
 const { readFrontierPreview } = require('./modules/FrontierSaveParser');
+const { loadPlanetZooAnalysis } = require('./modules/PlanetZooAnalysisService');
+const { resolveZooSavePath } = require('./modules/LocalLibraryPath');
 const { FrontierSaveIndexWatcher } = require('./modules/FrontierSaveIndexWatcher');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
@@ -34,11 +36,13 @@ const {
 } = require('./modules/WebAppOrigin');
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
-const { responseToBuffer } = require('./modules/ResponseBuffer');
+const { responseToBuffer, responseToFile } = require('./modules/ResponseBuffer');
 const { getDistributionInfo } = require('./modules/DistributionChannel');
+const { getNewerReleaseVersion } = require('./modules/ReleaseVersion');
 const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
-const { normalizeOverlayShortcuts, validateOverlayShortcutPair } = require('./modules/OverlayShortcuts');
+const { normalizeOverlayShortcuts, applyOverlayShortcuts } = require('./modules/OverlayShortcuts');
+const { shouldShowOverlay } = require('./modules/OverlayVisibility');
 const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
@@ -53,7 +57,7 @@ const openLocalUiInDev = isDev && process.argv.includes('--local-ui');
 const devServerUrl = resolveDevServerUrl(process.env.PLANETCREATIONS_DEV_SERVER_URL);
 const AUTO_START_ARG = '--autostart';
 const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
-const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
+const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save', '.zoo_auto': 'Auto Save' };
 let mainWindow;
 let tray;
 let gameOverlayWindow;
@@ -86,6 +90,7 @@ let frontierSaveIndexWatcherPath = null;
 // PC2-Prozesserkennung — auf macOS/Linux der einzige Weg (kein tasklist.exe),
 // auf Windows praktisch zum Positionieren/Testen ohne laufendes Spiel.
 let overlayForcedVisible = false;
+let overlayAutoEnabled = true;
 let overlayIconEnabled = true;
 let overlayShortcuts = normalizeOverlayShortcuts();
 const activeNotifications = new Set();
@@ -521,6 +526,7 @@ function readOverlaySettings() {
             size: Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, Number(stored.size) || OVERLAY_DEFAULT_SIZE)),
             panelBounds: stored.panelBounds || null,
             forcedVisible: stored.forcedVisible === true,
+            autoEnabled: stored.autoEnabled !== false,
             iconEnabled: stored.iconEnabled !== false,
             shortcuts: normalizeOverlayShortcuts(stored.shortcuts),
         };
@@ -531,18 +537,20 @@ function readOverlaySettings() {
             size: OVERLAY_DEFAULT_SIZE,
             panelBounds: null,
             forcedVisible: false,
+            autoEnabled: true,
             iconEnabled: true,
             shortcuts: normalizeOverlayShortcuts(),
         };
     }
 }
 
-function writeOverlaySettings(patch) {
+function writeOverlaySettings(patch, { throwOnError = false } = {}) {
     const current = readOverlaySettings();
     try {
         fs.writeFileSync(getOverlaySettingsPath(), JSON.stringify({ ...current, ...patch }, null, 2));
     } catch (error) {
         log.warn('Could not save In-Game Overlay settings:', error);
+        if (throwOnError) throw error;
     }
 }
 
@@ -1024,7 +1032,7 @@ function setOverlayExpanded(expanded) {
         gameOverlayWindow.setResizable(false);
         gameOverlayWindow.setHasShadow(false);
         gameOverlayWindow.setBounds(compactBounds, true);
-        if (!overlayIconEnabled || (!overlayForcedVisible && !activeGameId)) {
+        if (!shouldShowOverlay({ iconEnabled: overlayIconEnabled, forcedVisible: overlayForcedVisible, autoEnabled: overlayAutoEnabled, activeGameId })) {
             gameOverlayWindow.hide();
         }
     }
@@ -1061,8 +1069,8 @@ async function updateGameOverlayVisibility() {
             broadcastToAppWindows('active-game-changed', activeGameId);
         }
 
-        const running = isGameOverlayExpanded ||
-            (overlayIconEnabled && (overlayForcedVisible || Boolean(activeGameId)));
+        const running = shouldShowOverlay({ expanded: isGameOverlayExpanded, iconEnabled: overlayIconEnabled,
+            forcedVisible: overlayForcedVisible, autoEnabled: overlayAutoEnabled, activeGameId });
         if (running) {
             const overlay = createGameOverlayWindow();
             if (!overlay.isVisible()) overlay.showInactive();
@@ -1078,12 +1086,21 @@ async function updateGameOverlayVisibility() {
 }
 
 function setOverlayForcedVisible(value) {
+    writeOverlaySettings({ forcedVisible: value === true }, { throwOnError: true });
     overlayForcedVisible = value === true;
-    writeOverlaySettings({ forcedVisible: overlayForcedVisible });
     updateGameOverlayVisibility();
     refreshTrayMenu();
     broadcastToAppWindows('overlay-forced-changed', overlayForcedVisible);
     return overlayForcedVisible;
+}
+
+function setOverlayAutoEnabled(value) {
+    if (typeof value !== 'boolean') throw new Error('The automatic overlay setting must be a boolean.');
+    writeOverlaySettings({ autoEnabled: value }, { throwOnError: true });
+    overlayAutoEnabled = value;
+    updateGameOverlayVisibility();
+    broadcastToAppWindows('overlay-auto-enabled-changed', overlayAutoEnabled);
+    return overlayAutoEnabled;
 }
 
 function startGameProcessMonitor() {
@@ -1134,7 +1151,13 @@ function buildTrayMenu() {
             label: 'Keep In-Game Overlay visible',
             type: 'checkbox',
             checked: overlayForcedVisible,
-            click: (item) => setOverlayForcedVisible(item.checked),
+            click: (item) => {
+                try { setOverlayForcedVisible(item.checked); }
+                catch (error) {
+                    refreshTrayMenu();
+                    dialog.showErrorBox('Could not save overlay settings', error.message);
+                }
+            },
         },
         {
             label: 'Quit',
@@ -1285,9 +1308,9 @@ async function checkForUpdatesViaAPI() {
             return;
         }
         const release = await response.json();
-        const latestVersion = release.tag_name.replace('v', '');
+        const latestVersion = getNewerReleaseVersion(release.tag_name, currentVersion);
 
-        if (latestVersion > currentVersion) {
+        if (latestVersion) {
             log.info(`Manual update check: Update available: ${latestVersion}`);
             mainWindow.webContents.send('update-info-available', {
                 version: latestVersion,
@@ -1381,22 +1404,26 @@ function validateR2DownloadUrl(downloadUrl) {
     return parsed.toString();
 }
 
-async function downloadR2PackageToTemp(downloadUrl) {
+async function downloadR2PackageToTemp(downloadUrl, owner = mainWindow?.webContents) {
     const safeUrl = validateR2DownloadUrl(downloadUrl);
-    const response = await fetch(safeUrl);
-    if (!response.ok) throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
-
-    const declaredSize = Number(response.headers.get('content-length'));
-    if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
-        throw new Error('The download exceeds the 300 MB package limit.');
+    const controller = new AbortController();
+    const cancel = () => controller.abort(new Error('The download window was closed.'));
+    owner?.once('destroyed', cancel);
+    if (owner?.isDestroyed()) cancel();
+    try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15 * 60 * 1000)]);
+        const response = await fetch(safeUrl, {redirect: 'error', signal});
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
+            throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
+        }
+        const tempPath = path.join(app.getPath('temp'), `${crypto.randomUUID()}.PlanetCreations`);
+        // responseToFile validates both the declared and actual stream size and removes partial files.
+        await responseToFile(response, tempPath);
+        return tempPath;
+    } finally {
+        owner?.removeListener('destroyed', cancel);
     }
-    const buffer = await responseToBuffer(response);
-    if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
-        throw new Error('The downloaded package has an invalid size.');
-    }
-    const tempPath = path.join(app.getPath('temp'), `${crypto.randomUUID()}.PlanetCreations`);
-    fs.writeFileSync(tempPath, buffer);
-    return tempPath;
 }
 
 // --- FUNKTION: URL verarbeiten, herunterladen und importieren ---
@@ -1567,28 +1594,13 @@ function getOverlayHotkeySettings() {
 }
 
 function registerOverlayShortcuts(nextShortcuts = overlayShortcuts) {
-    const validation = validateOverlayShortcutPair(nextShortcuts);
-    if (!validation.valid) throw new Error(validation.error);
-    const normalized = normalizeOverlayShortcuts(nextShortcuts);
-    for (const shortcut of Object.values(overlayShortcuts)) globalShortcut.unregister(shortcut);
-    const registrations = [
-        [normalized.icon, toggleOverlayIcon],
-        [normalized.overlay, toggleOverlayPanel],
-    ];
-    const registered = [];
-    for (const [accelerator, callback] of registrations) {
-        if (!globalShortcut.register(accelerator, callback)) {
-            for (const value of registered) globalShortcut.unregister(value);
-            for (const [oldAccelerator, oldCallback] of [
-                [overlayShortcuts.icon, toggleOverlayIcon],
-                [overlayShortcuts.overlay, toggleOverlayPanel],
-            ]) globalShortcut.register(oldAccelerator, oldCallback);
-            throw new Error(`The shortcut ${accelerator} is already used by another application.`);
-        }
-        registered.push(accelerator);
-    }
-    overlayShortcuts = normalized;
-    writeOverlaySettings({ shortcuts: overlayShortcuts });
+    overlayShortcuts = applyOverlayShortcuts({
+        current: overlayShortcuts,
+        next: nextShortcuts,
+        registry: globalShortcut,
+        callbacks: { icon: toggleOverlayIcon, overlay: toggleOverlayPanel },
+        save: (shortcuts) => writeOverlaySettings({ shortcuts }, { throwOnError: true }),
+    });
     broadcastToAppWindows('overlay-hotkeys-changed', getOverlayHotkeySettings());
     return getOverlayHotkeySettings();
 }
@@ -1787,6 +1799,14 @@ ipcMain.handle('get-overlay-forced', (event) => {
     requireTrustedIpcSender(event, true);
     return overlayForcedVisible;
 });
+ipcMain.handle('get-overlay-auto-enabled', (event) => {
+    requireTrustedIpcSender(event, true);
+    return overlayAutoEnabled;
+});
+ipcMain.handle('set-overlay-auto-enabled', (event, value) => {
+    requireTrustedIpcSender(event, true);
+    return setOverlayAutoEnabled(value);
+});
 ipcMain.handle('get-active-game', (event) => {
     requireTrustedIpcSender(event, true);
     return activeGameId;
@@ -1979,7 +1999,7 @@ ipcMain.handle('select-collaboration-file', async (event, gameId) => {
     requireTrustedIpcSender(event, true);
     const extensionsByGame = {
         'planet-coaster-2': ['park2', 'blpr2', 'prkauto2'],
-        'planet-zoo': ['zoo', 'pzblueprint', 'zooauto'],
+        'planet-zoo': ['zoo', 'pzblueprint', 'zooauto', 'zoo_auto'],
     };
     const extensions = extensionsByGame[gameId];
     if (!extensions) {
@@ -2015,7 +2035,7 @@ ipcMain.handle('save-collaboration-version', async (event, payload) => {
     const expectedGameId = typeof payload?.gameId === 'string' ? payload.gameId : '';
     let tempPath = null;
     try {
-        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        tempPath = await downloadR2PackageToTemp(downloadUrl, event.sender);
         const verification = await verifyBackup(tempPath);
         if (verification.status !== 'verified' || verification.metadata?.packageType !== 'creation') {
             throw new Error(verification.error || 'The collaboration package could not be verified.');
@@ -2059,7 +2079,8 @@ ipcMain.handle('save-collaboration-version', async (event, payload) => {
         if (result.canceled || !result.filePath) {
             return { success: false, status: 'canceled' };
         }
-        return restoreBackup(app, tempPath, result.filePath);
+        // Keep the downloaded package until verification and the atomic restore have finished.
+        return await restoreBackup(app, tempPath, result.filePath);
     } catch (error) {
         log.error('Collaboration version download failed:', error);
         return { success: false, status: 'error', message: error.message };
@@ -2085,7 +2106,7 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
 
     let tempPath = null;
     try {
-        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        tempPath = await downloadR2PackageToTemp(downloadUrl, event.sender);
         const workshopPath = await archiveWorkshopPackage(app, tempPath, creationId, { title, previewUrl });
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('backups-updated');
         const result = await installCreationPackage(app, workshopPath, creationId, getFrontierPathForInstall());
@@ -2204,6 +2225,13 @@ ipcMain.handle('read-frontier-preview', (event, filePath) => {
     return readFrontierPreview(resolvedPath);
 });
 
+ipcMain.handle('read-planet-zoo-analysis', async (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    const storedPath = getStoredPath();
+    const resolvedPath = resolveZooSavePath(filePath, storedPath);
+    return loadPlanetZooAnalysis(resolvedPath, {libraryRoot: fs.realpathSync(storedPath)});
+});
+
 ipcMain.handle('read-frontier-ride-analysis', async (event, filePath) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
@@ -2256,7 +2284,7 @@ ipcMain.handle('import-backup-from-path', (event, filePath) => {
     return importBackupFromFile(filePath);
 });
 
-ipcMain.handle('list-all-local-creations-and-backups', (event) => {
+ipcMain.handle('list-all-local-creations-and-backups', async (event) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
     if (!storedPath || !fs.existsSync(storedPath)) {
@@ -2266,7 +2294,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     // The dashboard owns the sequential background scan. File pickers reuse its
     // persistent cache and analyze only the file the user actually selects.
     const gameFiles = indexGamesFromPath(storedPath).results;
-    const allBackupsBySave = listAllBackups(app);
+    const allBackupsBySave = await listAllBackups(app);
     const flatBackups = Object.values(allBackupsBySave).flat();
     
     const creationBackups = flatBackups
@@ -2285,7 +2313,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
         let gameName = backup.gameId === 'planet-coaster-2' ? 'Planet Coaster 2' :
             (backup.gameId === 'planet-zoo' ? 'Planet Zoo' : null);
         if (!gameName && ['.park2', '.blpr2', '.prkauto2'].includes(origExt)) gameName = 'Planet Coaster 2';
-        if (!gameName && ['.zoo', '.pzblueprint', '.zooauto'].includes(origExt)) gameName = 'Planet Zoo';
+        if (!gameName && ['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'].includes(origExt)) gameName = 'Planet Zoo';
         
         if (gameName) {
             if (!gameFiles[gameName]) {
@@ -2635,10 +2663,13 @@ ipcMain.handle('get-media-status', (event, savePath) => {
 });
 
 app.whenReady().then(() => {
+    powerMonitor.on('suspend', () => broadcastToAppWindows('system-power-state', 'suspend'));
+    powerMonitor.on('resume', () => broadcastToAppWindows('system-power-state', 'resume'));
     if (process.platform === 'win32' && !isStoreBuild) app.setAppUserModelId('com.planetcreations.app');
     configureSessionSecurity();
     const storedOverlaySettings = readOverlaySettings();
     overlayForcedVisible = storedOverlaySettings.forcedVisible;
+    overlayAutoEnabled = storedOverlaySettings.autoEnabled;
     overlayIconEnabled = storedOverlaySettings.iconEnabled;
     overlayShortcuts = storedOverlaySettings.shortcuts;
     try {

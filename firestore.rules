@@ -131,7 +131,10 @@ service cloud.firestore {
              isValidParkRidePresentation(data) &&
              data.get('eventIds', []).size() == 0 &&
              data.get('eventSubmissions', {}) == {} &&
-             (!('likes' in data.keys()) || data.likes == 0) &&
+             data.get('likes', 0) == 0 && data.get('dislikes', 0) == 0 &&
+             data.get('views', 0) == 0 && data.get('reportCount', 0) == 0 &&
+             data.get('activityScore', 0) == 0 && data.get('activityAt', null) == null &&
+             data.get('liveStream', null) == null &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
     }
@@ -141,6 +144,10 @@ service cloud.firestore {
       return data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              data.userId == existing.userId &&
              data.game == existing.game &&
+             data.get('likes', 0) == existing.get('likes', 0) &&
+             data.get('dislikes', 0) == existing.get('dislikes', 0) &&
+             data.get('views', 0) == existing.get('views', 0) &&
+             data.get('reportCount', 0) == existing.get('reportCount', 0) &&
              isValidParkRidePresentation(data) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
              data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20 &&
@@ -204,9 +211,12 @@ service cloud.firestore {
       // This ensures the correct variables are used for each operation.
       allow create: if isLoggedIn() &&
           request.resource.data.creatorId == request.auth.uid &&
+          !request.resource.data.keys().hasAny(['voteSchemaVersion', 'autoPostedSubmissions']) &&
           (communityMemberCan(request.resource.data.communityId, 'createEvents') || isModerator());
       allow update: if isLoggedIn() &&
           request.resource.data.communityId == resource.data.communityId &&
+          request.resource.data.get('voteSchemaVersion', null) == resource.data.get('voteSchemaVersion', null) &&
+          request.resource.data.get('autoPostedSubmissions', {}) == resource.data.get('autoPostedSubmissions', {}) &&
           request.resource.data.creatorId == resource.data.creatorId && (
           communityMemberCan(resource.data.communityId, 'manageEvents') ||
           isModerator() ||
@@ -222,12 +232,21 @@ service cloud.firestore {
       
       match /voters/{userId} {
         allow read: if true;
-        allow create: if isOwner(userId);
+        allow create: if false;
         allow delete: if communityMemberCan(
           get(/databases/$(database)/documents/events/$(eventId)).data.communityId,
           'manageEvents'
         ) || isModerator();
       }
+    }
+
+    match /events/{eventId}/ballots/{userId} {
+      allow read: if isLoggedIn() && (isOwner(userId) || isModerator());
+      allow write: if false;
+    }
+    match /events/{eventId}/voteTotals/{shardId} {
+      allow read: if true;
+      allow write: if false;
     }
 
     match /communitys/{communityId} {
@@ -366,13 +385,21 @@ service cloud.firestore {
         // Nur eigene Creations dürfen in Communitys eingehängt werden
         // (Moderatoren dürfen fremde, z. B. beim Bearbeiten im Auftrag).
         allow create: if isLoggedIn() &&
+            request.resource.data.keys().hasOnly(['userId', 'creationId', 'linkedAt']) &&
+            request.resource.data.get('creationId', creationId) == creationId &&
             request.resource.data.userId == request.auth.uid &&
-            (get(/databases/$(database)/documents/creations/$(creationId)).data.userId == request.auth.uid ||
-             isModerator());
+            ((communityMemberCan(communityId, 'addCreations') &&
+              getAfter(/databases/$(database)/documents/creations/$(creationId)).data.userId == request.auth.uid) ||
+             communityMemberCan(communityId, 'manageCreations') ||
+             communityMemberCan(communityId, 'manageShowcases') || isModerator());
         // Owner der Creation darf sein Link-Doc entfernen (Creation aus der
         // Community nehmen) und sich einmalig für das Showcase bewerben —
         // dabei dürfen nur die Bewerbungsfelder geändert werden.
-        allow update: if isLoggedIn() && (
+        allow update: if isLoggedIn() &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'discordMessageId', 'discordChannelId', 'discordShowcaseMessageId',
+            'discordShowcaseChannelId', 'reactionCount', 'userId', 'creationId', 'linkedAt'
+          ]) && (
             communityMemberCan(communityId, 'manageCreations') ||
             communityMemberCan(communityId, 'manageShowcases') ||
             isModerator() ||
@@ -399,19 +426,13 @@ service cloud.firestore {
       allow create: if isLoggedIn() &&
           request.resource.data.userId == request.auth.uid &&
           isValidCreationCreate(request.resource.data);
-      // View-Zähler: jeder (auch anonym) darf views um genau 1 erhöhen, ohne andere
-      // Felder anzufassen. reportCount wird NICHT mehr vom Client erhöht, sondern
-      // serverseitig vom onReportCreated-Trigger (verhindert unbegrenztes Aufblähen).
-      allow update: if (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']) &&
-          request.resource.data.views is int &&
-          request.resource.data.views == resource.data.get('views', 0) + 1
-      ) || (isLoggedIn() && (
+      // Views and reaction totals are server-authoritative.
+      allow update: if (isLoggedIn() && (
           serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
           collaborationPublicationFieldsAreUnchanged(request.resource.data, resource.data) &&
           eventSubmissionFieldsAreUnchanged(request.resource.data, resource.data) &&
           ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
-          isModerator())
+          (isModerator() && isValidCreationUpdate(request.resource.data, resource.data)))
        ));
       allow delete: if isLoggedIn() && (
         isModerator() ||
@@ -423,15 +444,7 @@ service cloud.firestore {
 
       match /votes/{userId} {
         allow read: if true;
-        allow create: if isLoggedIn() && isOwner(userId) && (
-            request.resource.data.type != 'event_vote' ||
-            get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.voteType == 'multiple' ||
-            (
-                get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.voteType == 'single' &&
-                !exists(/databases/$(database)/documents/events/$(request.resource.data.eventId)/voters/$(userId))
-            )
-        );
-        allow delete: if isOwner(userId);
+        allow write: if false;
       }
       
       // Nur lesen: Der Client schreibt unter creations ausschließlich die
@@ -521,23 +534,29 @@ service cloud.firestore {
       // sonst könnte man sich selbst zu admin/moderator machen (ProtectedRoute vertraut
       // profile.role fürs UI-Gating).
       allow create: if isOwner(userId) && isValidProfileData(request.resource.data) &&
+          request.resource.data.get('followers', []) == [] &&
           (!('role' in request.resource.data.keys()) || request.resource.data.role == 'user');
       allow update: if
           ((isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data) &&
+           request.resource.data.get('followers', []) == resource.data.get('followers', []) &&
            (isAdmin() || request.resource.data.get('role', 'user') == resource.data.get('role', 'user')))
           ||
           // Fremdes Profil: eingeloggte Nutzer dürfen sich NUR selbst in die
           // followers-Liste eintragen/austragen (Follow/Unfollow) — nichts anderes.
-          (isLoggedIn() &&
+          (isLoggedIn() && request.auth.uid != userId &&
+           request.resource.data.get('followers', []) is list &&
+           request.resource.data.get('followers', []).size() == request.resource.data.get('followers', []).toSet().size() &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers']) && (
              (request.auth.uid in request.resource.data.get('followers', []) &&
               !(request.auth.uid in resource.data.get('followers', [])) &&
+              request.resource.data.get('followers', []).hasAll(resource.data.get('followers', [])) &&
               request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() + 1) ||
              (!(request.auth.uid in request.resource.data.get('followers', [])) &&
               request.auth.uid in resource.data.get('followers', []) &&
+              resource.data.get('followers', []).hasAll(request.resource.data.get('followers', [])) &&
               request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() - 1)
            ));
-      allow delete: if isOwner(userId) || isAdmin();
+      allow delete: if false; // Account deletion uses deleteOwnAccount/deleteUserAndContent.
 
       match /communityMemberships/{communityId} {
         allow read: if true;
@@ -558,6 +577,7 @@ service cloud.firestore {
       // never be able to forge a Discord id/guild list or write provider tokens.
       allow create: if isOwner(userId) &&
           request.resource.data.role == 'user' &&
+          request.resource.data.get('reportCount', 0) == 0 &&
           !request.resource.data.keys().hasAny([
             'discordId',
             'discordUsername',
@@ -570,6 +590,7 @@ service cloud.firestore {
       allow update: if (
           isOwner(userId) &&
           request.resource.data.role == resource.data.role &&
+          request.resource.data.get('reportCount', 0) == resource.data.get('reportCount', 0) &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'discordId',
             'discordUsername',
@@ -584,7 +605,10 @@ service cloud.firestore {
       // items + unreadCount + prefs + pushTokens. Server (admin) writes items on
       // fan-out; the owner writes prefs/pushTokens/mark-read/clear.
       match /meta/{docId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if (isOwner(userId) || isAdmin()) && !request.resource.data.keys().hasAny(['deliveries']);
+        allow update: if (isOwner(userId) || isAdmin()) && request.resource.data.get('deliveries', {}) == resource.data.get('deliveries', {});
+        allow delete: if docId != 'inbox' && (isOwner(userId) || isAdmin());
       }
       match /following/{creationId} {
         allow read, write: if isOwner(userId);
@@ -782,13 +806,18 @@ service cloud.firestore {
       match /comments/{commentId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
         allow create: if isCollaborationActive(collaborationId) &&
+          request.resource.data.authorId == request.auth.uid &&
+          request.resource.data.keys().hasOnly(['authorId', 'authorUsername', 'authorAvatarUrl', 'content', 'fileId', 'parentId', 'createdAt', 'updatedAt']) &&
+          request.resource.data.content is string && request.resource.data.content.size() > 0 && request.resource.data.content.size() <= 5000 &&
           (isCollaborationMember(collaborationId) || isModerator());
         allow update: if isCollaborationActive(collaborationId) &&
-          isLoggedIn() && (resource.data.userId == request.auth.uid || isModerator());
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'updatedAt']) &&
+          request.resource.data.content is string && request.resource.data.content.size() > 0 && request.resource.data.content.size() <= 5000 &&
+          isLoggedIn() && (resource.data.get('authorId', resource.data.get('userId', '')) == request.auth.uid || isModerator());
         // Completed/published workspaces remain readable but are immutable.
         allow delete: if isCollaborationActive(collaborationId) && (
           isCollaborationOwnerOrMod(collaborationId) ||
-          (isLoggedIn() && resource.data.userId == request.auth.uid) ||
+          (isLoggedIn() && resource.data.get('authorId', resource.data.get('userId', '')) == request.auth.uid) ||
           isModerator()
         );
       }
@@ -816,8 +845,12 @@ service cloud.firestore {
       match /workSessions/{sessionId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
         allow create: if isCollaborationActive(collaborationId) &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.keys().hasOnly(['fileId', 'fileName', 'userId', 'username', 'note', 'startedAt', 'endedAt', 'durationMinutes']) &&
+          request.resource.data.get('note', '') is string && request.resource.data.get('note', '').size() <= 5000 &&
           (isCollaborationMember(collaborationId) || isModerator());
         allow update: if isCollaborationActive(collaborationId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['endedAt', 'durationMinutes', 'note']) &&
           isLoggedIn() && resource.data.userId == request.auth.uid;
         allow delete: if isCollaborationActive(collaborationId) &&
           (isCollaborationOwnerOrMod(collaborationId) || isModerator());

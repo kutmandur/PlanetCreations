@@ -83,7 +83,7 @@ const NotificationSettings = ({ user, setModalMessage, embedded = false }) => {
     };
 
     return (
-        <div className={embedded ? '' : 'bg-white p-6 rounded-lg shadow-md'}>
+        <div className={embedded ? '' : 'pc-theme-card bg-white p-6 rounded-lg shadow-md'}>
             {!embedded && <h2 className="text-2xl font-bold mb-2">Notifications</h2>}
             <p className={`text-gray-600 dark:text-gray-300 mb-4 ${embedded ? 'text-center' : ''}`}>
                 Choose what you get notified about. “In-app” shows in the bell; “Push” also
