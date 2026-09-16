@@ -16,7 +16,7 @@ import {
     enableIndexedDbPersistence
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
-import { getMessaging, isSupported } from 'firebase/messaging';
+
 import { shouldForceRecaptchaForElectronTest } from '../utils/appCheckMode';
 
 const firebaseConfig = {
@@ -133,6 +133,7 @@ export async function getMessagingIfSupported() {
     if (!isConfigured || isElectron) return null;
     if (messagingInstance) return messagingInstance;
     try {
+        const { getMessaging, isSupported } = await import('firebase/messaging');
         if (await isSupported()) {
             messagingInstance = getMessaging(app);
         }

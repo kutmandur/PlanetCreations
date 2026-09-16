@@ -1,21 +1,18 @@
 const { EmbedBuilder } = require('discord.js');
-const { db } = require('./firebase');
 
-async function buildCreationEmbed(creationId, communityId, includeVoteCounter) {
-    const communityDoc = await db.collection('communitys').doc(communityId).get();
-    const creationDoc = await db.collection('creations').doc(creationId).get();
 
-    if (!communityDoc.exists || !creationDoc.exists) {
+async function buildCreationEmbed(creationId, communityId, includeVoteCounter, loaded = {}) {
+    const db = loaded.communityData && loaded.creationData ? null : require('./firebase').db;
+    const communityData = loaded.communityData || (await db.collection('communitys').doc(communityId).get()).data();
+    const creationData = loaded.creationData || (await db.collection('creations').doc(creationId).get()).data();
+    if (!communityData || !creationData) {
         throw new Error(`Community (${communityId}) or Creation (${creationId}) not found for embed.`);
     }
 
-    const communityData = communityDoc.data();
-    const creationData = creationDoc.data();
     const embed = new EmbedBuilder()
         .setColor(communityData.themeColor || '#F97316')
         .setTitle(creationData.title)
-        // HashRouter: ohne /#/ landet der Link auf der Startseite
-        .setURL(`https://planetcreations.net/#/creation/${creationId}`)
+        .setURL(`https://planetcreations.net/creation/${creationId}`)
         .setAuthor({ name: creationData.username, iconURL: creationData.userProfilePictureUrl || undefined })
         .setTimestamp(creationData.createdAt.toDate());
     

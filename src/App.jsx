@@ -36,7 +36,7 @@ import OverlayNotificationPopover from './components/streaming/OverlayNotificati
 import ErrorBoundary from './components/ErrorBoundary';
 import PrivacyPrompt from './components/modals/PrivacyPrompt';
 import BugReportModal from './components/modals/BugReportModal';
-import GoLiveModal from './components/modals/GoLiveModal';
+const GoLiveModal = lazyWithReload(() => import('./components/modals/GoLiveModal'));
 import { readLiveSession, setLiveSession } from './utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from './utils/overlayQr';
 import { buildOverlayShowcaseEntry, isOverlayShowcaseEntry } from './utils/overlayShowcase';
@@ -962,7 +962,7 @@ const AppContent = () => {
             </PopoverModal>}
             {showRickRoll && <RickRollModal onClose={() => setShowRickRoll(false)} />}
             {goLivePrompt && user && (
-                <GoLiveModal
+                <Suspense fallback={<Spinner />}><GoLiveModal
                     user={user}
                     userProfile={userProfile}
                     isElectron={Boolean(window.electronAPI?.isElectron)}
@@ -970,7 +970,7 @@ const AppContent = () => {
                     initialCreation={null}
                     onClose={() => setGoLivePrompt(null)}
                     setModalMessage={setModalMessage}
-                />
+                /></Suspense>
             )}
             
             {!isStoreBuild && (updateDownloaded ? (

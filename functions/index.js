@@ -24,6 +24,14 @@ const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 const zlib = require("zlib");
+const {enqueueDelivery, enqueueCreationDeliveries, linkState, digest} = require("./discordDelivery");
+const {countReport} = require("./reportCounts");
+const {setCreationReaction} = require("./creationReactions");
+const {recordCreationView, publishViewTotals} = require("./creationViews");
+const {removeBallot} = require("./securityMigration");
+const {setEventVote} = require("./eventVoting");
+const {isClaimableUpload, settleFailedUpload} = require("./uploadRecovery");
+const {requireObjectEtag, boundedBodyToBuffer} = require("./uploadIntegrity");
 const {
     getMatchDecision,
     normalizeText: normalizeLiveMatchText,
@@ -40,7 +48,6 @@ const {
     getSessionStreams,
     withPrimaryStreamFields,
 } = require("./liveStreamPlatforms");
-const {isYoutubeVideoLive} = require("./youtubeLiveStatus");
 const {isValidEventSubSignature} = require("./twitchEventSub");
 const {
     S3Client,
@@ -194,15 +201,7 @@ function getS3() {
 }
 const getR2Bucket = () => process.env.R2_BUCKET_NAME;
 
-async function r2BodyToBuffer(body) {
-    if (!body) throw new Error("Cloudflare R2 returned an empty object body.");
-    if (typeof body.transformToByteArray === "function") {
-        return Buffer.from(await body.transformToByteArray());
-    }
-    const chunks = [];
-    for await (const chunk of body) chunks.push(Buffer.from(chunk));
-    return Buffer.concat(chunks);
-}
+const r2BodyToBuffer = boundedBodyToBuffer;
 
 // Secrets & Config
 // Secrets liegen im Secret Manager (firebase functions:secrets:set <NAME>) und
@@ -600,14 +599,14 @@ exports.api = httpWith(
 
 // --- Konstanten für Backup-Validierung ---
 // Fallback, wenn die Games-Registry (meta/games) fehlt oder leer ist
-const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto'];
+const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto', '.zoo_auto'];
 
 // --- Games-Registry (meta/games): Spiele als Laufzeit-Konfiguration ---
 // Instanz-Cache mit TTL, damit Trigger nicht bei jedem Write das Doc lesen.
 const FALLBACK_REGISTRY_GAMES = [
     { id: 'planet-coaster', fileExtensions: [] },
     { id: 'planet-coaster-2', fileExtensions: ['.park2', '.blpr2', '.prkauto2'] },
-    { id: 'planet-zoo', fileExtensions: ['.zoo', '.pzblueprint', '.zooauto'] },
+    { id: 'planet-zoo', fileExtensions: ['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'] },
 ];
 let gamesRegistryCache = { at: 0, games: FALLBACK_REGISTRY_GAMES };
 async function getRegistryGames() {
@@ -633,6 +632,9 @@ async function getRegistryGameIds() {
 async function getAllowedGameExtensions() {
     const games = await getRegistryGames();
     const exts = [...new Set(games.flatMap((g) => g.fileExtensions || []))];
+    // Accept native autosaves even when meta/games still has the legacy spelling.
+    if (games.some((g) => g.id === 'planet-zoo' && g.fileExtensions?.includes('.zooauto')) &&
+        !exts.includes('.zoo_auto')) exts.push('.zoo_auto');
     return exts.length > 0 ? exts : ALLOWED_GAME_EXTENSIONS;
 }
 
@@ -1148,26 +1150,46 @@ exports.abortBackupUpload = onCallWith(
             throw new functions.https.HttpsError("invalid-argument", "An upload ID is required.");
         }
         const sessionRef = uploadSessionCollection.doc(uploadId);
-        const sessionSnap = await sessionRef.get();
-        if (!sessionSnap.exists || sessionSnap.data().uid !== uid) {
-            throw new functions.https.HttpsError("not-found", "Upload session not found.");
-        }
-        const session = sessionSnap.data();
-        if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
-            throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
-        }
+        const session = await db.runTransaction(async tx => {
+            const snapshot = await tx.get(sessionRef);
+            if (!snapshot.exists || snapshot.data().uid !== uid) throw new functions.https.HttpsError("not-found", "Upload session not found.");
+            const current = snapshot.data();
+            if (!isOwnedObjectKey(current.objectKey, uid, "temp-uploads")) throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
+            if (current.status === 'completed') return null;
+            if (current.status === 'processing') throw new functions.https.HttpsError("failed-precondition", "Publication is already processing. Retry finalization to recover its result.");
+            tx.update(sessionRef, {status: 'aborted', abortedAt: FieldValue.serverTimestamp()});
+            return current;
+        });
+        if (!session) return {success: true, alreadyFinalized: true};
         await getS3().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: session.objectKey }))
             .catch((error) => console.warn("R2 temp cleanup failed:", error.message));
-        await sessionRef.delete();
+        // Retain the outcome so a concurrent/retried finalizer cannot lose its commit evidence.
         return { success: true };
     });
 
+async function cleanupCompletedCreationUpload(session, uid, creationId) {
+    if (isOwnedObjectKey(session.objectKey, uid, 'temp-uploads')) {
+        await deleteR2ObjectSafely(session.objectKey, 'Completed upload temp cleanup');
+    }
+    const previous = session.previousObjectKey;
+    if (previous && previous !== session.destinationKey &&
+        isOwnedObjectKey(previous, uid, 'creation-backups') &&
+        previous.startsWith(`creation-backups/${uid}/${creationId}/`)) {
+        await deleteR2ObjectSafely(previous, 'Previous creation backup cleanup');
+    }
+    const previousRide = session.previousRideAnalysisObjectKey;
+    if (previousRide && previousRide !== session.rideAnalysisObjectKey &&
+        isCreationRideAnalysisObjectKey(previousRide, uid, creationId)) {
+        await deleteR2ObjectSafely(previousRide, 'Previous creation analysis cleanup');
+    }
+}
+
 exports.finalizeBackupUpload = onCallWith(
     {
-        concurrency: 2,
+        concurrency: 1,
         cpu: 1,
         maxInstances: 5,
-        memory: "1GiB",
+        memory: "2GiB",
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     },
@@ -1209,23 +1231,26 @@ exports.finalizeBackupUpload = onCallWith(
             );
         }
         if (session.status === "completed" && session.creationId === creationId) {
+            await cleanupCompletedCreationUpload(session, uid, creationId);
             return { success: true, alreadyFinalized: true };
         }
-        if (session.status !== "pending" || !session.expiresAt || session.expiresAt.toMillis() < Date.now()) {
+        if (!isClaimableUpload(session)) {
             throw new functions.https.HttpsError("failed-precondition", "The upload session expired or was already used.");
         }
         if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
             throw new functions.https.HttpsError("permission-denied", "The upload session is invalid.");
         }
 
+        const processingToken = crypto.randomUUID();
         await db.runTransaction(async (transaction) => {
             const latestSessionSnap = await transaction.get(sessionRef);
             const latestSession = latestSessionSnap.data();
-            if (!latestSessionSnap.exists || latestSession.uid !== uid || latestSession.status !== "pending") {
+            if (!latestSessionSnap.exists || latestSession.uid !== uid || !isClaimableUpload(latestSession)) {
                 throw new functions.https.HttpsError("aborted", "The upload session is already being processed.");
             }
             transaction.update(sessionRef, {
                 status: "processing",
+                processingToken,
                 creationId,
                 processingAt: FieldValue.serverTimestamp(),
             });
@@ -1239,8 +1264,9 @@ exports.finalizeBackupUpload = onCallWith(
                 head.ContentType !== uploadContentType) {
                 throw new Error("The uploaded object size or content type does not match the upload session.");
             }
-            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey, IfMatch: requireObjectEtag(head) }));
             const fileBuffer = await r2BodyToBuffer(object.Body);
+            if (fileBuffer.length !== head.ContentLength) throw new Error("Downloaded object size changed.");
             const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
             const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
             if (!validation.valid) throw new Error(validation.error);
@@ -1272,22 +1298,21 @@ exports.finalizeBackupUpload = onCallWith(
                     reason: "no-tracked-ride-test-data",
                 };
             }
-            const metadataUpdate = buildCreationMetadataUpdate(
-                creationSnap.data().requiredDlcs,
-                verifiedGameMetadata,
-            );
-
             destinationKey = `creation-backups/${uid}/${creationId}/${uploadId}.PlanetCreations`;
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
                 CopySource: encodeCopySource(bucket, session.objectKey),
+                CopySourceIfMatch: requireObjectEtag(head),
                 Key: destinationKey,
                 ContentType: uploadContentType,
                 MetadataDirective: "REPLACE",
             }));
-            const oldObjectKey = creationSnap.data().backupObjectKey;
-            const oldRideAnalysisObjectKey = creationSnap.data().rideAnalysisObjectKey;
-            await creationRef.update({
+            const previous = await db.runTransaction(async transaction => {
+                const [latestSession, latestCreation] = await Promise.all([transaction.get(sessionRef), transaction.get(creationRef)]);
+                if (!latestSession.exists || latestSession.data().processingToken !== processingToken || latestSession.data().status !== 'processing') throw new functions.https.HttpsError('aborted', 'Upload ownership changed.');
+                if (!latestCreation.exists || latestCreation.data().userId !== uid || latestCreation.data().sourceCollaborationId) throw new functions.https.HttpsError('failed-precondition', 'Creation is no longer editable.');
+                const metadataUpdate = buildCreationMetadataUpdate(latestCreation.data().requiredDlcs, verifiedGameMetadata);
+            transaction.update(creationRef, {
                 backupObjectKey: destinationKey,
                 backupStorageProvider: "cloudflare-r2",
                 backupUrl: null,
@@ -1311,11 +1336,17 @@ exports.finalizeBackupUpload = onCallWith(
                 verifiedGameMetadata: metadataUpdate.verifiedGameMetadata,
                 requiredDlcs: metadataUpdate.requiredDlcs,
             });
-            await sessionRef.update({
-                status: "completed",
-                destinationKey,
-                completedAt: FieldValue.serverTimestamp(),
-            }).catch((error) => console.warn("Upload-session completion write failed:", error.message));
+
+                transaction.update(sessionRef, {
+                    status: 'completed', destinationKey, rideAnalysisObjectKey,
+                    previousObjectKey: latestCreation.data().backupObjectKey || null,
+                    previousRideAnalysisObjectKey: latestCreation.data().rideAnalysisObjectKey || null,
+                    completedAt: FieldValue.serverTimestamp(),
+                });
+                return {objectKey: latestCreation.data().backupObjectKey, rideKey: latestCreation.data().rideAnalysisObjectKey};
+            });
+            const oldObjectKey = previous.objectKey;
+            const oldRideAnalysisObjectKey = previous.rideKey;
             await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey }))
                 .catch((error) => console.warn("R2 temp cleanup after finalization failed:", error.message));
 
@@ -1340,20 +1371,17 @@ exports.finalizeBackupUpload = onCallWith(
             };
         } catch (error) {
             console.error(`Backup finalization failed for ${uploadId}:`, error);
-            await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: session.objectKey })).catch(() => null);
-            if (destinationKey) {
-                await getS3().send(new DeleteObjectCommand({ Bucket: bucket, Key: destinationKey })).catch(() => null);
+            const outcome = await settleFailedUpload(db, sessionRef, processingToken, error).catch(() => ({cleanup: false}));
+            if (outcome.completed) {
+                await cleanupCompletedCreationUpload(outcome, uid, creationId);
+                return {success: true, alreadyFinalized: true};
             }
-            if (rideAnalysisObjectKey) {
-                await getS3().send(new DeleteObjectCommand({
-                    Bucket: bucket,
-                    Key: rideAnalysisObjectKey,
-                })).catch(() => null);
+            if (outcome.cleanup) {
+                await deleteR2ObjectSafely(session.objectKey, 'Failed upload temp cleanup');
+                if (destinationKey) await deleteR2ObjectSafely(destinationKey, 'Failed upload destination cleanup');
+                if (rideAnalysisObjectKey) await deleteR2ObjectSafely(rideAnalysisObjectKey, 'Failed upload analysis cleanup');
+                await creationRef.update({backupProcessingError: error.message}).catch(() => null);
             }
-            await Promise.all([
-                sessionRef.set({ status: "rejected", error: error.message }, { merge: true }),
-                creationRef.update({ backupProcessingError: error.message }),
-            ]);
             throw new functions.https.HttpsError("failed-precondition", error.message);
         }
     });
@@ -1497,10 +1525,10 @@ exports.getCreationRideAnalysisChunk = onCallWith(
 
 exports.refreshCreationGameMetadata = onCallWith(
     {
-        concurrency: 2,
+        concurrency: 1,
         cpu: 1,
         maxInstances: 5,
-        memory: "1GiB",
+        memory: "2GiB",
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     },
@@ -1538,6 +1566,7 @@ exports.refreshCreationGameMetadata = onCallWith(
             }
             const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
             const fileBuffer = await r2BodyToBuffer(object.Body);
+            if (fileBuffer.length !== head.ContentLength) throw new Error("Downloaded object size changed.");
             if (fileBuffer.length !== head.ContentLength) {
                 throw new Error("The stored backup is incomplete.");
             }
@@ -1666,63 +1695,38 @@ exports.removeCreationBackup = onCallWith(
     });
 
 
- exports.voteOnCreation = onCall(async (data, context) => {
-    if (!context.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to vote.');
-    }
-    const userId = context.auth.uid;
-    const { creationId, voteType } = data;
-
-    if (!creationId || !['like', 'dislike'].includes(voteType)) {
-        throw new functions.https.HttpsError('invalid-argument', 'A valid creationId and voteType must be provided.');
-    }
-    
-    const creationRef = db.doc(`creations/${creationId}`);
-    const voteRef = db.doc(`creations/${creationId}/votes/${userId}`);
-
+exports.setEventVote = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
     try {
-        await db.runTransaction(async (transaction) => {
-            const voteDoc = await transaction.get(voteRef);
-            const creationDoc = await transaction.get(creationRef);
-
-            if (!creationDoc.exists) { 
-                throw new functions.https.HttpsError('not-found', 'This creation does not exist.');
-            }
-
-            const creationData = creationDoc.data();
-            const { likes = 0, dislikes = 0 } = creationData;
-            
-            const currentVote = voteDoc.exists ? voteDoc.data().type : null;
-
-            let newLikes = likes;
-            let newDislikes = dislikes;
-
-            if (currentVote === voteType) {
-                if (voteType === 'like') newLikes--;
-                if (voteType === 'dislike') newDislikes--;
-                transaction.delete(voteRef);
-            } else {
-                if (currentVote === 'like') newLikes--;
-                if (currentVote === 'dislike') newDislikes--;
-
-                if (voteType === 'like') newLikes++;
-                if (voteType === 'dislike') newDislikes++;
-                transaction.set(voteRef, { type: voteType, userId: userId });
-            }
-
-            transaction.update(creationRef, { 
-                likes: Math.max(0, newLikes), 
-                dislikes: Math.max(0, newDislikes) 
-            });
-        });
-        return { success: true };
+        return await setEventVote(db, uid, data, context.auth.token?.role);
     } catch (error) {
-        console.error("Error processing vote transaction:", error);
-        if (error.code) {
-            throw error;
-        }
-        throw new functions.https.HttpsError('internal', 'An unexpected error occurred while processing your vote.');
+        rethrowCallableError(error);
     }
+});
+
+exports.initializeEventVoting = documentCreated("events/{eventId}", async (snap) => {
+    await db.runTransaction(async tx => {
+        const latest = await tx.get(snap.ref);
+        if (latest.exists && !latest.data().voteSchemaVersion) tx.update(snap.ref, {voteSchemaVersion: 2});
+    });
+});
+
+function rethrowCallableError(error) {
+    const codes = ['invalid-argument', 'not-found', 'permission-denied', 'unauthenticated', 'failed-precondition', 'aborted', 'resource-exhausted'];
+    throw new functions.https.HttpsError(codes.includes(error.code) ? error.code : 'internal', codes.includes(error.code) ? error.message : 'The operation could not be completed. Please try again.');
+}
+exports.voteOnCreation = onCall(async (data, context) => {
+    const uid = requireAuthenticated(context);
+    try { return await setCreationReaction(db, uid, data); } catch (error) { rethrowCallableError(error); }
+});
+exports.recordCreationView = onCall(async (data, context) => {
+    try {
+        return await recordCreationView(db, data, context.auth?.uid || context.rawRequest.ip || 'unknown', {aggregate: process.env.AGGREGATE_CREATION_VIEWS === 'true'});
+    } catch (error) { rethrowCallableError(error); }
+});
+exports.publishCreationViews = scheduled({schedule: 'every 5 minutes', timeoutSeconds: 300}, async () => {
+    // Also drains pending totals during rollback; do not re-open direct client writes.
+    if (process.env.AGGREGATE_CREATION_VIEWS === 'true' || process.env.DRAIN_CREATION_VIEWS === 'true') await publishViewTotals(db);
 });
 
 exports.refreshDiscordGuilds = onCallWith(
@@ -3114,32 +3118,24 @@ const LIVE_PLATFORM_HOSTS = {
     youtube: ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"],
 };
 
-// Validiert die Stream-URL und extrahiert das API-Ziel (Twitch-Login bzw.
-// YouTube-Video-ID). YouTube braucht die konkrete Video-/Stream-URL, weil nur
-// videos.list (1 Quota-Unit) billig prüfbar ist — Kanal-URLs wären teuer.
+// Preview, start and sweep share one YouTube verification implementation.
+const {createYoutubeStreamService, parseYoutubeStreamUrl} = require("./youtubeStream");
+const youtubeStreams = createYoutubeStreamService({apiKey: () => youtubeApiKey.value()});
+
 function parseStreamUrl(platform, rawUrl) {
+    if (platform === "youtube") return parseYoutubeStreamUrl(rawUrl);
     if (typeof rawUrl !== "string" || rawUrl.length > 300) return null;
     let url;
-    try {
-        url = new URL(rawUrl);
-    } catch {
-        return null;
-    }
-    const hosts = LIVE_PLATFORM_HOSTS[platform];
-    if (!hosts || url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return null;
-    if (platform === "twitch") {
-        const login = url.pathname.split("/").filter(Boolean)[0] || "";
-        return /^[a-zA-Z0-9_]{3,25}$/.test(login) ? {url: rawUrl, twitchLogin: login.toLowerCase()} : null;
-    }
-    let videoId = null;
-    if (url.hostname.toLowerCase() === "youtu.be") {
-        videoId = url.pathname.split("/").filter(Boolean)[0] || null;
-    } else if (url.pathname === "/watch") {
-        videoId = url.searchParams.get("v");
-    } else if (url.pathname.startsWith("/live/")) {
-        videoId = url.pathname.split("/").filter(Boolean)[1] || null;
-    }
-    return videoId && /^[a-zA-Z0-9_-]{6,20}$/.test(videoId) ? {url: rawUrl, youtubeVideoId: videoId} : null;
+    try { url = new URL(rawUrl); } catch { return null; }
+    if (platform !== "twitch" || url.protocol !== "https:" ||
+        !LIVE_PLATFORM_HOSTS.twitch.includes(url.hostname.toLowerCase())) return null;
+    const login = url.pathname.split("/").filter(Boolean)[0] || "";
+    return /^[a-zA-Z0-9_]{3,25}$/.test(login) ?
+        {url: rawUrl, twitchLogin: login.toLowerCase()} : null;
+}
+
+async function resolveStreamTarget(platform, parsed) {
+    return platform === "youtube" ? youtubeStreams.resolve(parsed) : parsed;
 }
 
 // Twitch-App-Access-Token (Client Credentials), im Modul-Scope gecacht —
@@ -3188,27 +3184,7 @@ async function fetchStreamMetadata(platform, parsed) {
             categoryName: String(stream.game_name || "").slice(0, 100),
         } : {isLive: false};
     }
-    if (platform === "youtube") {
-        const response = await fetch(
-            `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails` +
-            `&id=${encodeURIComponent(parsed.youtubeVideoId)}` +
-            `&key=${encodeURIComponent(youtubeApiKey.value())}`,
-        );
-        if (!response.ok) throw new Error(`YouTube API request failed (${response.status}).`);
-        const body = await response.json();
-        const video = body.items?.[0] || null;
-        const snippet = video?.snippet || {};
-        return {
-            isLive: isYoutubeVideoLive(video),
-            streamId: parsed.youtubeVideoId,
-            broadcasterId: snippet.channelId || null,
-            broadcasterLogin: null,
-            title: String(snippet.title || "").slice(0, 300),
-            tags: Array.isArray(snippet.tags) ? snippet.tags.slice(0, 20) : [],
-            categoryId: snippet.categoryId || null,
-            categoryName: "",
-        };
-    }
+    if (platform === "youtube") return youtubeStreams.metadata(parsed);
     return {isLive: false};
 }
 
@@ -3400,12 +3376,21 @@ exports.getLiveCreationSuggestions = onCallWith(LIVE_SECRETS, async (data, conte
     if (!LIVE_PLATFORM_HOSTS[platform]) {
         throw new functions.https.HttpsError("invalid-argument", "Unsupported streaming platform.");
     }
-    const parsed = parseStreamUrl(platform, data?.url);
-    if (!parsed) throw new functions.https.HttpsError("invalid-argument", "A valid stream URL is required.");
+    const requestedTarget = parseStreamUrl(platform, data?.url);
+    if (!requestedTarget) throw new functions.https.HttpsError("invalid-argument", "A valid stream URL is required.");
     let metadata;
+    let parsed;
     try {
+        parsed = await resolveStreamTarget(platform, requestedTarget);
+        if (!parsed) {
+            throw new functions.https.HttpsError(
+                "failed-precondition",
+                "No live YouTube stream was found on this channel.",
+            );
+        }
         metadata = await fetchStreamMetadata(platform, parsed);
     } catch (error) {
+        if (error?.code === "failed-precondition") throw error;
         console.error("Live metadata preview failed:", error);
         throw new functions.https.HttpsError("unavailable", "Stream metadata is temporarily unavailable.");
     }
@@ -3448,7 +3433,7 @@ function parseRequestedLiveStreams(data) {
             throw new functions.https.HttpsError(
                 "invalid-argument",
                 platform === "youtube" ?
-                    "A valid https YouTube video/stream URL is required (watch?v=... or youtu.be/...)." :
+                    "A valid https YouTube channel or video URL is required." :
                     "A valid https Twitch channel URL is required.",
             );
         }
@@ -3480,11 +3465,14 @@ exports.goLive = onCallWith(LIVE_SECRETS, async (data, context) => {
 
     let verifiedStreams;
     try {
-        verifiedStreams = await Promise.all(requested.map(async ({platform, parsed}) => ({
-            platform,
-            parsed,
-            metadata: await fetchStreamMetadata(platform, parsed),
-        })));
+        verifiedStreams = await Promise.all(requested.map(async ({platform, parsed}) => {
+            const resolved = await resolveStreamTarget(platform, parsed);
+            return {
+                platform,
+                parsed: resolved,
+                metadata: resolved ? await fetchStreamMetadata(platform, resolved) : {isLive: false},
+            };
+        }));
     } catch (error) {
         console.error("Live verification failed:", error);
         throw new functions.https.HttpsError("unavailable", "Stream verification is temporarily unavailable. Please try again.");
@@ -4268,6 +4256,7 @@ exports.sweepLiveStreams = scheduled(
             }
             for (const [platform, stream] of Object.entries(getSessionStreams(session))) {
                 const parsed = parseStreamUrl(platform, stream.url);
+                if (parsed && platform === "youtube") parsed.youtubeChannelId = stream.broadcasterId;
                 let metadata;
                 try {
                     metadata = parsed ? await fetchStreamMetadata(platform, parsed) : {isLive: false};
@@ -4710,7 +4699,7 @@ exports.notifyFollowersOnNewCreation = documentCreated(
         const title = `${creation.username || 'A creator you follow'} posted a new creation`;
         const message = creation.title || '';
         const link = `/creation/${context.params.creationId}`;
-        await Promise.all(followers.map(f =>
+        await Promise.all([...new Set(followers)].map(f =>
             notifyUser(f, 'newCreation', { title, message, link })));
         return null;
     });
@@ -4721,32 +4710,11 @@ exports.notifyFollowersOnNewCreation = documentCreated(
 // ist reine Lese-Mathematik — dieselbe Formel wie in src/utils/feedRanking.js;
 // gespeichert wird nur der Rohwert zum Zeitpunkt des letzten Inkrements.
 // Clients können die Felder nicht schreiben (firestore.rules, isValidCreationUpdate).
-const ACTIVITY_GATE_MS = 20 * 60 * 60 * 1000;
-const decayActivityScore = (score, activityAtMs, nowMs) => {
-    if (!score || score <= 0 || !activityAtMs) return 0;
-    const elapsed = Math.max(0, nowMs - activityAtMs);
-    const months = elapsed / (30 * 24 * 60 * 60 * 1000);
-    const years = elapsed / (365 * 24 * 60 * 60 * 1000);
-    return score * Math.pow(0.7, months) * Math.pow(0.2, years);
-};
-
 exports.onCreationActivityScore = documentUpdated(
     'creations/{creationId}',
-    async (change) => {
-        const before = change.before.data();
-        const after = change.after.data();
-        // Nur echte Updates zählen (neuer Changelog-Eintrag)
-        if ((after.changelog || []).length <= (before.changelog || []).length) return null;
-        const now = Date.now();
-        const lastAt = after.activityAt?.toMillis?.() || 0;
-        if (now - lastAt < ACTIVITY_GATE_MS) return null; // max. 1×/Tag
-        const decayed = decayActivityScore(after.activityScore || 0, lastAt, now);
-        await change.after.ref.update({
-            activityScore: Math.round((decayed + 1) * 100) / 100,
-            activityAt: Timestamp.fromMillis(now),
-        });
-        return null;
-    });
+    change => require('./activityScore').recordCreationActivity(db, change),
+    {retry: true},
+);
 
 // Eine Creation wurde bei einem Event eingereicht (eventIds gewachsen) →
 // Bestätigung an den Einreicher (Inbox + Push). Läuft serverseitig, damit
@@ -4823,16 +4791,8 @@ exports.notifyOnNewFollower = documentUpdated(
 exports.onReportCreated = documentCreated(
     'reports/{reportId}',
     async (snap) => {
-        const r = snap.data();
-        if (!r || !r.targetId || !r.targetType) return null;
-        const col = r.targetType === 'creation' ? 'creations'
-            : (r.targetType === 'user' ? 'users' : null);
-        if (!col) return null;
-        await db.doc(`${col}/${r.targetId}`)
-            .update({ reportCount: FieldValue.increment(1) })
-            .catch(e => console.error('reportCount increment failed:', e.message));
-        return null;
-    });
+        return countReport(db, snap);
+    }, {retry: true});
 
 // --- Collaboration-Beitritt per Invite-Code (serverseitig, damit Clients nicht
 //     mehr alle Collaborations inkl. Invite-Codes auflisten dürfen) ---
@@ -5017,10 +4977,10 @@ function serializeCollaborationInvitation(document) {
 // --- Collaboration serverseitig anlegen: verhindert, dass Clients ownerId/memberIds
 //     fälschen oder ungeprüfte Docs schreiben (Firestore-Regel verbietet Client-Create). ---
 exports.createCollaboration = onCallWith({
-        concurrency: 2,
+        concurrency: 1,
         cpu: 1,
         maxInstances: 5,
-        memory: "1GiB",
+        memory: "2GiB",
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     }, async (data, context) => {
@@ -5121,6 +5081,9 @@ exports.createCollaboration = onCallWith({
         }
         const session = sessionSnap.data();
         if (session.status === "completed" && session.collaborationId) {
+            if (isOwnedObjectKey(session.objectKey, userId, 'temp-uploads')) {
+                await deleteR2ObjectSafely(session.objectKey, 'Completed initial upload temp cleanup');
+            }
             return {
                 collaborationId: session.collaborationId,
                 versionId: session.versionId || null,
@@ -5128,9 +5091,7 @@ exports.createCollaboration = onCallWith({
                 alreadyCreated: true,
             };
         }
-        if (session.status !== "pending" ||
-            !session.expiresAt ||
-            session.expiresAt.toMillis() < Date.now()) {
+        if (!isClaimableUpload(session)) {
             throw new functions.https.HttpsError(
                 "failed-precondition",
                 "The initial-save upload expired or was already used.",
@@ -5151,13 +5112,13 @@ exports.createCollaboration = onCallWith({
         const username = profileSnap.exists ?
             (profileSnap.data().username || "Unknown") :
             "Unknown";
-        const collaborationRef = db.collection("collaborations").doc();
+        const collaborationRef = db.collection("collaborations").doc(session.collaborationId || uploadId);
         const memberRef = collaborationRef.collection("members").doc(userId);
         const fileRef = collaborationRef.collection("files").doc(
             COLLABORATION_FILE_ID,
         );
-        const versionRef = fileRef.collection("versions").doc();
-        const uploadRef = collaborationRef.collection("uploads").doc();
+        const versionRef = fileRef.collection("versions").doc(uploadId);
+        const uploadRef = collaborationRef.collection("uploads").doc(uploadId);
         const destinationKey = buildCollaborationVersionStorageKey(
             collaborationRef.id,
             versionRef.id,
@@ -5168,7 +5129,7 @@ exports.createCollaboration = onCallWith({
             const latestSession = await transaction.get(sessionRef);
             if (!latestSession.exists ||
                 latestSession.data().uid !== userId ||
-                latestSession.data().status !== "pending") {
+                !isClaimableUpload(latestSession.data())) {
                 throw new functions.https.HttpsError(
                     "aborted",
                     "The initial-save upload is already being processed.",
@@ -5182,8 +5143,6 @@ exports.createCollaboration = onCallWith({
             });
         });
 
-        let copied = false;
-        let committed = false;
         try {
             const bucket = getR2Bucket();
             const head = await getS3().send(new HeadObjectCommand({
@@ -5200,8 +5159,10 @@ exports.createCollaboration = onCallWith({
             const object = await getS3().send(new GetObjectCommand({
                 Bucket: bucket,
                 Key: session.objectKey,
+                IfMatch: requireObjectEtag(head),
             }));
             const fileBuffer = await r2BodyToBuffer(object.Body);
+            if (fileBuffer.length !== head.ContentLength) throw new Error("Downloaded object size changed.");
             const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
             const validation = validateBackupBuffer(
                 fileBuffer,
@@ -5224,12 +5185,11 @@ exports.createCollaboration = onCallWith({
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
                 CopySource: encodeCopySource(bucket, session.objectKey),
+                CopySourceIfMatch: requireObjectEtag(head),
                 Key: destinationKey,
                 ContentType: uploadContentType,
                 MetadataDirective: "REPLACE",
             }));
-            copied = true;
-
             const now = Timestamp.now();
             const originalFileName =
                 validation.metadata.originalFileName || "save";
@@ -5341,7 +5301,6 @@ exports.createCollaboration = onCallWith({
                     completedAt: now,
                 });
             });
-            committed = true;
             await deleteR2ObjectSafely(
                 session.objectKey,
                 "R2 temp cleanup after collaboration creation failed",
@@ -5353,21 +5312,17 @@ exports.createCollaboration = onCallWith({
             };
         } catch (error) {
             console.error("Collaboration creation failed:", error);
-            await deleteR2ObjectSafely(
-                session.objectKey,
-                "R2 temp cleanup after failed collaboration creation failed",
-            );
-            if (copied && !committed) {
-                await deleteR2ObjectSafely(
-                    destinationKey,
-                    "R2 initial-version cleanup failed",
-                );
+            const outcome = await settleFailedUpload(db, sessionRef, processingToken, error).catch(() => ({cleanup: false}));
+            if (outcome.completed) {
+                await deleteR2ObjectSafely(session.objectKey, 'Completed initial upload temp cleanup');
+                return {collaborationId: outcome.collaborationId, versionId: outcome.versionId, alreadyCreated: true};
             }
-            await sessionRef.set({
-                status: "rejected",
-                error: error.message,
-                failedAt: FieldValue.serverTimestamp(),
-            }, {merge: true}).catch(() => null);
+            if (outcome.cleanup) {
+                await deleteR2ObjectSafely(session.objectKey, 'Failed initial upload temp cleanup');
+                // COPY may have succeeded even if its response was lost. The
+                // rejected session fences this key against concurrent commits.
+                await deleteR2ObjectSafely(destinationKey, 'Failed initial upload cleanup');
+            }
             throw new functions.https.HttpsError(
                 "failed-precondition",
                 error.message,
@@ -6972,10 +6927,10 @@ async function deleteR2ObjectSafely(objectKey, label) {
 //     serialisiert parallele Uploads und vergibt eindeutige Versionsnummern. ---
 exports.finalizeCollaborationVersion = onCallWith(
     {
-        concurrency: 2,
+        concurrency: 1,
         cpu: 1,
         maxInstances: 5,
-        memory: "1GiB",
+        memory: "2GiB",
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     },
@@ -7046,6 +7001,9 @@ exports.finalizeCollaborationVersion = onCallWith(
             throw new functions.https.HttpsError("failed-precondition", "The required upload consent is missing or invalid.");
         }
         if (session.status === "completed" && session.collaborationId === collaborationId) {
+            if (isOwnedObjectKey(session.objectKey, uid, 'temp-uploads')) {
+                await deleteR2ObjectSafely(session.objectKey, 'Completed version upload temp cleanup');
+            }
             return {
                 success: true,
                 alreadyFinalized: true,
@@ -7060,7 +7018,7 @@ exports.finalizeCollaborationVersion = onCallWith(
                 "Only the author can attach a save to this pending changelog.",
             );
         }
-        if (session.status !== "pending" || !session.expiresAt || session.expiresAt.toMillis() < Date.now()) {
+        if (!isClaimableUpload(session)) {
             throw new functions.https.HttpsError("failed-precondition", "The upload session expired or was already used.");
         }
         if (!isOwnedObjectKey(session.objectKey, uid, "temp-uploads")) {
@@ -7069,7 +7027,7 @@ exports.finalizeCollaborationVersion = onCallWith(
         const processingToken = crypto.randomUUID();
         await db.runTransaction(async (transaction) => {
             const latest = await transaction.get(sessionRef);
-            if (!latest.exists || latest.data().uid !== uid || latest.data().status !== "pending") {
+            if (!latest.exists || latest.data().uid !== uid || !isClaimableUpload(latest.data())) {
                 throw new functions.https.HttpsError("aborted", "The upload session is already being processed.");
             }
             transaction.update(sessionRef, {
@@ -7084,7 +7042,7 @@ exports.finalizeCollaborationVersion = onCallWith(
         const fileId = COLLABORATION_FILE_ID;
         const fileRef = db.doc(`collaborations/${collaborationId}/files/${fileId}`);
         const versionsRef = fileRef.collection("versions");
-        const versionRef = versionsRef.doc();
+        const versionRef = versionsRef.doc(uploadId);
         const destinationKey = buildCollaborationVersionStorageKey(
             collaborationId,
             versionRef.id,
@@ -7097,8 +7055,9 @@ exports.finalizeCollaborationVersion = onCallWith(
                 head.ContentType !== uploadContentType) {
                 throw new Error("The uploaded object size or content type does not match the upload session.");
             }
-            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey }));
+            const object = await getS3().send(new GetObjectCommand({ Bucket: bucket, Key: session.objectKey, IfMatch: requireObjectEtag(head) }));
             const fileBuffer = await r2BodyToBuffer(object.Body);
+            if (fileBuffer.length !== head.ContentLength) throw new Error("Downloaded object size changed.");
             const publicKey = getPublicKeyFromPrivate(backupSigningKey.value());
             const validation = validateBackupBuffer(fileBuffer, publicKey, await getAllowedGameExtensions());
             if (!validation.valid) throw new Error(validation.error);
@@ -7113,6 +7072,7 @@ exports.finalizeCollaborationVersion = onCallWith(
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
                 CopySource: encodeCopySource(bucket, session.objectKey),
+                CopySourceIfMatch: requireObjectEtag(head),
                 Key: destinationKey,
                 ContentType: uploadContentType,
                 MetadataDirective: "REPLACE",
@@ -7327,27 +7287,14 @@ exports.finalizeCollaborationVersion = onCallWith(
             };
         } catch (error) {
             console.error(`Collaboration version finalization failed for ${uploadId}:`, error);
-            await deleteR2ObjectSafely(
-                session.objectKey,
-                "R2 temp cleanup after failed finalization failed",
-            );
-            if (!committed) {
-                await deleteR2ObjectSafely(
-                    destinationKey,
-                    "R2 destination cleanup after failed finalization failed",
-                );
-                await db.runTransaction(async (transaction) => {
-                    const latest = await transaction.get(sessionRef);
-                    if (latest.exists &&
-                        latest.data().status === "processing" &&
-                        latest.data().processingToken === processingToken) {
-                        transaction.set(sessionRef, {
-                            status: "rejected",
-                            error: error.message,
-                            rejectedAt: FieldValue.serverTimestamp(),
-                        }, { merge: true });
-                    }
-                }).catch(() => null);
+            const outcome = await settleFailedUpload(db, sessionRef, processingToken, error).catch(() => ({cleanup: false}));
+            if (outcome.completed) {
+                await deleteR2ObjectSafely(session.objectKey, 'Completed version upload temp cleanup');
+                return {success: true, alreadyFinalized: true, versionId: outcome.versionId, versionNumber: outcome.versionNumber};
+            }
+            if (!committed && outcome.cleanup) {
+                await deleteR2ObjectSafely(session.objectKey, 'Failed version upload temp cleanup');
+                await deleteR2ObjectSafely(destinationKey, 'Failed version destination cleanup');
             }
             if (error instanceof functions.https.HttpsError) throw error;
             throw new functions.https.HttpsError("failed-precondition", error.message);
@@ -7632,6 +7579,9 @@ exports.publishCollaboration = onCallWith(
                 "Only the owner can publish this collaboration.",
             );
         }
+        if (collaboration.status === 'published' && collaboration.publish?.publishedCreationId) {
+            return {published: true, creationId: collaboration.publish.publishedCreationId, alreadyPublished: true};
+        }
         if (collaboration.status !== "completed" ||
             collaboration.publish?.state !== "ready") {
             throw new functions.https.HttpsError(
@@ -7728,7 +7678,9 @@ exports.publishCollaboration = onCallWith(
             `creation-backups/${userId}/${creationRef.id}/` +
             `${currentVersionId}.PlanetCreations`;
         const bucket = getR2Bucket();
-        let copied = false;
+        const attemptRef = db.collection('collaborationPublishAttempts').doc(creationRef.id);
+        const processingToken = crypto.randomUUID();
+        await attemptRef.create({uid: userId, collaborationId, destinationKey, status: 'processing', processingToken, processingAt: FieldValue.serverTimestamp()});
         try {
             const head = await getS3().send(new HeadObjectCommand({
                 Bucket: bucket,
@@ -7742,12 +7694,11 @@ exports.publishCollaboration = onCallWith(
             await getS3().send(new CopyObjectCommand({
                 Bucket: bucket,
                 CopySource: encodeCopySource(bucket, version.storageKey),
+                CopySourceIfMatch: requireObjectEtag(head),
                 Key: destinationKey,
                 ContentType: uploadContentType,
                 MetadataDirective: "REPLACE",
             }));
-            copied = true;
-
             const now = Timestamp.now();
             const imageUrls = buildPublishedCollaborationImages(
                 uploads,
@@ -7757,11 +7708,15 @@ exports.publishCollaboration = onCallWith(
                 uploadSnapshot.docs,
             );
             await db.runTransaction(async (transaction) => {
-                const [latestCollaboration, latestVersion] =
+                const [latestCollaboration, latestVersion, attempt] =
                     await Promise.all([
                         transaction.get(collaborationRef),
                         transaction.get(versionRef),
+                        transaction.get(attemptRef),
                     ]);
+                if (!attempt.exists || attempt.data().status !== 'processing' || attempt.data().processingToken !== processingToken) {
+                    throw new functions.https.HttpsError('aborted', 'Publication is no longer owned by this request.');
+                }
                 const latestCollaborationData = latestCollaboration.data();
                 if (!latestCollaboration.exists ||
                     latestCollaborationData?.ownerId !== userId ||
@@ -7855,10 +7810,13 @@ exports.publishCollaboration = onCallWith(
                             (latestCollaborationData.memberIds || []).length,
                     },
                 });
+                transaction.update(attemptRef, {status: 'completed', creationId: creationRef.id, completedAt: now});
             });
             return {published: true, creationId: creationRef.id};
         } catch (error) {
-            if (copied) {
+            const outcome = await settleFailedUpload(db, attemptRef, processingToken, error).catch(() => ({cleanup: false}));
+            if (outcome.completed) return {published: true, creationId: outcome.creationId, alreadyPublished: true};
+            if (outcome.cleanup) {
                 await deleteR2ObjectSafely(
                     destinationKey,
                     "Published collaboration copy cleanup failed",
@@ -8930,3 +8888,48 @@ exports.cleanupUnverifiedUsers = scheduled(
         console.log(`Cleanup completed. Deleted ${deletedCount} unverified users.`);
         return null;
     });
+
+exports.queueDiscordLink = documentWritten('communitys/{communityId}/creations/{creationId}', async (change, context) => {
+    const before = change.before.data(); const after = change.after.data();
+    if (digest(linkState(before)) === digest(linkState(after))) return;
+    for (const kind of ['general', 'showcase']) {
+        const old = before || after || {};
+        const messageId = kind === 'showcase' ? old.discordShowcaseMessageId : old.discordMessageId;
+        const channelId = kind === 'showcase' ? old.discordShowcaseChannelId : old.discordChannelId;
+        await enqueueDelivery(db, {...context.params, kind, legacy: messageId && channelId ? {messageId, channelId} : null});
+    }
+}, {retry: true});
+exports.queueDiscordCreation = documentWritten('creations/{creationId}', (change, context) =>
+    enqueueCreationDeliveries(db, context.params.creationId, change.before.data(), change.after.data()), {retry: true});
+exports.queueDiscordEvent = documentWritten('events/{eventId}', async (change, context) => {
+    const before = change.before.data(); const after = change.after.data();
+    const config = value => value ? [value.title, value.communityId, value.discordSubmissionChannelId] : null;
+    if (digest(config(before)) === digest(config(after))) return;
+    const jobs = await db.collection('discordDeliveries').where('eventId', '==', context.params.eventId).get();
+    for (const job of jobs.docs) await enqueueDelivery(db, job.data());
+    if (!after) return;
+    const creations = await db.collection('creations').where('eventIds', 'array-contains', context.params.eventId).get();
+    for (const creation of creations.docs) await enqueueDelivery(db, {communityId: after.communityId, creationId: creation.id, eventId: context.params.eventId, kind: 'event'});
+}, {retry: true});
+exports.queueDiscordCommunity = documentWritten('communitys/{communityId}', async (change, context) => {
+    const config = value => value ? [value.ownerId, value.discordServerId, value.discordGeneralChannelId, value.discordShowcaseChannelId, value.themeColor] : null;
+    if (digest(config(change.before.data())) === digest(config(change.after.data()))) return;
+    const jobs = await db.collection('discordDeliveries').where('communityId', '==', context.params.communityId).get();
+    for (const job of jobs.docs) await enqueueDelivery(db, job.data());
+    if (!change.after.exists) return;
+    const links = await db.collection(`communitys/${context.params.communityId}/creations`).get();
+    for (const link of links.docs) for (const kind of ['general', 'showcase']) await enqueueDelivery(db, {...context.params, creationId: link.id, kind});
+}, {retry: true});
+
+exports.cleanupEventVoting = documentDeleted('events/{eventId}', async (snap) => {
+    for (const name of ['ballots', 'voteTotals', 'voters']) await db.recursiveDelete(snap.ref.collection(name));
+}, {retry: true});
+exports.cleanupAccountBallots = documentDeleted('users/{userId}', async (snap, context) => {
+    const ballots = await db.collectionGroup('ballots').where('userId', '==', context.params.userId).get();
+    for (const ballot of ballots.docs) await removeBallot(db, ballot.ref);
+}, {retry: true});
+exports.cleanupCreationBallots = documentDeleted('creations/{creationId}', async (snap, context) => {
+    const ballots = await db.collectionGroup('ballots').where('creationIds', 'array-contains', context.params.creationId).get();
+    for (const ballot of ballots.docs) await removeBallot(db, ballot.ref, {creationId: context.params.creationId});
+    await db.doc(`creationStats/${context.params.creationId}`).delete();
+}, {retry: true});

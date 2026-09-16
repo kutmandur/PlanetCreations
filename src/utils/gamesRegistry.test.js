@@ -39,6 +39,13 @@ beforeEach(() => {
 });
 
 describe('fallback behavior', () => {
+    it('adds the native Zoo autosave extension to older remote registries', async () => {
+        getDoc.mockResolvedValue({ exists: () => true, data: () => ({ games: [
+            { id: 'planet-zoo', name: 'Planet Zoo', fileExtensions: ['.zoo', '.zooauto'] },
+        ] }) });
+        await loadGamesRegistry();
+        expect(getGame('planet-zoo').fileExtensions).toEqual(['.zoo', '.zooauto', '.zoo_auto']);
+    });
     it('serves the hardcoded fallback games before/without remote load', () => {
         expect(getGames().map((g) => g.id)).toEqual(FALLBACK_GAMES.map((g) => g.id));
         expect(getDefaultGameId()).toBe(FALLBACK_DEFAULT_GAME_ID);

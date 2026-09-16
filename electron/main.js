@@ -18,6 +18,8 @@ const {
     scanAllMediaFiles,
 } = require('./modules/FileHandler');
 const { readFrontierPreview } = require('./modules/FrontierSaveParser');
+const { loadPlanetZooAnalysis } = require('./modules/PlanetZooAnalysisService');
+const { resolveZooSavePath } = require('./modules/LocalLibraryPath');
 const { FrontierSaveIndexWatcher } = require('./modules/FrontierSaveIndexWatcher');
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
 const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
@@ -34,8 +36,9 @@ const {
 } = require('./modules/WebAppOrigin');
 const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
-const { responseToBuffer } = require('./modules/ResponseBuffer');
+const { responseToBuffer, responseToFile } = require('./modules/ResponseBuffer');
 const { getDistributionInfo } = require('./modules/DistributionChannel');
+const { getNewerReleaseVersion } = require('./modules/ReleaseVersion');
 const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { normalizeOverlayShortcuts, validateOverlayShortcutPair } = require('./modules/OverlayShortcuts');
@@ -53,7 +56,7 @@ const openLocalUiInDev = isDev && process.argv.includes('--local-ui');
 const devServerUrl = resolveDevServerUrl(process.env.PLANETCREATIONS_DEV_SERVER_URL);
 const AUTO_START_ARG = '--autostart';
 const isAutoStart = app.isPackaged && process.argv.includes(AUTO_START_ARG);
-const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save' };
+const backupCategoryMap = { '.park2': 'Parks', '.zoo': 'Parks', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints', '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save', '.zoo_auto': 'Auto Save' };
 let mainWindow;
 let tray;
 let gameOverlayWindow;
@@ -1285,9 +1288,9 @@ async function checkForUpdatesViaAPI() {
             return;
         }
         const release = await response.json();
-        const latestVersion = release.tag_name.replace('v', '');
+        const latestVersion = getNewerReleaseVersion(release.tag_name, currentVersion);
 
-        if (latestVersion > currentVersion) {
+        if (latestVersion) {
             log.info(`Manual update check: Update available: ${latestVersion}`);
             mainWindow.webContents.send('update-info-available', {
                 version: latestVersion,
@@ -1381,22 +1384,26 @@ function validateR2DownloadUrl(downloadUrl) {
     return parsed.toString();
 }
 
-async function downloadR2PackageToTemp(downloadUrl) {
+async function downloadR2PackageToTemp(downloadUrl, owner = mainWindow?.webContents) {
     const safeUrl = validateR2DownloadUrl(downloadUrl);
-    const response = await fetch(safeUrl);
-    if (!response.ok) throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
-
-    const declaredSize = Number(response.headers.get('content-length'));
-    if (Number.isFinite(declaredSize) && declaredSize > 300 * 1024 * 1024) {
-        throw new Error('The download exceeds the 300 MB package limit.');
+    const controller = new AbortController();
+    const cancel = () => controller.abort(new Error('The download window was closed.'));
+    owner?.once('destroyed', cancel);
+    if (owner?.isDestroyed()) cancel();
+    try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15 * 60 * 1000)]);
+        const response = await fetch(safeUrl, {redirect: 'error', signal});
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
+            throw new Error(`Failed to download file. Status: ${response.status} ${response.statusText}`);
+        }
+        const tempPath = path.join(app.getPath('temp'), `${crypto.randomUUID()}.PlanetCreations`);
+        // responseToFile validates both the declared and actual stream size and removes partial files.
+        await responseToFile(response, tempPath);
+        return tempPath;
+    } finally {
+        owner?.removeListener('destroyed', cancel);
     }
-    const buffer = await responseToBuffer(response);
-    if (buffer.length <= 0 || buffer.length > 300 * 1024 * 1024) {
-        throw new Error('The downloaded package has an invalid size.');
-    }
-    const tempPath = path.join(app.getPath('temp'), `${crypto.randomUUID()}.PlanetCreations`);
-    fs.writeFileSync(tempPath, buffer);
-    return tempPath;
 }
 
 // --- FUNKTION: URL verarbeiten, herunterladen und importieren ---
@@ -1979,7 +1986,7 @@ ipcMain.handle('select-collaboration-file', async (event, gameId) => {
     requireTrustedIpcSender(event, true);
     const extensionsByGame = {
         'planet-coaster-2': ['park2', 'blpr2', 'prkauto2'],
-        'planet-zoo': ['zoo', 'pzblueprint', 'zooauto'],
+        'planet-zoo': ['zoo', 'pzblueprint', 'zooauto', 'zoo_auto'],
     };
     const extensions = extensionsByGame[gameId];
     if (!extensions) {
@@ -2015,7 +2022,7 @@ ipcMain.handle('save-collaboration-version', async (event, payload) => {
     const expectedGameId = typeof payload?.gameId === 'string' ? payload.gameId : '';
     let tempPath = null;
     try {
-        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        tempPath = await downloadR2PackageToTemp(downloadUrl, event.sender);
         const verification = await verifyBackup(tempPath);
         if (verification.status !== 'verified' || verification.metadata?.packageType !== 'creation') {
             throw new Error(verification.error || 'The collaboration package could not be verified.');
@@ -2059,7 +2066,8 @@ ipcMain.handle('save-collaboration-version', async (event, payload) => {
         if (result.canceled || !result.filePath) {
             return { success: false, status: 'canceled' };
         }
-        return restoreBackup(app, tempPath, result.filePath);
+        // Keep the downloaded package until verification and the atomic restore have finished.
+        return await restoreBackup(app, tempPath, result.filePath);
     } catch (error) {
         log.error('Collaboration version download failed:', error);
         return { success: false, status: 'error', message: error.message };
@@ -2085,7 +2093,7 @@ ipcMain.handle('install-queued-creation', async (event, payload) => {
 
     let tempPath = null;
     try {
-        tempPath = await downloadR2PackageToTemp(downloadUrl);
+        tempPath = await downloadR2PackageToTemp(downloadUrl, event.sender);
         const workshopPath = await archiveWorkshopPackage(app, tempPath, creationId, { title, previewUrl });
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('backups-updated');
         const result = await installCreationPackage(app, workshopPath, creationId, getFrontierPathForInstall());
@@ -2204,6 +2212,13 @@ ipcMain.handle('read-frontier-preview', (event, filePath) => {
     return readFrontierPreview(resolvedPath);
 });
 
+ipcMain.handle('read-planet-zoo-analysis', async (event, filePath) => {
+    requireTrustedIpcSender(event, true);
+    const storedPath = getStoredPath();
+    const resolvedPath = resolveZooSavePath(filePath, storedPath);
+    return loadPlanetZooAnalysis(resolvedPath, {libraryRoot: fs.realpathSync(storedPath)});
+});
+
 ipcMain.handle('read-frontier-ride-analysis', async (event, filePath) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
@@ -2256,7 +2271,7 @@ ipcMain.handle('import-backup-from-path', (event, filePath) => {
     return importBackupFromFile(filePath);
 });
 
-ipcMain.handle('list-all-local-creations-and-backups', (event) => {
+ipcMain.handle('list-all-local-creations-and-backups', async (event) => {
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
     if (!storedPath || !fs.existsSync(storedPath)) {
@@ -2266,7 +2281,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
     // The dashboard owns the sequential background scan. File pickers reuse its
     // persistent cache and analyze only the file the user actually selects.
     const gameFiles = indexGamesFromPath(storedPath).results;
-    const allBackupsBySave = listAllBackups(app);
+    const allBackupsBySave = await listAllBackups(app);
     const flatBackups = Object.values(allBackupsBySave).flat();
     
     const creationBackups = flatBackups
@@ -2285,7 +2300,7 @@ ipcMain.handle('list-all-local-creations-and-backups', (event) => {
         let gameName = backup.gameId === 'planet-coaster-2' ? 'Planet Coaster 2' :
             (backup.gameId === 'planet-zoo' ? 'Planet Zoo' : null);
         if (!gameName && ['.park2', '.blpr2', '.prkauto2'].includes(origExt)) gameName = 'Planet Coaster 2';
-        if (!gameName && ['.zoo', '.pzblueprint', '.zooauto'].includes(origExt)) gameName = 'Planet Zoo';
+        if (!gameName && ['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'].includes(origExt)) gameName = 'Planet Zoo';
         
         if (gameName) {
             if (!gameFiles[gameName]) {

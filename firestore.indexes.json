@@ -179,6 +179,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "creationStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "dirty",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dirtySince",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -284,6 +298,97 @@
         {
           "order": "ASCENDING",
           "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "ballots",
+      "fieldPath": "userId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "ballots",
+      "fieldPath": "creationIds",
+      "indexes": [
+        {
+          "arrayConfig": "CONTAINS",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "votes",
+      "fieldPath": "eventId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "voteTotals",
+      "fieldPath": "counts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "viewSessions",
+      "fieldPath": "seen",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "discordDeliveries",
+      "fieldPath": "lastError",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "searchIndexState",
+      "fieldPath": "revisions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "communitySearchIndexState",
+      "fieldPath": "revisions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "showcaseIndexState",
+      "fieldPath": "revisions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userSearchIndexState",
+      "fieldPath": "revisions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "meta",
+      "fieldPath": "deliveries",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "viewSessions",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "securityRateLimits",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
         }
       ]
     }

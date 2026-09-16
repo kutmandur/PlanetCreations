@@ -4,6 +4,7 @@ import { doc, onSnapshot, getDoc, collection, query, where, getDocs, writeBatch,
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
+import { setEventVote, subscribeEventBallot, subscribeEventVoteCounts } from '../../firebase/eventVoting';
 import Icon from '../ui/Icon';
 import { ICONS, getYoutubeThumbnailUrl, getYoutubeEmbed, isEventHidden } from '../../utils/helpers';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
@@ -28,6 +29,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     const [canManageEvent, setCanManageEvent] = useState(false);
     const [currentUserMember, setCurrentUserMember] = useState(null);
     const [userEventVotes, setUserEventVotes] = useState([]);
+    const [ballotRevision, setBallotRevision] = useState(0);
     const [isVoting, setIsVoting] = useState(false);
     const [voteCounts, setVoteCounts] = useState({});
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
@@ -96,33 +98,20 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
     }, [eventId, user, userProfile]);
 
     useEffect(() => {
-        if (connectedCreations.length === 0) return;
-        const unsubscribers = connectedCreations.map(creation => {
-            // Nur echte Event-Votes zählen (Subcollection enthält auch Likes)
-            const votesQuery = query(collection(db, 'creations', creation.id, 'votes'), where('type', '==', 'event_vote'), where('eventId', '==', eventId));
-            return onSnapshot(votesQuery, (snapshot) => {
-                setVoteCounts(prevCounts => ({
-                    ...prevCounts,
-                    [creation.id]: snapshot.size
-                }));
-            });
-        });
-        return () => unsubscribers.forEach(unsub => unsub());
-    }, [connectedCreations, eventId]);
+        setVoteCounts({});
+        if (!eventId || !event) return;
+        return subscribeEventVoteCounts(eventId, event.voteSchemaVersion, connectedCreations, setVoteCounts, setLoadError);
+    }, [eventId, event?.voteSchemaVersion, connectedCreations]);
 
     useEffect(() => {
+        setUserEventVotes([]);
+        setBallotRevision(0);
         if (!user || !eventId) return;
-        const votesQuery = query(
-            collectionGroup(db, 'votes'),
-            where('userId', '==', user.uid),
-            where('eventId', '==', eventId)
-        );
-        const unsubscribe = onSnapshot(votesQuery, (snapshot) => {
-            const votedCreationIds = snapshot.docs.map(doc => doc.data().creationId);
-            setUserEventVotes(votedCreationIds);
-        });
-        return () => unsubscribe();
-    }, [user, eventId]);
+        return subscribeEventBallot(eventId, user.uid, ballot => {
+            setUserEventVotes(ballot.creationIds);
+            setBallotRevision(ballot.revision);
+        }, setLoadError);
+    }, [user?.uid, eventId]);
 
     useEffect(() => {
         if (!event) return;
@@ -255,39 +244,12 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
         }
         setIsVoting(true);
 
-        const voteRef = doc(db, 'creations', creationId, 'votes', user.uid);
-        const voterRef = doc(db, 'events', eventId, 'voters', user.uid);
-        const isAlreadyVoted = userEventVotes.includes(creationId);
-
         try {
-            if (isAlreadyVoted) {
-                await runTransaction(db, async (transaction) => {
-                    transaction.delete(voteRef);
-                    if (event.voteType === 'single') {
-                        transaction.delete(voterRef);
-                    }
-                });
-                setUserEventVotes(prev => prev.filter(id => id !== creationId));
-            } else {
-                if (event.voteType === 'multiple' && userEventVotes.length >= (event.voteLimit || 1)) {
-                    setModalMessage(`You have reached the vote limit of ${event.voteLimit}.`);
-                    setIsVoting(false);
-                    return;
-                }
-                if (event.voteType === 'single' && userEventVotes.length > 0) {
-                    setModalMessage("You can only vote for one creation in this event.");
-                    setIsVoting(false);
-                    return;
-                }
-                
-                const batch = writeBatch(db);
-                batch.set(voteRef, { userId: user.uid, eventId: eventId, creationId: creationId, type: 'event_vote', timestamp: serverTimestamp() });
-                if (event.voteType === 'single') {
-                    batch.set(voterRef, { votedFor: creationId, timestamp: serverTimestamp() });
-                }
-                await batch.commit();
-                setUserEventVotes(prev => [...prev, creationId]);
-            }
+            const ballot = await setEventVote({
+                eventId, creationId, selected: !userEventVotes.includes(creationId), revision: ballotRevision,
+            });
+            setUserEventVotes(ballot.creationIds);
+            setBallotRevision(ballot.revision);
         } catch (error) {
             setModalMessage(`Error processing vote: ${error.message}`);
         } finally {

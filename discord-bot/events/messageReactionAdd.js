@@ -11,10 +11,12 @@ module.exports = {
 
         try {
             // Find the creation link document that corresponds to this message
-            const linksQuery = await db.collectionGroup('creations').where('discordMessageId', '==', message.id).limit(1).get();
+            const linksQuery = await db.collection('discordDeliveries').where('binding.messageId', '==', message.id).limit(1).get();
             if (linksQuery.empty) return;
 
-            const linkDocRef = linksQuery.docs[0].ref;
+            const delivery = linksQuery.docs[0].data();
+            if (delivery.kind !== 'general' || delivery.binding.guildId !== message.guildId || delivery.binding.channelId !== message.channelId) return;
+            const linkDocRef = db.doc(`communitys/${delivery.communityId}/creations/${delivery.creationId}`);
             const newCount = messageReaction.count;
 
             // Update the reactionCount field in Firestore

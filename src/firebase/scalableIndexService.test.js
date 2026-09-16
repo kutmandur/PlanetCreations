@@ -69,4 +69,29 @@ describe('scalableIndexService', () => {
             stateCollection: 'searchIndexState',
         })).rejects.toThrow('network unavailable');
     });
+
+    test('warm visits read one manifest plus only changed shards and retain the entire pool', async () => {
+        let changed = false;
+        const options = {stateCollection: 'state-cache-test', scopeId: 'game', shardCollection: 'shards-cache-test'};
+        getDoc.mockImplementation(reference => {
+            if (reference === 'state-cache-test/game') return Promise.resolve(snapshot({shardIds: ['a', 'b'], revisions: {a: changed ? 'a2' : 'a1', b: 'b1'}}));
+            if (reference === 'shards-cache-test/a') return Promise.resolve(snapshot({r: changed ? 'a2' : 'a1', e: {first: {t: changed ? 'Updated' : 'First'}}}));
+            return Promise.resolve(snapshot({r: 'b1', e: {last: {t: 'Rare old match'}}}));
+        });
+        await fetchScalableMapIndex(options); expect(getDoc).toHaveBeenCalledTimes(3);
+        getDoc.mockClear();
+        await fetchScalableMapIndex(options); expect(getDoc).toHaveBeenCalledTimes(1);
+        changed = true; getDoc.mockClear();
+        const result = await fetchScalableMapIndex(options);
+        expect(getDoc).toHaveBeenCalledTimes(2);
+        expect(result.entries).toEqual({first: {t: 'Updated'}, last: {t: 'Rare old match'}});
+    });
+    test('manifest mismatch retries without publishing mixed generations', async () => {
+        let stateReads = 0;
+        getDoc.mockImplementation(reference => reference === 'state-race/game'
+            ? Promise.resolve(snapshot({shardIds: ['a'], revisions: {a: ++stateReads === 1 ? 'old' : 'new'}}))
+            : Promise.resolve(snapshot({r: 'new', e: {park: {t: 'Current'}}})));
+        const result = await fetchScalableMapIndex({stateCollection: 'state-race', scopeId: 'game', shardCollection: 'shards-race'});
+        expect(stateReads).toBe(2); expect(result.entries.park.t).toBe('Current');
+    });
 });

@@ -61,6 +61,17 @@ try {
     }
 
     const mainSource = asar.extractFile(asarPath, 'electron/main.js').toString('utf8');
+    const distributionSource = archive.getEntry('app/resources/app.asar.unpacked/electron/modules/DistributionChannel.js')?.getData().toString('utf8') ||
+        asar.extractFile(asarPath, 'electron/modules/DistributionChannel.js').toString('utf8');
+    if (!distributionSource.includes('windowsStore = process.windowsStore') ||
+        !mainSource.includes("const autoUpdater = isStoreBuild ? null : require('electron-updater').autoUpdater;") ||
+        !/async function checkForUpdatesViaAPI\(\)\s*\{\s*if \(isStoreBuild\) return;/.test(mainSource) ||
+        !/function startDailyUpdateChecks\(\)\s*\{\s*if \(isDev \|\| !autoUpdater\) return;/.test(mainSource)) {
+        throw new Error('The packed Store client must disable both electron-updater and its GitHub API fallback.');
+    }
+    if (archive.getEntry('app/resources/app-update.yml')) {
+        throw new Error('The Store package must not include a standalone updater feed.');
+    }
     const preloadSource = asar.extractFile(asarPath, 'electron/preload.js').toString('utf8');
     const privacyPage = asar.extractFile(asarPath, 'build/privacy.html').toString('utf8');
     if (!/function loadOfflineManager[\s\S]*?return loadHostedAppWithFallback/.test(mainSource) ||

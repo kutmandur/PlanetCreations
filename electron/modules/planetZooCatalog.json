@@ -1,0 +1,3823 @@
+{
+  "schemaVersion": 1,
+  "source": "Locally validated Planet Zoo definitions, EXE SHA256 5589b8485dc7b39dcf1686afc7aaeab76d4e003a5fd03af35b6b18f902d7f0c4; see docs/PLANET_ZOO_RECORDS_AND_GENETICS.md",
+  "species": {
+    "Aardvark": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanBuffalo": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanElephant": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanWildDog": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AldabraGiantTortoise": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmericanBison": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BactrianCamel": {
+      "morphs": [
+        0,
+        1,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BairdsTapir": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BengalTiger": {
+      "morphs": [
+        0,
+        1,
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BlackWildebeest": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Bongo": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Bonobo": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BorneanOrangutan": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Cheetah": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.25,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ChinesePangolin": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CommonOstrich": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CommonWarthog": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "FormosanBlackBear": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GalapagosGiantTortoise": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Gemsbok": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Gharial": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantPanda": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": -0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GreaterFlamingo": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GrizzlyBear": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HimalayanBrownBear": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Hippopotamus": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "IndianElephant": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "IndianPeafowl": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "IndianRhinoceros": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.25,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "JapaneseMacaque": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.35,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "KomodoDragon": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Mandrill": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "NileMonitor": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Nyala": {
+      "morphs": [
+        0,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Okapi": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PlainsZebra": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PronghornAntelope": {
+      "morphs": [
+        0,
+        5
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PygmyHippo": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedPanda": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedRuffedLemur": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ReticulatedGiraffe": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RingTailedLemur": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SableAntelope": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SaltwaterCrocodile": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SiberianTiger": {
+      "morphs": [
+        0,
+        1,
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SnowLeopard": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SpottedHyena": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Springbok": {
+      "morphs": [
+        0,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ThomsonsGazelle": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "TimberWolf": {
+      "morphs": [
+        3
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WestAfricanLion": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.25,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WesternChimpanzee": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WesternLowlandGorilla": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ArcticWolf": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "DallSheep": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PolarBear": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Reindeer": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmurLeopard": {
+      "morphs": [
+        3
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PrzewalskisHorse": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ScimitarHornedOryx": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Siamang": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CommonWombat": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Raccoon": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedFox": {
+      "morphs": [
+        0,
+        1,
+        2,
+        3,
+        5
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "StripedSkunk": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BlueWildebeest": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Caracal": {
+      "morphs": [
+        3
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.25,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Emu": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ManedWolf": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "NineBandedArmadillo": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedNeckedWallaby": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "StripedHyena": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AsianWaterMonitor": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Fossa": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "LarGibbon": {
+      "morphs": [
+        0,
+        1,
+        2
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedRiverHog": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Addax": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanCrestedPorcupine": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BlackRhinoceros": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "DamaGazelle": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "DromedaryCamel": {
+      "morphs": [
+        0,
+        1,
+        2,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SandCat": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SomaliWildAss": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "LittlePenguin": {
+      "morphs": [
+        2,
+        5
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "NorthIslandBrownKiwi": {
+      "morphs": [
+        2,
+        5
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Quokka": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "TasmanianDevil": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "MuteSwan": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Saiga": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SlothBear": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.25,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Takin": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WildBoar": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Wisent": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Wolverine": {
+      "morphs": [
+        0,
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Alpaca": {
+      "morphs": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AlpineGoat": {
+      "morphs": [
+        2,
+        3,
+        5
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HighlandCattle": {
+      "morphs": [
+        2,
+        3
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HillRadnor": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "StandardDonkey": {
+      "morphs": [
+        2,
+        5
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SussexChicken": {
+      "morphs": [
+        1,
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "TamworthPig": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanLeopard": {
+      "morphs": [
+        1,
+        3
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanSpurredTortoise": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CoquerelsSifaka": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HamadryasBaboon": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "KirksDikDik": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Markhor": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PallasCat": {
+      "morphs": [
+        1
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SpectacledBear": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmericanFlamingo": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BighornSheep": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BushDog": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Coyote": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GreaterRhea": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Ocelot": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WhiteFacedSaki": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CapuchinMonkey": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantAnteater": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Jaguar": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Llama": {
+      "morphs": [
+        0,
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Blackbuck": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BorneanElephant": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HoneyBadger": {
+      "morphs": [
+        0,
+        3
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "JapaneseRaccoonDog": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "LionTailedMacaque": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Nilgai": {
+      "morphs": [
+        2,
+        3
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PereDavidsDeer": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Cassowary": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Dingo": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Koala": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedKangaroo": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CuviersDwarfCaiman": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantOtter": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GreySeal": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "KingPenguin": {
+      "morphs": [
+        0,
+        2,
+        3,
+        4
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Babirusa": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Binturong": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.1,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CloudedLeopard": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Dhole": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "MalayanTapir": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ProboscisMonkey": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.45,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SunBear": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AfricanPenguin": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "FennecFox": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Meerkat": {
+      "morphs": [],
+      "monogamy": 2,
+      "alphaOnly": 2,
+      "fertility": 0.6,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SouthernWhiteRhino": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmericanAlligator": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "ArcticFox": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "CaliforniaSeaLion": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Cougar": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Moose": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "NorthAmericanBeaver": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "PrairieDog": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.6,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AlpineIbex": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "EurasianLynx": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "EuropeanBadger": {
+      "morphs": [
+        0,
+        1
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.3,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "EuropeanFallowDeer": {
+      "morphs": [
+        0,
+        1,
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AsianSmallClawedOtter": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 0,
+      "alphaOnly": 0,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Capybara": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.6,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "NileLechwe": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Platypus": {
+      "morphs": [],
+      "monogamy": 3,
+      "alphaOnly": 3,
+      "fertility": 0.0,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedCrownedCrane": {
+      "morphs": [],
+      "monogamy": 0,
+      "alphaOnly": 3,
+      "fertility": 0.2,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SpectacledCaiman": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WildWaterBuffalo": {
+      "morphs": [
+        0
+      ],
+      "monogamy": 1,
+      "alphaOnly": 1,
+      "fertility": 0.5,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BlackWhiteRuffedLemur": {
+      "morphs": [],
+      "monogamy": 1,
+      "alphaOnly": 3,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedDeer": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0
+    },
+    "CollaredPeccary": {
+      "morphs": [
+        2
+      ],
+      "monogamy": 3,
+      "alphaOnly": 1,
+      "fertility": 0.4,
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmazonGiantCentipede": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "AmericanBullfrog": {
+      "maxResearchBonus": 0
+    },
+    "AntilleanIguana": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Axolotl": {
+      "maxResearchBonus": 0
+    },
+    "BoaConstrictor": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BrazilianWanderingSpider": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BrazillianSalmonPinkTarantula": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "BrownThroatedSloth": {
+      "maxResearchBonus": 0
+    },
+    "CloudlessSulphur": {
+      "maxResearchBonus": 0
+    },
+    "CommonDeathAdder": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "DanubeCrestedNewt": {
+      "maxResearchBonus": 0
+    },
+    "DesertHornedViper": {
+      "maxResearchBonus": 0
+    },
+    "DiamondbackTerrapin": {
+      "maxResearchBonus": 0
+    },
+    "DungBeetle": {
+      "maxResearchBonus": 0
+    },
+    "EasternBlueTonguedLizard": {
+      "maxResearchBonus": 0
+    },
+    "EasternBrownSnake": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "EgyptianFruitBat": {
+      "maxResearchBonus": 0
+    },
+    "EuropeanPeacock": {
+      "maxResearchBonus": 0
+    },
+    "FireSalamander": {
+      "maxResearchBonus": 0
+    },
+    "GiantBurrowingCockroach": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantDesertHairyScorpion": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantForestScorpion": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GiantLeafInsect": {
+      "maxResearchBonus": 0
+    },
+    "GiantTigerLandSnail": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GilaMonster": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GoldenPoisonFrog": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GoliathBeetle": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GoliathBirdeater": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GoliathFrog": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "GreenIguana": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "HermannsTortoise": {
+      "maxResearchBonus": 0
+    },
+    "LehmannsPoisonFrog": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "MalabarRose": {
+      "maxResearchBonus": 0
+    },
+    "MenelausBlueMorpho": {
+      "maxResearchBonus": 0
+    },
+    "MexicanRedkneeTarantula": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "Monarch": {
+      "maxResearchBonus": 0
+    },
+    "OldWorldSwallowtail": {
+      "maxResearchBonus": 0
+    },
+    "PuffAdder": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "RedEyedTreeFrog": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "SpectacledFlyingFox": {
+      "maxResearchBonus": 0
+    },
+    "TitanBeetle": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "WesternDiamondBackRattlesnake": {
+      "maxResearchBonus": 0.30000001192092896
+    },
+    "YellowAnaconda": {
+      "maxResearchBonus": 0.30000001192092896
+    }
+  },
+  "researchEffects": {
+    "20202": [
+      [
+        "ArcticWolf",
+        0.15000000596046448
+      ]
+    ],
+    "20207": [
+      [
+        "ArcticWolf",
+        0.30000001192092896
+      ]
+    ],
+    "20215": [
+      [
+        "DallSheep",
+        0.15000000596046448
+      ]
+    ],
+    "20217": [
+      [
+        "DallSheep",
+        0.30000001192092896
+      ]
+    ],
+    "20223": [
+      [
+        "PolarBear",
+        0.15000000596046448
+      ]
+    ],
+    "20229": [
+      [
+        "PolarBear",
+        0.30000001192092896
+      ]
+    ],
+    "20244": [
+      [
+        "Reindeer",
+        0.15000000596046448
+      ]
+    ],
+    "20246": [
+      [
+        "Reindeer",
+        0.30000001192092896
+      ]
+    ],
+    "110203": [
+      [
+        "AmurLeopard",
+        0.15000000596046448
+      ]
+    ],
+    "110206": [
+      [
+        "AmurLeopard",
+        0.30000001192092896
+      ]
+    ],
+    "110211": [
+      [
+        "PrzewalskisHorse",
+        0.15000000596046448
+      ]
+    ],
+    "110213": [
+      [
+        "PrzewalskisHorse",
+        0.30000001192092896
+      ]
+    ],
+    "110218": [
+      [
+        "ScimitarHornedOryx",
+        0.15000000596046448
+      ]
+    ],
+    "110220": [
+      [
+        "ScimitarHornedOryx",
+        0.30000001192092896
+      ]
+    ],
+    "110226": [
+      [
+        "Siamang",
+        0.15000000596046448
+      ]
+    ],
+    "110230": [
+      [
+        "Siamang",
+        0.30000001192092896
+      ]
+    ],
+    "120203": [
+      [
+        "CommonWombat",
+        0.15000000596046448
+      ]
+    ],
+    "120205": [
+      [
+        "CommonWombat",
+        0.30000001192092896
+      ]
+    ],
+    "120210": [
+      [
+        "Raccoon",
+        0.15000000596046448
+      ]
+    ],
+    "120212": [
+      [
+        "Raccoon",
+        0.30000001192092896
+      ]
+    ],
+    "120217": [
+      [
+        "RedFox",
+        0.15000000596046448
+      ]
+    ],
+    "120220": [
+      [
+        "RedFox",
+        0.30000001192092896
+      ]
+    ],
+    "120225": [
+      [
+        "StripedSkunk",
+        0.15000000596046448
+      ]
+    ],
+    "120227": [
+      [
+        "StripedSkunk",
+        0.30000001192092896
+      ]
+    ],
+    "130203": [
+      [
+        "BlueWildebeest",
+        0.15000000596046448
+      ]
+    ],
+    "130205": [
+      [
+        "BlueWildebeest",
+        0.30000001192092896
+      ]
+    ],
+    "130210": [
+      [
+        "Caracal",
+        0.15000000596046448
+      ]
+    ],
+    "130212": [
+      [
+        "Caracal",
+        0.30000001192092896
+      ]
+    ],
+    "130217": [
+      [
+        "Emu",
+        0.15000000596046448
+      ]
+    ],
+    "130219": [
+      [
+        "Emu",
+        0.30000001192092896
+      ]
+    ],
+    "130225": [
+      [
+        "ManedWolf",
+        0.15000000596046448
+      ]
+    ],
+    "130228": [
+      [
+        "ManedWolf",
+        0.30000001192092896
+      ]
+    ],
+    "130233": [
+      [
+        "NineBandedArmadillo",
+        0.15000000596046448
+      ]
+    ],
+    "130235": [
+      [
+        "NineBandedArmadillo",
+        0.30000001192092896
+      ]
+    ],
+    "130240": [
+      [
+        "RedNeckedWallaby",
+        0.15000000596046448
+      ]
+    ],
+    "130242": [
+      [
+        "RedNeckedWallaby",
+        0.30000001192092896
+      ]
+    ],
+    "130248": [
+      [
+        "StripedHyena",
+        0.15000000596046448
+      ]
+    ],
+    "130250": [
+      [
+        "StripedHyena",
+        0.30000001192092896
+      ]
+    ],
+    "140204": [
+      [
+        "AsianWaterMonitor",
+        0.15000000596046448
+      ]
+    ],
+    "140206": [
+      [
+        "AsianWaterMonitor",
+        0.30000001192092896
+      ]
+    ],
+    "140211": [
+      [
+        "Fossa",
+        0.15000000596046448
+      ]
+    ],
+    "140213": [
+      [
+        "Fossa",
+        0.30000001192092896
+      ]
+    ],
+    "140219": [
+      [
+        "LarGibbon",
+        0.15000000596046448
+      ]
+    ],
+    "140222": [
+      [
+        "LarGibbon",
+        0.30000001192092896
+      ]
+    ],
+    "140227": [
+      [
+        "RedRiverHog",
+        0.15000000596046448
+      ]
+    ],
+    "140229": [
+      [
+        "RedRiverHog",
+        0.30000001192092896
+      ]
+    ],
+    "150203": [
+      [
+        "Addax",
+        0.15000000596046448
+      ]
+    ],
+    "150205": [
+      [
+        "Addax",
+        0.30000001192092896
+      ]
+    ],
+    "150210": [
+      [
+        "AfricanCrestedPorcupine",
+        0.15000000596046448
+      ]
+    ],
+    "150212": [
+      [
+        "AfricanCrestedPorcupine",
+        0.30000001192092896
+      ]
+    ],
+    "150217": [
+      [
+        "BlackRhinoceros",
+        0.15000000596046448
+      ]
+    ],
+    "150221": [
+      [
+        "BlackRhinoceros",
+        0.30000001192092896
+      ]
+    ],
+    "150233": [
+      [
+        "DamaGazelle",
+        0.15000000596046448
+      ]
+    ],
+    "150235": [
+      [
+        "DamaGazelle",
+        0.30000001192092896
+      ]
+    ],
+    "150226": [
+      [
+        "DromedaryCamel",
+        0.15000000596046448
+      ]
+    ],
+    "150228": [
+      [
+        "DromedaryCamel",
+        0.30000001192092896
+      ]
+    ],
+    "150241": [
+      [
+        "SandCat",
+        0.15000000596046448
+      ]
+    ],
+    "150243": [
+      [
+        "SandCat",
+        0.30000001192092896
+      ]
+    ],
+    "150248": [
+      [
+        "SomaliWildAss",
+        0.15000000596046448
+      ]
+    ],
+    "150250": [
+      [
+        "SomaliWildAss",
+        0.30000001192092896
+      ]
+    ],
+    "160211": [
+      [
+        "LittlePenguin",
+        0.15000000596046448
+      ]
+    ],
+    "160213": [
+      [
+        "LittlePenguin",
+        0.30000001192092896
+      ]
+    ],
+    "160218": [
+      [
+        "NorthIslandBrownKiwi",
+        0.15000000596046448
+      ]
+    ],
+    "160220": [
+      [
+        "NorthIslandBrownKiwi",
+        0.30000001192092896
+      ]
+    ],
+    "160203": [
+      [
+        "Quokka",
+        0.15000000596046448
+      ]
+    ],
+    "160205": [
+      [
+        "Quokka",
+        0.30000001192092896
+      ]
+    ],
+    "160225": [
+      [
+        "TasmanianDevil",
+        0.15000000596046448
+      ]
+    ],
+    "160227": [
+      [
+        "TasmanianDevil",
+        0.30000001192092896
+      ]
+    ],
+    "170203": [
+      [
+        "MuteSwan",
+        0.15000000596046448
+      ]
+    ],
+    "170205": [
+      [
+        "MuteSwan",
+        0.30000001192092896
+      ]
+    ],
+    "170210": [
+      [
+        "Saiga",
+        0.15000000596046448
+      ]
+    ],
+    "170212": [
+      [
+        "Saiga",
+        0.30000001192092896
+      ]
+    ],
+    "170217": [
+      [
+        "SlothBear",
+        0.15000000596046448
+      ]
+    ],
+    "170223": [
+      [
+        "SlothBear",
+        0.30000001192092896
+      ]
+    ],
+    "170228": [
+      [
+        "Takin",
+        0.15000000596046448
+      ]
+    ],
+    "170230": [
+      [
+        "Takin",
+        0.30000001192092896
+      ]
+    ],
+    "170235": [
+      [
+        "WildBoar",
+        0.15000000596046448
+      ]
+    ],
+    "170237": [
+      [
+        "WildBoar",
+        0.30000001192092896
+      ]
+    ],
+    "170242": [
+      [
+        "Wisent",
+        0.15000000596046448
+      ]
+    ],
+    "170245": [
+      [
+        "Wisent",
+        0.30000001192092896
+      ]
+    ],
+    "170251": [
+      [
+        "Wolverine",
+        0.15000000596046448
+      ]
+    ],
+    "170253": [
+      [
+        "Wolverine",
+        0.30000001192092896
+      ]
+    ],
+    "180203": [
+      [
+        "Alpaca",
+        0.15000000596046448
+      ]
+    ],
+    "180205": [
+      [
+        "Alpaca",
+        0.30000001192092896
+      ]
+    ],
+    "180210": [
+      [
+        "AlpineGoat",
+        0.15000000596046448
+      ]
+    ],
+    "180212": [
+      [
+        "AlpineGoat",
+        0.30000001192092896
+      ]
+    ],
+    "180231": [
+      [
+        "HighlandCattle",
+        0.15000000596046448
+      ]
+    ],
+    "180233": [
+      [
+        "HighlandCattle",
+        0.30000001192092896
+      ]
+    ],
+    "180224": [
+      [
+        "HillRadnor",
+        0.15000000596046448
+      ]
+    ],
+    "180226": [
+      [
+        "HillRadnor",
+        0.30000001192092896
+      ]
+    ],
+    "180238": [
+      [
+        "StandardDonkey",
+        0.15000000596046448
+      ]
+    ],
+    "180240": [
+      [
+        "StandardDonkey",
+        0.30000001192092896
+      ]
+    ],
+    "180245": [
+      [
+        "SussexChicken",
+        0.15000000596046448
+      ]
+    ],
+    "180247": [
+      [
+        "SussexChicken",
+        0.30000001192092896
+      ]
+    ],
+    "180217": [
+      [
+        "TamworthPig",
+        0.15000000596046448
+      ]
+    ],
+    "180219": [
+      [
+        "TamworthPig",
+        0.30000001192092896
+      ]
+    ],
+    "190204": [
+      [
+        "AfricanLeopard",
+        0.15000000596046448
+      ]
+    ],
+    "190206": [
+      [
+        "AfricanLeopard",
+        0.30000001192092896
+      ]
+    ],
+    "190211": [
+      [
+        "AfricanSpurredTortoise",
+        0.15000000596046448
+      ]
+    ],
+    "190213": [
+      [
+        "AfricanSpurredTortoise",
+        0.30000001192092896
+      ]
+    ],
+    "190219": [
+      [
+        "CoquerelsSifaka",
+        0.15000000596046448
+      ]
+    ],
+    "190221": [
+      [
+        "CoquerelsSifaka",
+        0.30000001192092896
+      ]
+    ],
+    "190227": [
+      [
+        "HamadryasBaboon",
+        0.15000000596046448
+      ]
+    ],
+    "190229": [
+      [
+        "HamadryasBaboon",
+        0.30000001192092896
+      ]
+    ],
+    "190234": [
+      [
+        "KirksDikDik",
+        0.15000000596046448
+      ]
+    ],
+    "190236": [
+      [
+        "KirksDikDik",
+        0.30000001192092896
+      ]
+    ],
+    "190241": [
+      [
+        "Markhor",
+        0.15000000596046448
+      ]
+    ],
+    "190243": [
+      [
+        "Markhor",
+        0.30000001192092896
+      ]
+    ],
+    "190249": [
+      [
+        "PallasCat",
+        0.15000000596046448
+      ]
+    ],
+    "190251": [
+      [
+        "PallasCat",
+        0.30000001192092896
+      ]
+    ],
+    "190256": [
+      [
+        "SpectacledBear",
+        0.15000000596046448
+      ]
+    ],
+    "190262": [
+      [
+        "SpectacledBear",
+        0.30000001192092896
+      ]
+    ],
+    "200203": [
+      [
+        "AmericanFlamingo",
+        0.15000000596046448
+      ]
+    ],
+    "200205": [
+      [
+        "AmericanFlamingo",
+        0.30000001192092896
+      ]
+    ],
+    "200210": [
+      [
+        "BighornSheep",
+        0.15000000596046448
+      ]
+    ],
+    "200212": [
+      [
+        "BighornSheep",
+        0.30000001192092896
+      ]
+    ],
+    "200218": [
+      [
+        "BushDog",
+        0.15000000596046448
+      ]
+    ],
+    "200220": [
+      [
+        "BushDog",
+        0.30000001192092896
+      ]
+    ],
+    "200226": [
+      [
+        "Coyote",
+        0.15000000596046448
+      ]
+    ],
+    "200228": [
+      [
+        "Coyote",
+        0.30000001192092896
+      ]
+    ],
+    "200233": [
+      [
+        "GreaterRhea",
+        0.15000000596046448
+      ]
+    ],
+    "200235": [
+      [
+        "GreaterRhea",
+        0.30000001192092896
+      ]
+    ],
+    "200240": [
+      [
+        "Ocelot",
+        0.15000000596046448
+      ]
+    ],
+    "200242": [
+      [
+        "Ocelot",
+        0.30000001192092896
+      ]
+    ],
+    "200248": [
+      [
+        "WhiteFacedSaki",
+        0.15000000596046448
+      ]
+    ],
+    "200301": [
+      [
+        "WhiteFacedSaki",
+        0.30000001192092896
+      ]
+    ],
+    "30203": [
+      [
+        "CapuchinMonkey",
+        0.15000000596046448
+      ]
+    ],
+    "30206": [
+      [
+        "CapuchinMonkey",
+        0.30000001192092896
+      ]
+    ],
+    "30219": [
+      [
+        "GiantAnteater",
+        0.15000000596046448
+      ]
+    ],
+    "30222": [
+      [
+        "GiantAnteater",
+        0.30000001192092896
+      ]
+    ],
+    "30211": [
+      [
+        "Jaguar",
+        0.15000000596046448
+      ]
+    ],
+    "30214": [
+      [
+        "Jaguar",
+        0.30000001192092896
+      ]
+    ],
+    "30227": [
+      [
+        "Llama",
+        0.15000000596046448
+      ]
+    ],
+    "30229": [
+      [
+        "Llama",
+        0.30000001192092896
+      ]
+    ],
+    "31000": [
+      [
+        "RedEyedTreeFrog",
+        0.15000000596046448
+      ]
+    ],
+    "31001": [
+      [
+        "RedEyedTreeFrog",
+        0.30000001192092896
+      ]
+    ],
+    "210203": [
+      [
+        "Blackbuck",
+        0.15000000596046448
+      ]
+    ],
+    "210205": [
+      [
+        "Blackbuck",
+        0.30000001192092896
+      ]
+    ],
+    "210210": [
+      [
+        "BorneanElephant",
+        0.15000000596046448
+      ]
+    ],
+    "210214": [
+      [
+        "BorneanElephant",
+        0.30000001192092896
+      ]
+    ],
+    "210220": [
+      [
+        "HoneyBadger",
+        0.15000000596046448
+      ]
+    ],
+    "210222": [
+      [
+        "HoneyBadger",
+        0.30000001192092896
+      ]
+    ],
+    "210227": [
+      [
+        "JapaneseRaccoonDog",
+        0.15000000596046448
+      ]
+    ],
+    "210229": [
+      [
+        "JapaneseRaccoonDog",
+        0.30000001192092896
+      ]
+    ],
+    "210235": [
+      [
+        "LionTailedMacaque",
+        0.15000000596046448
+      ]
+    ],
+    "210237": [
+      [
+        "LionTailedMacaque",
+        0.30000001192092896
+      ]
+    ],
+    "210243": [
+      [
+        "Nilgai",
+        0.15000000596046448
+      ]
+    ],
+    "210245": [
+      [
+        "Nilgai",
+        0.30000001192092896
+      ]
+    ],
+    "210251": [
+      [
+        "PereDavidsDeer",
+        0.15000000596046448
+      ]
+    ],
+    "210253": [
+      [
+        "PereDavidsDeer",
+        0.30000001192092896
+      ]
+    ],
+    "40227": [
+      [
+        "Cassowary",
+        0.15000000596046448
+      ]
+    ],
+    "40229": [
+      [
+        "Cassowary",
+        0.30000001192092896
+      ]
+    ],
+    "40217": [
+      [
+        "Dingo",
+        0.15000000596046448
+      ]
+    ],
+    "40220": [
+      [
+        "Dingo",
+        0.30000001192092896
+      ]
+    ],
+    "40203": [
+      [
+        "Koala",
+        0.15000000596046448
+      ]
+    ],
+    "40205": [
+      [
+        "Koala",
+        0.30000001192092896
+      ]
+    ],
+    "40209": [
+      [
+        "RedKangaroo",
+        0.15000000596046448
+      ]
+    ],
+    "40212": [
+      [
+        "RedKangaroo",
+        0.30000001192092896
+      ]
+    ],
+    "50237": [
+      [
+        "CuviersDwarfCaiman",
+        0.15000000596046448
+      ]
+    ],
+    "50239": [
+      [
+        "CuviersDwarfCaiman",
+        0.30000001192092896
+      ]
+    ],
+    "50211": [
+      [
+        "GiantOtter",
+        0.15000000596046448
+      ]
+    ],
+    "50215": [
+      [
+        "GiantOtter",
+        0.30000001192092896
+      ]
+    ],
+    "50220": [
+      [
+        "GreySeal",
+        0.15000000596046448
+      ]
+    ],
+    "50223": [
+      [
+        "GreySeal",
+        0.30000001192092896
+      ]
+    ],
+    "50228": [
+      [
+        "KingPenguin",
+        0.15000000596046448
+      ]
+    ],
+    "50231": [
+      [
+        "KingPenguin",
+        0.30000001192092896
+      ]
+    ],
+    "60203": [
+      [
+        "Babirusa",
+        0.15000000596046448
+      ]
+    ],
+    "60205": [
+      [
+        "Babirusa",
+        0.30000001192092896
+      ]
+    ],
+    "60209": [
+      [
+        "Binturong",
+        0.15000000596046448
+      ]
+    ],
+    "60212": [
+      [
+        "Binturong",
+        0.30000001192092896
+      ]
+    ],
+    "60217": [
+      [
+        "CloudedLeopard",
+        0.15000000596046448
+      ]
+    ],
+    "60220": [
+      [
+        "CloudedLeopard",
+        0.30000001192092896
+      ]
+    ],
+    "60225": [
+      [
+        "Dhole",
+        0.15000000596046448
+      ]
+    ],
+    "60228": [
+      [
+        "Dhole",
+        0.30000001192092896
+      ]
+    ],
+    "60233": [
+      [
+        "MalayanTapir",
+        0.15000000596046448
+      ]
+    ],
+    "60236": [
+      [
+        "MalayanTapir",
+        0.30000001192092896
+      ]
+    ],
+    "60241": [
+      [
+        "ProboscisMonkey",
+        0.15000000596046448
+      ]
+    ],
+    "60244": [
+      [
+        "ProboscisMonkey",
+        0.30000001192092896
+      ]
+    ],
+    "60249": [
+      [
+        "SunBear",
+        0.15000000596046448
+      ]
+    ],
+    "60252": [
+      [
+        "SunBear",
+        0.30000001192092896
+      ]
+    ],
+    "70203": [
+      [
+        "AfricanPenguin",
+        0.15000000596046448
+      ]
+    ],
+    "70206": [
+      [
+        "AfricanPenguin",
+        0.30000001192092896
+      ]
+    ],
+    "70210": [
+      [
+        "FennecFox",
+        0.15000000596046448
+      ]
+    ],
+    "70213": [
+      [
+        "FennecFox",
+        0.30000001192092896
+      ]
+    ],
+    "70217": [
+      [
+        "Meerkat",
+        0.15000000596046448
+      ]
+    ],
+    "70220": [
+      [
+        "Meerkat",
+        0.30000001192092896
+      ]
+    ],
+    "70225": [
+      [
+        "SouthernWhiteRhino",
+        0.15000000596046448
+      ]
+    ],
+    "70229": [
+      [
+        "SouthernWhiteRhino",
+        0.30000001192092896
+      ]
+    ],
+    "80203": [
+      [
+        "AmericanAlligator",
+        0.15000000596046448
+      ]
+    ],
+    "80206": [
+      [
+        "AmericanAlligator",
+        0.30000001192092896
+      ]
+    ],
+    "80211": [
+      [
+        "ArcticFox",
+        0.15000000596046448
+      ]
+    ],
+    "80214": [
+      [
+        "ArcticFox",
+        0.30000001192092896
+      ]
+    ],
+    "80219": [
+      [
+        "CaliforniaSeaLion",
+        0.15000000596046448
+      ]
+    ],
+    "80222": [
+      [
+        "CaliforniaSeaLion",
+        0.30000001192092896
+      ]
+    ],
+    "80227": [
+      [
+        "Cougar",
+        0.15000000596046448
+      ]
+    ],
+    "80230": [
+      [
+        "Cougar",
+        0.30000001192092896
+      ]
+    ],
+    "80234": [
+      [
+        "Moose",
+        0.15000000596046448
+      ]
+    ],
+    "80237": [
+      [
+        "Moose",
+        0.30000001192092896
+      ]
+    ],
+    "80241": [
+      [
+        "NorthAmericanBeaver",
+        0.15000000596046448
+      ]
+    ],
+    "80244": [
+      [
+        "NorthAmericanBeaver",
+        0.30000001192092896
+      ]
+    ],
+    "80248": [
+      [
+        "PrairieDog",
+        0.15000000596046448
+      ]
+    ],
+    "80251": [
+      [
+        "PrairieDog",
+        0.30000001192092896
+      ]
+    ],
+    "90204": [
+      [
+        "AlpineIbex",
+        0.15000000596046448
+      ]
+    ],
+    "90206": [
+      [
+        "AlpineIbex",
+        0.30000001192092896
+      ]
+    ],
+    "90210": [
+      [
+        "EurasianLynx",
+        0.15000000596046448
+      ]
+    ],
+    "90213": [
+      [
+        "EurasianLynx",
+        0.30000001192092896
+      ]
+    ],
+    "90217": [
+      [
+        "EuropeanBadger",
+        0.15000000596046448
+      ]
+    ],
+    "90220": [
+      [
+        "EuropeanBadger",
+        0.30000001192092896
+      ]
+    ],
+    "90226": [
+      [
+        "EuropeanFallowDeer",
+        0.15000000596046448
+      ]
+    ],
+    "90228": [
+      [
+        "EuropeanFallowDeer",
+        0.30000001192092896
+      ]
+    ],
+    "100204": [
+      [
+        "AsianSmallClawedOtter",
+        0.15000000596046448
+      ]
+    ],
+    "100207": [
+      [
+        "AsianSmallClawedOtter",
+        0.30000001192092896
+      ]
+    ],
+    "100212": [
+      [
+        "Capybara",
+        0.15000000596046448
+      ]
+    ],
+    "100214": [
+      [
+        "Capybara",
+        0.30000001192092896
+      ]
+    ],
+    "100219": [
+      [
+        "NileLechwe",
+        0.15000000596046448
+      ]
+    ],
+    "100221": [
+      [
+        "NileLechwe",
+        0.30000001192092896
+      ]
+    ],
+    "100226": [
+      [
+        "Platypus",
+        0.15000000596046448
+      ]
+    ],
+    "100228": [
+      [
+        "Platypus",
+        0.30000001192092896
+      ]
+    ],
+    "100233": [
+      [
+        "RedCrownedCrane",
+        0.15000000596046448
+      ]
+    ],
+    "100235": [
+      [
+        "RedCrownedCrane",
+        0.30000001192092896
+      ]
+    ],
+    "100240": [
+      [
+        "SpectacledCaiman",
+        0.15000000596046448
+      ]
+    ],
+    "100243": [
+      [
+        "SpectacledCaiman",
+        0.30000001192092896
+      ]
+    ],
+    "100248": [
+      [
+        "WildWaterBuffalo",
+        0.15000000596046448
+      ]
+    ],
+    "100251": [
+      [
+        "WildWaterBuffalo",
+        0.30000001192092896
+      ]
+    ],
+    "80504": [
+      [
+        "BlackWhiteRuffedLemur",
+        0.15000000596046448
+      ]
+    ],
+    "80507": [
+      [
+        "BlackWhiteRuffedLemur",
+        0.30000001192092896
+      ]
+    ],
+    "160503": [
+      [
+        "CollaredPeccary",
+        0.15000000596046448
+      ]
+    ],
+    "160505": [
+      [
+        "CollaredPeccary",
+        0.30000001192092896
+      ]
+    ],
+    "202": [
+      [
+        "Aardvark",
+        0.15000000596046448
+      ]
+    ],
+    "205": [
+      [
+        "Aardvark",
+        0.30000001192092896
+      ]
+    ],
+    "302": [
+      [
+        "AfricanBuffalo",
+        0.15000000596046448
+      ]
+    ],
+    "305": [
+      [
+        "AfricanBuffalo",
+        0.30000001192092896
+      ]
+    ],
+    "22": [
+      [
+        "AfricanElephant",
+        0.15000000596046448
+      ]
+    ],
+    "25": [
+      [
+        "AfricanElephant",
+        0.30000001192092896
+      ]
+    ],
+    "403": [
+      [
+        "AfricanWildDog",
+        0.15000000596046448
+      ]
+    ],
+    "405": [
+      [
+        "AfricanWildDog",
+        0.30000001192092896
+      ]
+    ],
+    "102": [
+      [
+        "AldabraGiantTortoise",
+        0.15000000596046448
+      ]
+    ],
+    "104": [
+      [
+        "AldabraGiantTortoise",
+        0.30000001192092896
+      ]
+    ],
+    "7300": [
+      [
+        "AmazonGiantCentipede",
+        0.15000000596046448
+      ]
+    ],
+    "7301": [
+      [
+        "AmazonGiantCentipede",
+        0.30000001192092896
+      ]
+    ],
+    "502": [
+      [
+        "AmericanBison",
+        0.15000000596046448
+      ]
+    ],
+    "505": [
+      [
+        "AmericanBison",
+        0.30000001192092896
+      ]
+    ],
+    "40": [
+      [
+        "AntilleanIguana",
+        0.15000000596046448
+      ]
+    ],
+    "41": [
+      [
+        "AntilleanIguana",
+        0.30000001192092896
+      ]
+    ],
+    "602": [
+      [
+        "BactrianCamel",
+        0.15000000596046448
+      ]
+    ],
+    "604": [
+      [
+        "BactrianCamel",
+        0.30000001192092896
+      ]
+    ],
+    "702": [
+      [
+        "BairdsTapir",
+        0.15000000596046448
+      ]
+    ],
+    "705": [
+      [
+        "BairdsTapir",
+        0.30000001192092896
+      ]
+    ],
+    "802": [
+      [
+        "BengalTiger",
+        0.15000000596046448
+      ]
+    ],
+    "805": [
+      [
+        "BengalTiger",
+        0.30000001192092896
+      ]
+    ],
+    "902": [
+      [
+        "BlackWildebeest",
+        0.15000000596046448
+      ]
+    ],
+    "904": [
+      [
+        "BlackWildebeest",
+        0.30000001192092896
+      ]
+    ],
+    "5500": [
+      [
+        "BoaConstrictor",
+        0.15000000596046448
+      ]
+    ],
+    "5501": [
+      [
+        "BoaConstrictor",
+        0.30000001192092896
+      ]
+    ],
+    "1002": [
+      [
+        "Bongo",
+        0.15000000596046448
+      ]
+    ],
+    "1004": [
+      [
+        "Bongo",
+        0.30000001192092896
+      ]
+    ],
+    "1103": [
+      [
+        "Bonobo",
+        0.15000000596046448
+      ]
+    ],
+    "1107": [
+      [
+        "Bonobo",
+        0.30000001192092896
+      ]
+    ],
+    "1203": [
+      [
+        "BorneanOrangutan",
+        0.15000000596046448
+      ]
+    ],
+    "1207": [
+      [
+        "BorneanOrangutan",
+        0.30000001192092896
+      ]
+    ],
+    "6400": [
+      [
+        "BrazilianWanderingSpider",
+        0.15000000596046448
+      ]
+    ],
+    "6401": [
+      [
+        "BrazilianWanderingSpider",
+        0.30000001192092896
+      ]
+    ],
+    "6500": [
+      [
+        "BrazillianSalmonPinkTarantula",
+        0.15000000596046448
+      ]
+    ],
+    "6501": [
+      [
+        "BrazillianSalmonPinkTarantula",
+        0.30000001192092896
+      ]
+    ],
+    "1302": [
+      [
+        "Cheetah",
+        0.15000000596046448
+      ]
+    ],
+    "1305": [
+      [
+        "Cheetah",
+        0.30000001192092896
+      ]
+    ],
+    "1402": [
+      [
+        "ChinesePangolin",
+        0.15000000596046448
+      ]
+    ],
+    "1405": [
+      [
+        "ChinesePangolin",
+        0.30000001192092896
+      ]
+    ],
+    "5700": [
+      [
+        "CommonDeathAdder",
+        0.15000000596046448
+      ]
+    ],
+    "5701": [
+      [
+        "CommonDeathAdder",
+        0.30000001192092896
+      ]
+    ],
+    "1502": [
+      [
+        "CommonOstrich",
+        0.15000000596046448
+      ]
+    ],
+    "1504": [
+      [
+        "CommonOstrich",
+        0.30000001192092896
+      ]
+    ],
+    "1602": [
+      [
+        "CommonWarthog",
+        0.15000000596046448
+      ]
+    ],
+    "1605": [
+      [
+        "CommonWarthog",
+        0.30000001192092896
+      ]
+    ],
+    "5800": [
+      [
+        "EasternBrownSnake",
+        0.15000000596046448
+      ]
+    ],
+    "5801": [
+      [
+        "EasternBrownSnake",
+        0.30000001192092896
+      ]
+    ],
+    "1702": [
+      [
+        "FormosanBlackBear",
+        0.15000000596046448
+      ]
+    ],
+    "1705": [
+      [
+        "FormosanBlackBear",
+        0.30000001192092896
+      ]
+    ],
+    "1802": [
+      [
+        "GalapagosGiantTortoise",
+        0.15000000596046448
+      ]
+    ],
+    "1804": [
+      [
+        "GalapagosGiantTortoise",
+        0.30000001192092896
+      ]
+    ],
+    "1902": [
+      [
+        "Gemsbok",
+        0.15000000596046448
+      ]
+    ],
+    "1904": [
+      [
+        "Gemsbok",
+        0.30000001192092896
+      ]
+    ],
+    "2002": [
+      [
+        "Gharial",
+        0.15000000596046448
+      ]
+    ],
+    "2005": [
+      [
+        "Gharial",
+        0.30000001192092896
+      ]
+    ],
+    "7200": [
+      [
+        "GiantBurrowingCockroach",
+        0.15000000596046448
+      ]
+    ],
+    "7201": [
+      [
+        "GiantBurrowingCockroach",
+        0.30000001192092896
+      ]
+    ],
+    "6900": [
+      [
+        "GiantDesertHairyScorpion",
+        0.15000000596046448
+      ]
+    ],
+    "6901": [
+      [
+        "GiantDesertHairyScorpion",
+        0.30000001192092896
+      ]
+    ],
+    "6800": [
+      [
+        "GiantForestScorpion",
+        0.15000000596046448
+      ]
+    ],
+    "6801": [
+      [
+        "GiantForestScorpion",
+        0.30000001192092896
+      ]
+    ],
+    "2102": [
+      [
+        "GiantPanda",
+        0.15000000596046448
+      ]
+    ],
+    "2105": [
+      [
+        "GiantPanda",
+        0.30000001192092896
+      ]
+    ],
+    "7400": [
+      [
+        "GiantTigerLandSnail",
+        0.15000000596046448
+      ]
+    ],
+    "7401": [
+      [
+        "GiantTigerLandSnail",
+        0.30000001192092896
+      ]
+    ],
+    "5400": [
+      [
+        "GilaMonster",
+        0.15000000596046448
+      ]
+    ],
+    "5401": [
+      [
+        "GilaMonster",
+        0.30000001192092896
+      ]
+    ],
+    "6100": [
+      [
+        "GoldenPoisonFrog",
+        0.15000000596046448
+      ]
+    ],
+    "6101": [
+      [
+        "GoldenPoisonFrog",
+        0.30000001192092896
+      ]
+    ],
+    "7000": [
+      [
+        "GoliathBeetle",
+        0.15000000596046448
+      ]
+    ],
+    "7001": [
+      [
+        "GoliathBeetle",
+        0.30000001192092896
+      ]
+    ],
+    "6700": [
+      [
+        "GoliathBirdeater",
+        0.15000000596046448
+      ]
+    ],
+    "6701": [
+      [
+        "GoliathBirdeater",
+        0.30000001192092896
+      ]
+    ],
+    "6300": [
+      [
+        "GoliathFrog",
+        0.15000000596046448
+      ]
+    ],
+    "6301": [
+      [
+        "GoliathFrog",
+        0.30000001192092896
+      ]
+    ],
+    "2202": [
+      [
+        "GreaterFlamingo",
+        0.15000000596046448
+      ]
+    ],
+    "2204": [
+      [
+        "GreaterFlamingo",
+        0.30000001192092896
+      ]
+    ],
+    "5300": [
+      [
+        "GreenIguana",
+        0.15000000596046448
+      ]
+    ],
+    "5301": [
+      [
+        "GreenIguana",
+        0.30000001192092896
+      ]
+    ],
+    "2302": [
+      [
+        "GrizzlyBear",
+        0.15000000596046448
+      ]
+    ],
+    "2306": [
+      [
+        "GrizzlyBear",
+        0.30000001192092896
+      ]
+    ],
+    "2402": [
+      [
+        "HimalayanBrownBear",
+        0.15000000596046448
+      ]
+    ],
+    "2406": [
+      [
+        "HimalayanBrownBear",
+        0.30000001192092896
+      ]
+    ],
+    "2502": [
+      [
+        "Hippopotamus",
+        0.15000000596046448
+      ]
+    ],
+    "2506": [
+      [
+        "Hippopotamus",
+        0.30000001192092896
+      ]
+    ],
+    "2603": [
+      [
+        "IndianElephant",
+        0.15000000596046448
+      ]
+    ],
+    "2606": [
+      [
+        "IndianElephant",
+        0.30000001192092896
+      ]
+    ],
+    "2702": [
+      [
+        "IndianPeafowl",
+        0.15000000596046448
+      ]
+    ],
+    "2704": [
+      [
+        "IndianPeafowl",
+        0.30000001192092896
+      ]
+    ],
+    "2802": [
+      [
+        "IndianRhinoceros",
+        0.15000000596046448
+      ]
+    ],
+    "2806": [
+      [
+        "IndianRhinoceros",
+        0.30000001192092896
+      ]
+    ],
+    "2903": [
+      [
+        "JapaneseMacaque",
+        0.15000000596046448
+      ]
+    ],
+    "2906": [
+      [
+        "JapaneseMacaque",
+        0.30000001192092896
+      ]
+    ],
+    "3002": [
+      [
+        "KomodoDragon",
+        0.15000000596046448
+      ]
+    ],
+    "3005": [
+      [
+        "KomodoDragon",
+        0.30000001192092896
+      ]
+    ],
+    "6200": [
+      [
+        "LehmannsPoisonFrog",
+        0.15000000596046448
+      ]
+    ],
+    "6201": [
+      [
+        "LehmannsPoisonFrog",
+        0.30000001192092896
+      ]
+    ],
+    "3103": [
+      [
+        "Mandrill",
+        0.15000000596046448
+      ]
+    ],
+    "3106": [
+      [
+        "Mandrill",
+        0.30000001192092896
+      ]
+    ],
+    "6600": [
+      [
+        "MexicanRedkneeTarantula",
+        0.15000000596046448
+      ]
+    ],
+    "6601": [
+      [
+        "MexicanRedkneeTarantula",
+        0.30000001192092896
+      ]
+    ],
+    "3202": [
+      [
+        "NileMonitor",
+        0.15000000596046448
+      ]
+    ],
+    "3205": [
+      [
+        "NileMonitor",
+        0.30000001192092896
+      ]
+    ],
+    "3302": [
+      [
+        "Nyala",
+        0.15000000596046448
+      ]
+    ],
+    "3304": [
+      [
+        "Nyala",
+        0.30000001192092896
+      ]
+    ],
+    "3402": [
+      [
+        "Okapi",
+        0.15000000596046448
+      ]
+    ],
+    "3404": [
+      [
+        "Okapi",
+        0.30000001192092896
+      ]
+    ],
+    "3502": [
+      [
+        "PlainsZebra",
+        0.15000000596046448
+      ]
+    ],
+    "3504": [
+      [
+        "PlainsZebra",
+        0.30000001192092896
+      ]
+    ],
+    "3602": [
+      [
+        "PronghornAntelope",
+        0.15000000596046448
+      ]
+    ],
+    "3604": [
+      [
+        "PronghornAntelope",
+        0.30000001192092896
+      ]
+    ],
+    "5900": [
+      [
+        "PuffAdder",
+        0.15000000596046448
+      ]
+    ],
+    "5901": [
+      [
+        "PuffAdder",
+        0.30000001192092896
+      ]
+    ],
+    "3702": [
+      [
+        "PygmyHippo",
+        0.15000000596046448
+      ]
+    ],
+    "3706": [
+      [
+        "PygmyHippo",
+        0.30000001192092896
+      ]
+    ],
+    "3802": [
+      [
+        "RedPanda",
+        0.15000000596046448
+      ]
+    ],
+    "3804": [
+      [
+        "RedPanda",
+        0.30000001192092896
+      ]
+    ],
+    "3903": [
+      [
+        "RedRuffedLemur",
+        0.15000000596046448
+      ]
+    ],
+    "3906": [
+      [
+        "RedRuffedLemur",
+        0.30000001192092896
+      ]
+    ],
+    "4002": [
+      [
+        "ReticulatedGiraffe",
+        0.15000000596046448
+      ]
+    ],
+    "4004": [
+      [
+        "ReticulatedGiraffe",
+        0.30000001192092896
+      ]
+    ],
+    "4103": [
+      [
+        "RingTailedLemur",
+        0.15000000596046448
+      ]
+    ],
+    "4106": [
+      [
+        "RingTailedLemur",
+        0.30000001192092896
+      ]
+    ],
+    "4202": [
+      [
+        "SableAntelope",
+        0.15000000596046448
+      ]
+    ],
+    "4204": [
+      [
+        "SableAntelope",
+        0.30000001192092896
+      ]
+    ],
+    "4302": [
+      [
+        "SaltwaterCrocodile",
+        0.15000000596046448
+      ]
+    ],
+    "4305": [
+      [
+        "SaltwaterCrocodile",
+        0.30000001192092896
+      ]
+    ],
+    "4402": [
+      [
+        "SiberianTiger",
+        0.15000000596046448
+      ]
+    ],
+    "4405": [
+      [
+        "SiberianTiger",
+        0.30000001192092896
+      ]
+    ],
+    "4502": [
+      [
+        "SnowLeopard",
+        0.15000000596046448
+      ]
+    ],
+    "4505": [
+      [
+        "SnowLeopard",
+        0.30000001192092896
+      ]
+    ],
+    "4603": [
+      [
+        "SpottedHyena",
+        0.15000000596046448
+      ]
+    ],
+    "4605": [
+      [
+        "SpottedHyena",
+        0.30000001192092896
+      ]
+    ],
+    "4702": [
+      [
+        "Springbok",
+        0.15000000596046448
+      ]
+    ],
+    "4704": [
+      [
+        "Springbok",
+        0.30000001192092896
+      ]
+    ],
+    "4802": [
+      [
+        "ThomsonsGazelle",
+        0.15000000596046448
+      ]
+    ],
+    "4804": [
+      [
+        "ThomsonsGazelle",
+        0.30000001192092896
+      ]
+    ],
+    "4903": [
+      [
+        "TimberWolf",
+        0.15000000596046448
+      ]
+    ],
+    "4905": [
+      [
+        "TimberWolf",
+        0.30000001192092896
+      ]
+    ],
+    "7100": [
+      [
+        "TitanBeetle",
+        0.15000000596046448
+      ]
+    ],
+    "7101": [
+      [
+        "TitanBeetle",
+        0.30000001192092896
+      ]
+    ],
+    "5002": [
+      [
+        "WestAfricanLion",
+        0.15000000596046448
+      ]
+    ],
+    "5005": [
+      [
+        "WestAfricanLion",
+        0.30000001192092896
+      ]
+    ],
+    "5103": [
+      [
+        "WesternChimpanzee",
+        0.15000000596046448
+      ]
+    ],
+    "5107": [
+      [
+        "WesternChimpanzee",
+        0.30000001192092896
+      ]
+    ],
+    "6000": [
+      [
+        "WesternDiamondBackRattlesnake",
+        0.15000000596046448
+      ]
+    ],
+    "6001": [
+      [
+        "WesternDiamondBackRattlesnake",
+        0.30000001192092896
+      ]
+    ],
+    "5203": [
+      [
+        "WesternLowlandGorilla",
+        0.15000000596046448
+      ]
+    ],
+    "5207": [
+      [
+        "WesternLowlandGorilla",
+        0.30000001192092896
+      ]
+    ],
+    "5600": [
+      [
+        "YellowAnaconda",
+        0.15000000596046448
+      ]
+    ],
+    "5601": [
+      [
+        "YellowAnaconda",
+        0.30000001192092896
+      ]
+    ]
+  }
+}

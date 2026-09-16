@@ -11,7 +11,7 @@
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
     "@tanstack/react-query": "^5.101.4",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "firebase": "^12.16.0",
@@ -22,6 +22,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
+    "semver": "^7.8.5",
     "ws": "^8.21.1"
   },
   "devDependencies": {
@@ -48,7 +49,7 @@
     "test": "npm run test:frontend && npm run test:electron",
     "test:frontend": "vitest run",
     "test:electron": "node --test \"electron/modules/*.test.js\"",
-    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/firestore.rules.test.mjs && node --test tests/scalable-map-index.emulator.test.cjs\"",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/firestore.rules.test.mjs && node --test tests/scalable-map-index.emulator.test.cjs && node --test tests/security-v2.emulator.test.mjs\"",
     "test:installed-production": "node scripts/installed-production-smoke.mjs",
     "test:watch": "vitest",
     "deploy:ionos": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-ionos.ps1",
@@ -60,10 +61,14 @@
     "generate:appx-assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-appx-assets.ps1"
   },
   "overrides": {
-    "js-yaml": "^4.3.1"
+    "js-yaml": "^4.3.2",
+    "qs": "^6.16.0"
   },
   "build": {
     "extends": null,
+    "toolsets": {
+      "winCodeSign": "1.1.0"
+    },
     "appId": "com.planetcreations.app",
     "productName": "PlanetCreations Client",
     "files": [
@@ -126,6 +131,10 @@
           "planetcreations"
         ]
       }
+    ],
+    "asarUnpack": [
+      "electron/modules/**",
+      "node_modules/adm-zip/**"
     ]
   }
 }

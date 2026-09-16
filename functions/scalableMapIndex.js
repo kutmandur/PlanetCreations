@@ -95,6 +95,7 @@ const createEmptyShard = ({generation, number, previousShardId, scopeId}) => ({
     p: previousShardId || null,
     u: Timestamp.now(),
     v: INDEX_VERSION,
+    r: crypto.randomUUID(),
 });
 
 const buildShardWithEntry = (shardData, entryId, entry, mergeEntry = false) => {
@@ -109,6 +110,7 @@ const buildShardWithEntry = (shardData, entryId, entry, mergeEntry = false) => {
         e: entries,
         u: Timestamp.now(),
         v: INDEX_VERSION,
+        r: crypto.randomUUID(),
     };
     next.b = estimateShardBytes(next);
     return next;
@@ -210,19 +212,14 @@ const upsertMapIndexEntry = async (
                 );
                 if (candidate.b <= MAX_SHARD_BYTES ||
                     Object.keys(candidate.e || {}).length === 1) {
+                    const manifestSnap = await transaction.get(stateRef);
+                    const state = manifestSnap.data() || {};
                     transaction.set(shardRef, candidate);
-                    transaction.set(locationRef, {
-                        entryId: safeEntryId,
-                        scopeId: safeScopeId,
-                        shardId: location.shardId,
-                        updatedAt: Timestamp.now(),
-                    });
-                    if (metadata !== undefined) {
-                        transaction.set(stateRef, {
-                            m: metadata,
-                            updatedAt: Timestamp.now(),
-                        }, {merge: true});
-                    }
+                    const revisions = {...(state.revisions || {}), [location.shardId]: candidate.r};
+                    transaction.set(stateRef, {
+                        revisions: Buffer.byteLength(JSON.stringify(revisions)) < 200 * 1024 ? revisions : null,
+                        ...(metadata !== undefined ? {m: metadata} : {}), updatedAt: Timestamp.now(),
+                    }, {merge: true});
                     return location.shardId;
                 }
                 relocatedSource = {
@@ -277,19 +274,23 @@ const upsertMapIndexEntry = async (
         let shardIds = Array.isArray(state.shardIds) && state.shardIds.length > 0 ?
             [...state.shardIds] : [activeShardId];
 
+        const revisions = {...(state.revisions || {})};
         if (candidate.b > MAX_SHARD_BYTES && Object.keys(activeShard.e || {}).length > 0) {
             headNumber += 1;
             targetShardId = getShardId(safeScopeId, generation, headNumber);
             const nextShardRef = db.doc(`${configuration.shards}/${targetShardId}`);
-            transaction.create(nextShardRef, buildShardWithEntry(createEmptyShard({
+            const nextShard = buildShardWithEntry(createEmptyShard({
                 generation,
                 number: headNumber,
                 previousShardId: activeShardId,
                 scopeId: safeScopeId,
-            }), safeEntryId, entry));
+            }), safeEntryId, targetEntry);
+            transaction.create(nextShardRef, nextShard);
+            revisions[targetShardId] = nextShard.r;
             shardIds.push(targetShardId);
         } else {
             transaction.set(activeShardRef, candidate);
+            revisions[activeShardId] = candidate.r;
         }
 
         if (relocatedSource && relocatedSource.id !== targetShardId) {
@@ -299,10 +300,12 @@ const upsertMapIndexEntry = async (
                 ...relocatedSource.data,
                 b: 0,
                 e: sourceEntries,
+                r: crypto.randomUUID(),
                 u: Timestamp.now(),
             };
             sourceShard.b = estimateShardBytes(sourceShard);
             transaction.set(relocatedSource.ref, sourceShard);
+            revisions[relocatedSource.id] = sourceShard.r;
         }
 
         transaction.set(stateRef, {
@@ -312,6 +315,7 @@ const upsertMapIndexEntry = async (
             headShardId: targetShardId,
             ...(metadata !== undefined ? {m: metadata} : {}),
             shardIds,
+            revisions: Buffer.byteLength(JSON.stringify(revisions)) < 200 * 1024 ? revisions : null,
             updatedAt: Timestamp.now(),
             version: INDEX_VERSION,
         }, {merge: true});
@@ -383,6 +387,7 @@ const removeMapIndexEntry = async (db, family, scopeId, entryId) => {
         }
 
         let removedFromShard = false;
+        const revisions = {...(state.revisions || {})};
         shardSnaps.forEach((shardSnap, index) => {
             if (!shardSnap.exists) return;
             const shard = shardSnap.data();
@@ -394,10 +399,12 @@ const removeMapIndexEntry = async (db, family, scopeId, entryId) => {
                 ...shard,
                 b: 0,
                 e: entries,
+                r: crypto.randomUUID(),
                 u: Timestamp.now(),
             };
             nextShard.b = estimateShardBytes(nextShard);
             transaction.set(shardRefs[index], nextShard);
+            revisions[shardRefs[index].path.split("/").at(-1)] = nextShard.r;
             removedFromShard = true;
         });
 
@@ -406,6 +413,7 @@ const removeMapIndexEntry = async (db, family, scopeId, entryId) => {
         if (stateSnap.exists && removedLogicalEntry) {
             transaction.set(stateRef, {
                 count: Math.max(0, (Number(state.count) || 0) - 1),
+                revisions: Buffer.byteLength(JSON.stringify(revisions)) < 200 * 1024 ? revisions : null,
                 updatedAt: Timestamp.now(),
             }, {merge: true});
         }
@@ -488,6 +496,7 @@ const replaceMapIndex = async (
         headShardId: shards.at(-1).id,
         ...(metadata !== undefined ? {m: metadata} : {}),
         shardIds: shards.map((shard) => shard.id),
+        revisions: Buffer.byteLength(JSON.stringify(Object.fromEntries(shards.map(shard => [shard.id, shard.data.r])))) < 200 * 1024 ? Object.fromEntries(shards.map(shard => [shard.id, shard.data.r])) : null,
         updatedAt: Timestamp.now(),
         version: INDEX_VERSION,
     });

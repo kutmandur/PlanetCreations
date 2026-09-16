@@ -21,6 +21,40 @@ function wrap(payload, kind = 1) {
     return Buffer.concat([header, body]);
 }
 
+test('scans native and legacy Zoo autosaves and extracts matching desktop/server metadata', t => {
+    const { scanGamesFromPath } = require('./FileHandler');
+    const { isFrontierSavePath } = require('./FrontierSaveIndexWatcher');
+    const { findLatestCollaborationSave } = require('./CollaborationSaveFinder');
+    const { extractFrontierMetadata } = require('../../functions/frontierMetadata');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zoo-autosave-test-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const saves = path.join(root, 'Planet Zoo', '11111111111111111', 'Saves');
+    fs.mkdirSync(saves, { recursive: true });
+    const zip = new AdmZip();
+    zip.addFile('metadata', wrap(JSON.stringify({ sName: 'Autosaved Zoo', tSave: { nAnimalCount: 38 } })));
+    for (const extension of ['.zoo_auto', '.zooauto', '.ZOO_AUTO']) {
+        const name = `Zoo${extension}`;
+        const filePath = path.join(saves, name);
+        zip.writeZip(filePath);
+        assert.equal(isFrontierSavePath(filePath), true);
+        const result = inspectFrontierFile(filePath);
+        assert.equal(result.metadata.gameId, 'planet-zoo');
+        assert.equal(result.metadata.kind, 'autosave');
+        assert.equal(result.metadata.park.animalCount, 38);
+        const server = extractFrontierMetadata(zip.toBuffer(), {
+            originalFileName: name, expectedGameId: 'planet-zoo', expectedFileKind: 'autosave',
+        });
+        assert.equal(server.kind, 'autosave');
+        assert.equal(server.park.animalCount, 38);
+    }
+    fs.writeFileSync(path.join(saves, 'Ignored.zoo_auto.bak'), 'not a save');
+    const scanned = scanGamesFromPath(root);
+    // Windows filenames are case-insensitive, so the uppercase fixture overwrites the native one.
+    assert.equal(scanned['Planet Zoo'].autosaves.length, process.platform === 'win32' ? 2 : 3);
+    assert.equal(scanned['Planet Zoo'].parks.length, 0);
+    assert.equal(findLatestCollaborationSave(scanned, 'planet-zoo', 'Zoo.zoo_auto').success, true);
+});
+
 test('normalizes useful park and blueprint metadata including fixed-point costs', () => {
     const normalized = normalizeFrontierMetadata({
         sName: 'Mine Train',

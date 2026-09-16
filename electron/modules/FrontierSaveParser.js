@@ -11,7 +11,7 @@ const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const MAX_CREATION_PAYLOAD_BYTES = 512 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = new Set([
     '.park2', '.blpr2', '.prkauto2',
-    '.zoo', '.pzblueprint', '.zooauto',
+    '.zoo', '.pzblueprint', '.zooauto', '.zoo_auto',
 ]);
 const MEDIA_EXTENSIONS = new Set([
     '.jpg', '.jpeg', '.png', '.gif', '.webp',
@@ -58,8 +58,8 @@ function normalizeFrontierMetadata(rawMetadata, filePath = '', options = {}) {
     const utilities = blueprint?.tUtilityParams && typeof blueprint.tUtilityParams === 'object' ? blueprint.tUtilityParams : null;
     const extension = path.extname(filePath).toLowerCase();
     const gameId = ['.park2', '.blpr2', '.prkauto2'].includes(extension) ? 'planet-coaster-2' :
-        (['.zoo', '.pzblueprint', '.zooauto'].includes(extension) ? 'planet-zoo' : null);
-    const kind = ['.prkauto2', '.zooauto'].includes(extension) ? 'autosave' :
+        (['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'].includes(extension) ? 'planet-zoo' : null);
+    const kind = ['.prkauto2', '.zooauto', '.zoo_auto'].includes(extension) ? 'autosave' :
         (blueprint || ['.blpr2', '.pzblueprint'].includes(extension) ? 'blueprint' :
             (save || ['.park2', '.zoo'].includes(extension) ? 'park' : 'creation'));
     const placementCostRaw = integer(blueprint?.nPlacementCost);

@@ -3,7 +3,6 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useQuery } from '@tanstack/react-query';
 import { db } from '../../firebase/config';
-import { getYoutubeId } from '../../utils/helpers';
 import { LIVE_PLATFORMS, isValidStreamUrl, setLiveSession } from '../../utils/liveStream';
 import { buildCreationShareUrl, setOverlayQr } from '../../utils/overlayQr';
 import {
@@ -14,7 +13,7 @@ import {
 } from '../../utils/streamSession';
 import GeneralOverlayNotificationSettings from '../ui/GeneralOverlayNotificationSettings';
 import Spinner from '../ui/Spinner';
-import { platformFromObsService } from '../modals/GoLiveModal';
+import { platformFromObsService } from '../../utils/obsPlatform';
 import { getDefaultGameId, getGames } from '../../utils/gamesRegistry';
 
 const AUTO_MODE_KEY_PREFIX = 'pc.experimentalStreamAuto.';
@@ -99,9 +98,6 @@ const StreamManagement = ({
         if (!isValidStreamUrl(platform, value)) {
             throw new Error(`Enter a valid ${LIVE_PLATFORMS[platform].label} stream URL.`);
         }
-        if (platform === 'youtube' && !getYoutubeId(value)) {
-            throw new Error('Paste the URL of the current YouTube live video, not the channel URL.');
-        }
         return value;
     };
 
@@ -111,9 +107,6 @@ const StreamManagement = ({
         const secondUrl = secondaryUrl.trim();
         if (!isValidStreamUrl(secondaryPlatform, secondUrl)) {
             throw new Error(`Enter a valid ${LIVE_PLATFORMS[secondaryPlatform].label} stream URL.`);
-        }
-        if (secondaryPlatform === 'youtube' && !getYoutubeId(secondUrl)) {
-            throw new Error('Paste the URL of the current YouTube live video for the second output.');
         }
         return [
             { platform, url: primaryUrl },

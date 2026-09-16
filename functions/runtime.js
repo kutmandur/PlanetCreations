@@ -1,5 +1,6 @@
 "use strict";
 
+const {notificationContext} = require("./notificationContext");
 const functions = require("firebase-functions/v2");
 
 const REQUEST_RUNTIME_OPTIONS = Object.freeze({
@@ -63,7 +64,7 @@ function documentCreated(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => handler(event.data, event),
+    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
   );
 }
 
@@ -74,7 +75,7 @@ function documentDeleted(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => handler(event.data, event),
+    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
   );
 }
 
@@ -85,7 +86,7 @@ function documentUpdated(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => handler(event.data, event),
+    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
   );
 }
 
@@ -96,7 +97,7 @@ function documentWritten(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => handler(event.data, event),
+    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
   );
 }
 

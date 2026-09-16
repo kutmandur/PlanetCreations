@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     StreamCommandContextResolver,
+    YouTubeChatAdapter,
     builderChatMessage,
     builderUrl,
     communityChatMessage,
@@ -15,6 +16,7 @@ const {
     streamCommandChatMessage,
     twitchChannelLogin,
     youtubeChannelId,
+    youtubeApiError,
 } = require('./streamChatBots');
 
 test('matches the creation chat command case-insensitively', () => {
@@ -49,6 +51,66 @@ test('expands one simulcast session for both chat adapters', () => {
     assert.equal(sessions.length, 2);
     assert.deepEqual(sessions.map((session) => session.platform).sort(), ['twitch', 'youtube']);
     assert.ok(sessions.every((session) => session.creationId === 'creation-1'));
+});
+
+test('reports the actionable YouTube API error reason', async () => {
+    const error = await youtubeApiError({
+        status: 403,
+        json: async () => ({error: {errors: [{reason: 'insufficientPermissions'}]}}),
+    }, 'read live chat');
+    assert.match(error.message, /403.*insufficientPermissions/);
+});
+
+test('handles a new command received by the first YouTube streamed response', async () => {
+    const originalFetch = global.fetch;
+    const responses = [];
+    const now = Date.now();
+    global.fetch = async (url, options = {}) => {
+        if (String(url).includes('/liveChat/messages') && options.method === 'POST') {
+            responses.push(JSON.parse(options.body).snippet.textMessageDetails.messageText);
+            return {ok: true, status: 200};
+        }
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                nextPageToken: 'next',
+                pollingIntervalMillis: 60_000,
+                items: [{
+                    id: 'message-1',
+                    snippet: {
+                        displayMessage: '!creation',
+                        publishedAt: new Date(now + 1_000).toISOString(),
+                    },
+                }],
+            }),
+        };
+    };
+    try {
+        const adapter = new YouTubeChatAdapter(null, {
+            contextResolver: {resolveBuilder: async () => null, resolveCommunity: async () => null},
+        });
+        adapter.accessToken = 'token';
+        adapter.accessTokenExpiresAt = Date.now() + 120_000;
+        const state = {
+            videoId: 'abcdefghijk',
+            session: {platformStreamId: 'abcdefghijk', creationId: 'park-1'},
+            liveChatId: 'chat-1',
+            pageToken: null,
+            seen: new Set(),
+            timer: null,
+            initialized: false,
+            startedAt: now,
+            lastError: null,
+        };
+        adapter.pollers.set(state.videoId, state);
+        await adapter.handlePage(state, await (await global.fetch('test')).json());
+        clearTimeout(state.timer);
+        assert.equal(responses.length, 1);
+        assert.match(responses[0], /planetcreations\.net/);
+    } finally {
+        global.fetch = originalFetch;
+    }
 });
 
 test('builds the current creation link from server session state', () => {
@@ -105,7 +167,9 @@ test('matches direct and handle YouTube links to the active broadcaster', async 
     const channelId = 'UC_x5XG1OV2P6uZZ5FSM9Ttw';
     const fetchImpl = async () => ({
         ok: true,
-        text: async () => `<script>{"channelId":"${channelId}"}</script>`,
+        text: async () => '<script>var ytInitialData = ' + JSON.stringify({metadata: {
+            channelMetadataRenderer: {externalId: channelId},
+        }}) + ';</script>',
     });
     assert.equal(await youtubeChannelId(`https://youtube.com/channel/${channelId}`), channelId);
     assert.equal(await youtubeChannelId('https://youtube.com/@PlanetBuilders', fetchImpl), channelId);

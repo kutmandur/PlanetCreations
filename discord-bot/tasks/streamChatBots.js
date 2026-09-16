@@ -1,3 +1,4 @@
+const {openYoutubeChatStream, youtubeRetryDelay} = require('./youtubeChatStream');
 const CHAT_COMMANDS = Object.freeze({
     creation: /^!creation(?:\s|$)/i,
     builder: /^!builder(?:\s|$)/i,
@@ -74,30 +75,9 @@ function twitchChannelLogin(link) {
 }
 
 async function youtubeChannelId(link, fetchImpl = fetch) {
-    let parsed;
-    try {
-        parsed = new URL(link);
-    } catch {
-        return null;
-    }
-    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
-    if (parsed.protocol !== 'https:' || !['youtube.com', 'm.youtube.com'].includes(host)) return null;
-    const directMatch = parsed.pathname.match(/^\/channel\/(UC[\w-]{22})(?:\/|$)/);
-    if (directMatch) return directMatch[1];
-
-    const channelPath = parsed.pathname.match(/^\/(?:@[^/]+|c\/[^/]+|user\/[^/]+)(?:\/|$)/)?.[0];
-    if (!channelPath) return null;
-    const channelPage = new URL(channelPath, 'https://www.youtube.com');
-    const response = await fetchImpl(channelPage, {
-        headers: {
-            'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'PlanetCreationsBot/1.0',
-        },
-    });
-    if (!response.ok) return null;
-    const html = await response.text();
-    return (html.match(/"channelId":"(UC[\w-]{22})"/) ||
-        html.match(/channel_id=(UC[\w-]{22})/))?.[1] || null;
+    const target = require('../../functions/youtubeStream').parseYoutubeStreamUrl(link);
+    if (!target?.youtubeChannelUrl) return null;
+    return require('../../functions/youtubeFeed').extractYoutubeChannelId(target.youtubeChannelUrl, fetchImpl);
 }
 
 async function platformLinkMatchesSession(link, session, fetchImpl = fetch) {
@@ -450,8 +430,9 @@ class TwitchChatAdapter {
 }
 
 class YouTubeChatAdapter {
-    constructor(db, {contextResolver = null} = {}) {
+    constructor(db, {contextResolver = null, openStream = openYoutubeChatStream} = {}) {
         this.db = db;
+        this.openStream = openStream;
         this.clientId = process.env.YOUTUBE_BOT_CLIENT_ID || '';
         this.clientSecret = process.env.YOUTUBE_BOT_CLIENT_SECRET || '';
         this.refreshToken = process.env.YOUTUBE_BOT_REFRESH_TOKEN || '';
@@ -527,18 +508,19 @@ class YouTubeChatAdapter {
             `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}`,
             {headers: {Authorization: `Bearer ${accessToken}`}},
         );
-        if (!response.ok) return null;
+        if (!response.ok) {
+            throw await youtubeApiError(response, 'resolve live chat');
+        }
         return (await response.json()).items?.[0]?.liveStreamingDetails?.activeLiveChatId || null;
     }
 
     async postCommandResponse(liveChatId, session, command) {
         const cooldownKey = `${liveChatId}:${command}`;
         if (Date.now() - (this.cooldowns.get(cooldownKey) || 0) < COMMAND_COOLDOWN_MS) return;
-        this.cooldowns.set(cooldownKey, Date.now());
         const message = await streamCommandChatMessage(command, session, this.contextResolver);
         if (!message) return;
         const accessToken = await this.getAccessToken();
-        await fetch('https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet', {
+        const response = await fetch('https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${accessToken}`,
@@ -552,36 +534,79 @@ class YouTubeChatAdapter {
                 },
             }),
         });
+        if (!response.ok) throw await youtubeApiError(response, 'post chat response');
+        this.cooldowns.set(cooldownKey, Date.now());
+        console.log(`YouTube !${command} response sent for video ${session.platformStreamId}.`);
     }
 
-    async poll(state) {
-        if (!this.pollers.has(state.videoId)) return;
+    async handlePage(state, data) {
+        if (this.pollers.get(state.videoId) !== state) return;
+        for (const item of data.items || []) {
+            if (state.seen.has(item.id)) continue;
+            const command = getChatCommand(item.snippet?.displayMessage);
+            const publishedAt = Date.parse(item.snippet?.publishedAt || '');
+            const isNewForWorker = state.initialized || (
+                Number.isFinite(publishedAt) && publishedAt >= state.startedAt
+            );
+            if (isNewForWorker && command) {
+                console.log('YouTube !' + command + ' received for video ' + state.videoId + '.');
+                await this.postCommandResponse(state.liveChatId, state.session, command);
+            }
+            state.seen.add(item.id);
+        }
+        state.pageToken = data.nextPageToken || state.pageToken;
+        state.initialized = true;
+        state.lastError = null;
+        state.attempts = 0;
+        if (state.seen.size > 500) state.seen = new Set([...state.seen].slice(-250));
+        if (data.offlineAt) {
+            state.ended = true;
+            state.stream?.cancel();
+            console.log('YouTube chat ended for video ' + state.videoId + '.');
+        }
+    }
+
+    async connectStream(state) {
+        if (this.pollers.get(state.videoId) !== state || state.ended) return;
+        let finished = false;
+        const retry = (error) => {
+            if (finished || this.pollers.get(state.videoId) !== state || state.ended) return;
+            finished = true;
+            state.stream?.cancel();
+            const delay = youtubeRetryDelay(error, state.attempts || 0);
+            state.attempts = (state.attempts || 0) + 1;
+            if (error.code === 16 || /unauthenticated/i.test(error.message)) {
+                this.accessTokenExpiresAt = 0;
+            }
+            if (/liveChatEnded|liveChatDisabled/i.test(error.message)) state.ended = true;
+            if (state.lastError !== error.message) {
+                console.warn('YouTube chat for ' + state.videoId + ': ' + error.message +
+                    (state.ended ? ' Stopped.' : ' Retry at ' + new Date(Date.now() + delay).toISOString()));
+                state.lastError = error.message;
+            }
+            if (!state.ended) state.timer = setTimeout(() => this.connectStream(state), delay);
+        };
         try {
             if (!state.liveChatId) state.liveChatId = await this.resolveLiveChatId(state.videoId);
             if (!state.liveChatId) throw new Error('No active YouTube live chat.');
             const accessToken = await this.getAccessToken();
-            const url = new URL('https://www.googleapis.com/youtube/v3/liveChat/messages');
-            url.searchParams.set('part', 'snippet');
-            url.searchParams.set('liveChatId', state.liveChatId);
-            url.searchParams.set('maxResults', '200');
-            if (state.pageToken) url.searchParams.set('pageToken', state.pageToken);
-            const response = await fetch(url, {headers: {Authorization: `Bearer ${accessToken}`}});
-            if (!response.ok) throw new Error(`YouTube live chat returned ${response.status}.`);
-            const data = await response.json();
-            state.pageToken = data.nextPageToken || state.pageToken;
-            for (const item of data.items || []) {
-                if (state.seen.has(item.id)) continue;
-                state.seen.add(item.id);
-                const command = getChatCommand(item.snippet?.displayMessage);
-                if (state.initialized && command) {
-                    await this.postCommandResponse(state.liveChatId, state.session, command);
-                }
-            }
-            state.initialized = true;
-            if (state.seen.size > 500) state.seen = new Set([...state.seen].slice(-250));
-            state.timer = setTimeout(() => this.poll(state), Math.max(3_000, data.pollingIntervalMillis || 5_000));
+            if (this.pollers.get(state.videoId) !== state) return;
+            const stream = this.openStream({accessToken, liveChatId: state.liveChatId, pageToken: state.pageToken});
+            state.stream = stream;
+            let queue = Promise.resolve();
+            stream.on('metadata', () => console.log('YouTube live chat connected for ' + state.videoId + '.'));
+            stream.on('data', (data) => {
+                stream.pause();
+                queue = queue.then(() => this.handlePage(state, data))
+                    .then(() => { if (!finished && !state.ended) stream.resume(); })
+                    .catch(retry);
+            });
+            stream.on('error', retry);
+            stream.on('end', () => {
+                queue.then(() => retry(new Error('YouTube chat connection closed.')));
+            });
         } catch (error) {
-            state.timer = setTimeout(() => this.poll(state), 30_000);
+            retry(error);
         }
     }
 
@@ -596,18 +621,44 @@ class YouTubeChatAdapter {
             if (existing) {
                 existing.session = session;
             } else {
-                const state = {videoId, session, liveChatId: null, pageToken: null, seen: new Set(), timer: null, initialized: false};
+                const state = {
+                    videoId,
+                    session,
+                    liveChatId: null,
+                    pageToken: null,
+                    seen: new Set(),
+                    timer: null,
+                    initialized: false,
+                    startedAt: Date.now(),
+                    lastError: null,
+                };
                 this.pollers.set(videoId, state);
-                this.poll(state);
+                this.connectStream(state);
             }
         }
         for (const [videoId, state] of this.pollers) {
             if (!active.has(videoId)) {
                 clearTimeout(state.timer);
                 this.pollers.delete(videoId);
+                state.stream?.cancel();
             }
         }
     }
+}
+
+async function youtubeApiError(response, operation) {
+    let detail = '';
+    try {
+        const body = await response.json();
+        const apiError = body?.error;
+        const reason = apiError?.errors?.[0]?.reason;
+        detail = reason || apiError?.message || '';
+    } catch (error) {
+        // An HTTP status is still useful when YouTube returns a non-JSON body.
+    }
+    return new Error(
+        `YouTube ${operation} failed (${response.status})${detail ? `: ${detail}` : ''}.`,
+    );
 }
 
 function startStreamChatBots(db) {
@@ -630,6 +681,7 @@ function startStreamChatBots(db) {
 module.exports = {
     StreamCommandContextResolver,
     TwitchChatAdapter,
+    YouTubeChatAdapter,
     builderChatMessage,
     builderUrl,
     communityChatMessage,
@@ -644,4 +696,5 @@ module.exports = {
     startStreamChatBots,
     twitchChannelLogin,
     youtubeChannelId,
+    youtubeApiError,
 };

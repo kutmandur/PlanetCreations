@@ -7,7 +7,7 @@ const SUPPORTED_SAVE_EXTENSIONS = new Set([
     '.prkauto2',
     '.zoo',
     '.pzblueprint',
-    '.zooauto',
+    '.zooauto', '.zoo_auto',
 ]);
 
 function isFrontierSavePath(relativePath) {

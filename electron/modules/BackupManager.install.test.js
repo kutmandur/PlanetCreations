@@ -98,3 +98,91 @@ test('upload and Direct Install both fail closed for an unsigned package', async
     assert.equal(installResult.success, false);
     assert.match(installResult.message, /signed and verified creation packages/i);
 });
+
+test('restore preserves the original on full-disk and rename failures, and retains pre-restore bytes on success', async () => {
+    const root = fs.mkdtempSync(path.join(electronTestRoot, 'restore-'));
+    const target = path.join(root, 'park.park2');
+    const archivePath = path.join(root, 'legacy.PlanetCreations');
+    const zip = new AdmZip(); zip.addFile('metadata.json', Buffer.from(JSON.stringify({originalFileName: 'park.park2'})));
+    zip.addFile('park.park2', Buffer.from('restored bytes')); zip.writeZip(archivePath);
+    const app = {getPath: () => root}; const open = fs.promises.open; const rename = fs.promises.rename;
+    try {
+        fs.writeFileSync(target, 'original bytes');
+        fs.promises.open = async (...args) => {
+            const handle = await open(...args);
+            if (String(args[0]).startsWith(`${target}.`) && String(args[0]).endsWith('.tmp')) handle.writeFile = async () => { throw Object.assign(Error('Injected disk full'), {code: 'ENOSPC'}); };
+            return handle;
+        };
+        const full = await BackupManager.restoreBackup(app, archivePath, target);
+        assert.equal(full.success, false); assert.match(full.message, /disk full/);
+        assert.equal(fs.readFileSync(target, 'utf8'), 'original bytes');
+        assert.equal(fs.readdirSync(root).filter(f => f.endsWith('.tmp')).length, 0);
+        fs.promises.open = open;
+        fs.promises.rename = async (source, destination) => {
+            if (destination === target) throw Object.assign(Error('Injected locked target'), {code: 'EPERM'});
+            return rename(source, destination);
+        };
+        const locked = await BackupManager.restoreBackup(app, archivePath, target);
+        assert.equal(locked.success, false); assert.match(locked.message, /locked target/);
+        assert.equal(fs.readFileSync(target, 'utf8'), 'original bytes');
+        assert.equal(fs.readdirSync(root).filter(f => f.endsWith('.tmp')).length, 0);
+        fs.promises.rename = rename;
+        const restored = await BackupManager.restoreBackup(app, archivePath, target);
+        assert.equal(restored.success, true); assert.equal(restored.status, 'unsigned');
+        assert.equal(fs.readFileSync(target, 'utf8'), 'restored bytes');
+        for (const name of fs.readdirSync(path.join(root, 'Pre-Restore Backups'))) assert.equal(fs.readFileSync(path.join(root, 'Pre-Restore Backups', name), 'utf8'), 'original bytes');
+    } finally { fs.promises.open = open; fs.promises.rename = rename; }
+});
+
+test('signed Direct Install validates the signature, reuses its registered target and rejects a moved save junction', async () => {
+    const crypto = require('node:crypto');
+    const {buildSignedMetadata, sha256} = require('../../functions/backupFormat');
+    const root = fs.mkdtempSync(path.join(electronTestRoot, 'signed-'));
+    const library = path.join(root, 'Frontier'), saves = path.join(library, 'Planet Coaster 2', '12345678901234567', 'Saves');
+    fs.mkdirSync(saves, {recursive: true});
+    const keys = crypto.generateKeyPairSync('rsa', {modulusLength: 2048, privateKeyEncoding: {type: 'pkcs8', format: 'pem'}, publicKeyEncoding: {type: 'spki', format: 'pem'}});
+    const mediaSetId = crypto.randomUUID(), payload = Buffer.from('signed game fixture');
+    const manifest = Buffer.from(JSON.stringify({format: 'PlanetCreationsMediaManifest', formatVersion: 2, mediaSetId, assets: []}));
+    const metadata = buildSignedMetadata({format: 'PlanetCreationsBackup', formatVersion: 2, packageType: 'creation', packageId: crypto.randomUUID(), mediaSetId, gameId: 'planet-coaster-2', fileKind: 'park', originalFileName: 'signed.park2', payloadPath: 'payload/signed.park2', payloadSize: payload.length, payloadSha256: sha256(payload), mediaManifestSha256: sha256(manifest), note: '', createdAt: new Date().toISOString()}, 'test', 'Test', keys.privateKey, 'test-key');
+    const zip = new AdmZip(); zip.addFile('metadata.json', Buffer.from(JSON.stringify(metadata))); zip.addFile('media_manifest.json', manifest); zip.addFile(metadata.payloadPath, payload);
+    const archive = path.join(root, 'signed.PlanetCreations'); zip.writeZip(archive);
+    const fetch = global.fetch; global.fetch = async () => ({ok: true, text: async () => keys.publicKey});
+    const app = {getPath: () => root};
+    try {
+        const installed = await BackupManager.installCreationPackage(app, archive, 'signed-test', library);
+        assert.equal(installed.success, true, installed.message);
+        assert.deepEqual(fs.readFileSync(installed.targetPath), payload);
+        const repeated = await BackupManager.installCreationPackage(app, archive, 'signed-test', library);
+        assert.equal(repeated.targetPath, installed.targetPath);
+        const outside = path.join(root, 'outside'); fs.renameSync(saves, outside); fs.symlinkSync(outside, saves, 'junction');
+        try {
+            const rejected = await BackupManager.installCreationPackage(app, archive, 'signed-test', library);
+            assert.equal(rejected.success, false); assert.match(rejected.message, /resolves outside/);
+            assert.deepEqual(fs.readFileSync(path.join(outside, 'signed.park2')), payload);
+        } finally { fs.unlinkSync(saves); }
+        metadata.note = 'tampered'; zip.updateFile('metadata.json', Buffer.from(JSON.stringify(metadata))); zip.writeZip(archive);
+        assert.equal((await BackupManager.verifyBackup(archive)).status, 'invalid');
+    } finally { global.fetch = fetch; }
+});
+
+test('a killed restore process leaves the original and pre-restore copy intact', async () => {
+    const {fork} = require('node:child_process');
+    const root = fs.mkdtempSync(path.join(electronTestRoot, 'crash-'));
+    const target = path.join(root, 'park.park2'), archive = path.join(root, 'crash.PlanetCreations');
+    fs.writeFileSync(target, 'original before crash');
+    const zip = new AdmZip(); zip.addFile('metadata.json', Buffer.from(JSON.stringify({originalFileName: 'park.park2'}))); zip.addFile('park.park2', Buffer.from('replacement')); zip.writeZip(archive);
+    const child = fork(path.resolve(__dirname, '../../tests/helpers/restore-crash.cjs'), [root, archive, target], {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc']});
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    try {
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(Error('Restore did not reach rename')), 10000);
+            child.once('message', message => { clearTimeout(timer); message === 'before-rename' ? resolve() : reject(Error('Unexpected restore result')); });
+            child.once('error', error => {clearTimeout(timer); reject(error);});
+        });
+        child.kill(); await exited;
+        assert.equal(fs.readFileSync(target, 'utf8'), 'original before crash');
+        const previous = fs.readdirSync(path.join(root, 'Pre-Restore Backups'));
+        assert.equal(previous.length, 1);
+        assert.equal(fs.readFileSync(path.join(root, 'Pre-Restore Backups', previous[0]), 'utf8'), 'original before crash');
+    } finally { if (child.exitCode === null && child.signalCode === null) {child.kill(); await exited;} }
+});

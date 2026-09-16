@@ -1,4 +1,4 @@
-import { getToken, onMessage } from 'firebase/messaging';
+
 import { doc, setDoc, updateDoc, arrayRemove, arrayUnion } from 'firebase/firestore';
 import { db, getMessagingIfSupported } from './config';
 
@@ -53,6 +53,7 @@ export const enablePush = async (uid) => {
         if (permission !== 'granted') return { ok: false, reason: 'denied' };
 
         const registration = await registerMessagingSW();
+        const {getToken} = await import('firebase/messaging');
         const token = await getToken(messaging, {
             vapidKey: VAPID_KEY,
             serviceWorkerRegistration: registration || undefined,
@@ -72,6 +73,7 @@ export const disablePush = async (uid) => {
     try {
         const messaging = await getMessagingIfSupported();
         if (!messaging || !VAPID_KEY) return;
+        const {getToken} = await import('firebase/messaging');
         const token = await getToken(messaging, { vapidKey: VAPID_KEY });
         if (token && uid) {
             await updateDoc(inboxRef(uid), { pushTokens: arrayRemove(token) });
@@ -88,5 +90,6 @@ export const disablePush = async (uid) => {
 export const onForegroundMessage = async (callback) => {
     const messaging = await getMessagingIfSupported();
     if (!messaging) return () => {};
+    const {onMessage} = await import('firebase/messaging');
     return onMessage(messaging, callback);
 };

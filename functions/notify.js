@@ -1,3 +1,5 @@
+const {createHash} = require("node:crypto");
+const {notificationContext} = require("./notificationContext");
 const {FieldValue, getFirestore, Timestamp} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
 
@@ -64,7 +66,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
  * Notify a single user. `type` gates delivery via the user's prefs; `link` is a
  * react-router path (e.g. "/creation/123") used by both the in-app item and push.
  */
-async function notifyUser(uid, type, { title, message, link }) {
+async function deliverNotification(uid, type, { title, message, link, eventKey = notificationContext.getStore() }) {
     if (!uid) return;
     const db = getFirestore();
     const inboxRef = db.doc(`users/${uid}/meta/inbox`);
@@ -76,12 +78,21 @@ async function notifyUser(uid, type, { title, message, link }) {
         const snap = await tx.get(inboxRef);
         const data = snap.exists ? snap.data() : {};
         const prefs = data.prefs || {};
+        pushTokens = []; wantPush = false;
+        const deliveryId = eventKey ? createHash('sha256').update(JSON.stringify([eventKey, type, link])).digest('hex') : null;
+        const now = Date.now();
+        if (deliveryId && data.deliveries?.[deliveryId] && now - data.deliveries[deliveryId] < 8 * 86400000) return;
+        const deliveries = Object.fromEntries(Object.entries(data.deliveries || {})
+            .filter(([, at]) => now - at < 8 * 86400000)
+            .sort((a, b) => a[1] - b[1]).slice(-511));
+        if (deliveryId) deliveries[deliveryId] = now;
+
         pushTokens = data.pushTokens || [];
         wantPush = prefAllows(prefs, type, "push");
 
         if (prefAllows(prefs, type, "inApp")) {
             const item = {
-                id: db.collection("_ids").doc().id,
+                id: deliveryId || db.collection("_ids").doc().id,
                 type,
                 title: title || "",
                 message: message || "",
@@ -92,7 +103,10 @@ async function notifyUser(uid, type, { title, message, link }) {
             // Prepend newest, drop the oldest beyond the cap (FIFO ring buffer).
             const items = [item, ...(data.items || [])].slice(0, INBOX_CAP);
             const unreadCount = items.filter((i) => !i.isRead).length;
-            tx.set(inboxRef, { items, unreadCount }, { merge: true });
+            if (snap.exists) tx.update(inboxRef, {items, unreadCount, ...(deliveryId ? {deliveries} : {})});
+            else tx.set(inboxRef, {items, unreadCount, ...(deliveryId ? {deliveries} : {})});
+        } else if (deliveryId) {
+            if (snap.exists) tx.update(inboxRef, {deliveries}); else tx.set(inboxRef, {deliveries});
         }
     });
 
@@ -101,4 +115,13 @@ async function notifyUser(uid, type, { title, message, link }) {
     }
 }
 
-module.exports = { notifyUser };
+// Bound Firestore/FCM fan-out, including large follower lists.
+let active = 0;
+const waiters = [];
+async function notifyUser(...args) {
+    if (active >= 8) await new Promise(resolve => waiters.push(resolve));
+    else active++;
+    try { return await deliverNotification(...args); }
+    finally { const next = waiters.shift(); if (next) next(); else active--; }
+}
+module.exports = {notifyUser, prefAllows};

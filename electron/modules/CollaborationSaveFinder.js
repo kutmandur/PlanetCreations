@@ -7,7 +7,7 @@ const GAME_NAMES = {
 
 const EXTENSIONS_BY_GAME = {
     'planet-coaster-2': new Set(['.park2', '.blpr2', '.prkauto2']),
-    'planet-zoo': new Set(['.zoo', '.pzblueprint', '.zooauto']),
+    'planet-zoo': new Set(['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto']),
 };
 
 const STALE_SAVE_THRESHOLD_MS = 2 * 60 * 1000;

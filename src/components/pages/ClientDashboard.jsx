@@ -137,6 +137,8 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                             <CreationMetadataPanel
                                 metadata={file.frontierMetadata}
                                 filePath={file.path}
+                                fileRevision={`${file.size}:${file.modifiedAtMs ?? file.modifiedAt ?? ''}`}
+                                creationName={displayName}
                                 metadataStatus={file.metadataStatus}
                                 metadataError={file.frontierMetadataError}
                                 customMediaReferences={file.customMediaReferences}
@@ -441,7 +443,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 case 'blueprints':
                     return firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint');
                 case 'autosaves':
-                    return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto');
+                    return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto') || firstBackup.originalFileName.endsWith('.zoo_auto');
                 default:
                     return false;
             }

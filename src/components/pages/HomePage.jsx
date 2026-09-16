@@ -1,14 +1,14 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import Fuse from 'fuse.js';
+import {runHomeIndexSearch} from '../../utils/homeIndexWorkerClient';
 import { db } from '../../firebase/config';
 import { doc, collection, query, where, onSnapshot, getDoc, getDocs, limit, orderBy, startAfter } from 'firebase/firestore';
 import { getGameColor, ICONS } from '../../utils/helpers';
 import { cacheCreations, getCachedHomePageList, cacheHomePageList } from '../../utils/creationCache';
 import { fetchSearchIndex } from '../../firebase/searchIndexService';
 import { searchUsers as searchUsersFromIndex } from '../../firebase/userIndexService';
-import { rankCreations, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
+import { FEED_LOAD_SEED, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
 import { getInterestMap, getLocalFeedWeights, recordTagClick, recordSearch } from '../../utils/interestTracker';
 import { getGame } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
@@ -105,20 +105,6 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     // Interessen-Map fürs personalisierte Ranking ({} ohne Opt-in) — bewusst nur
     // pro Tab-Wechsel neu gelesen; der Feed ist ohnehin tagesstabil.
     const interestMap = useMemo(() => getInterestMap(), [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const fuse = useMemo(() => {
-        if (!indexCreations || indexCreations.length === 0) return null;
-        return new Fuse(indexCreations, {
-            keys: [
-                { name: 'title', weight: 0.6 },
-                { name: 'tags', weight: 0.3 },
-                { name: 'description', weight: 0.1 },
-            ],
-            threshold: 0.35,
-            ignoreLocation: true,
-            minMatchCharLength: 2,
-        });
-    }, [indexCreations]);
 
     // Hilfsfunktion: Creations aus Cache anhand IDs holen
     const getCreationsFromCacheByIds = useCallback((ids) => {
@@ -487,90 +473,21 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
     // Suche über den Kompakt-Index — komplett client-seitig, kein Server-Roundtrip.
     // Erst strukturelle Filter, dann Fuse.js-Textsuche über die vorgefilterte Menge.
-    const indexSearchResults = useMemo(() => {
-        if (!shouldUseIndexSearch || !indexCreations) return [];
-
-        let filtered = indexCreations;
-
-        if (homeState.activeCategory !== 'All') {
-            filtered = filtered.filter(c => c.category === homeState.activeCategory);
-        }
-
-        if (supportsConsole) {
-            filtered = filtered.filter(c => (c.platform || 'pc') === homeState.platformFilter);
-        }
-
-        if (!homeState.showModsOnly) {
-            filtered = filtered.filter(c => c.modStatus !== 'UsingMods');
-        }
-
-        if (homeState.filterTags?.length > 0) {
-            filtered = filtered.filter(c =>
-                c.tags && homeState.filterTags.every(filterTag =>
-                    c.tags.some(creationTag => creationTag.toLowerCase() === filterTag.toLowerCase())
-                )
-            );
-        }
-
-        if (dlcFilterMode === 'owned') {
-            const ownedDlcs = userProfile?.ownedDlcs?.[activeTab] || [];
-            filtered = filtered.filter(creation =>
-                !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => ownedDlcs.includes(dlc))
-            );
-        } else if (dlcFilterMode === 'custom' && selectedDlcs.length > 0) {
-            filtered = filtered.filter(creation =>
-                !creation.requiredDlcs || creation.requiredDlcs.length === 0 || creation.requiredDlcs.every(dlc => selectedDlcs.includes(dlc))
-            );
-        }
-
-        const term = homeState.searchTerm.trim();
-        let results;
-        if (term && fuse) {
-            // Fuse liefert relevanz-sortierte Treffer über den ganzen Index;
-            // hier auf die vorgefilterte Menge einschränken, Ranking beibehalten
-            const allowed = new Map(filtered.map(c => [c.id, c]));
-            results = fuse.search(term)
-                .filter(r => allowed.has(r.item.id))
-                .map(r => allowed.get(r.item.id));
-        } else {
-            results = [...filtered];
-        }
-
-        switch (homeState.sortBy) {
-            case 'likes':
-                results.sort((a, b) => (b.likes || 0) - (a.likes || 0));
-                break;
-            case 'likes_asc':
-                results.sort((a, b) => (a.likes || 0) - (b.likes || 0));
-                break;
-            case 'createdAt_asc':
-                results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
-                break;
-            case 'recommended':
-                // Mit Suchbegriff die Fuse-Relevanz beibehalten (wie bei 'createdAt')
-                if (!term) {
-                    // Seed kommt aus dem Ranking-Modul (neu pro Seitenreload,
-                    // stabil während der SPA-Sitzung)
-                    results = rankCreations(results, {
-                        uid: user?.uid || null,
-                        interestMap,
-                        weights: getLocalFeedWeights() || globalFeedWeights || DEFAULT_WEIGHTS,
-                        // Admin-Debug: Badge auf jeder Karte zeigt Herkunfts-Pool + Score
-                        debug: userProfile?.role === 'admin',
-                    });
-                }
-                break;
-            case 'createdAt':
-            default:
-                // Mit Suchbegriff die Fuse-Relevanz beibehalten, sonst neueste zuerst
-                if (!term) {
-                    results.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-                }
-                break;
-        }
-
-        return results;
-    }, [shouldUseIndexSearch, indexCreations, fuse, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights, supportsConsole]);
+    const [indexSearchResults, setIndexSearchResults] = useState([]);
+    const [indexComputing, setIndexComputing] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        if (!shouldUseIndexSearch || !indexCreations) { setIndexSearchResults([]); return; }
+        setIndexComputing(true);
+        setIndexSearchResults([]);
+        runHomeIndexSearch({shouldUseIndexSearch, indexCreations, homeState, supportsConsole, dlcFilterMode, selectedDlcs,
+            userProfile: {role: userProfile?.role, ownedDlcs: userProfile?.ownedDlcs}, activeTab, user: {uid: user?.uid}, interestMap,
+            globalFeedWeights, localFeedWeights: getLocalFeedWeights(), seed: FEED_LOAD_SEED, now: Date.now()})
+            .then(results => { if (!cancelled) setIndexSearchResults(results); })
+            .catch(error => console.error('Index search failed:', error))
+            .finally(() => { if (!cancelled) setIndexComputing(false); });
+        return () => { cancelled = true; };
+    }, [shouldUseIndexSearch, indexCreations, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights, supportsConsole]);
 
     const indexHasMore = shouldUseIndexSearch && visibleCount < indexSearchResults.length;
 
@@ -828,7 +745,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
                 {loading ? <Spinner gameId={activeTab} /> : (
                     <>
-                        {(isSearching || (shouldUseIndexSearch && indexLoading)) && (<div className="mb-8 text-center"><Spinner /></div>)}
+                        {(isSearching || (shouldUseIndexSearch && (indexLoading || indexComputing))) && (<div className="mb-8 text-center"><Spinner /></div>)}
                         {!isSearching && userSearchResults.length > 0 && (
                             <div className="mb-8">
                                 <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-100">Users Found</h2>
@@ -841,7 +758,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                             {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
                             {shouldUseIndexSearch && !indexHasMore && indexSearchResults.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
                             {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!loading && !(shouldUseIndexSearch && indexLoading) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No creations found. Try a different search!</p>)}
+                            {!loading && !(shouldUseIndexSearch && (indexLoading || indexComputing)) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No creations found. Try a different search!</p>)}
                         </div>
                     </>
                 )}

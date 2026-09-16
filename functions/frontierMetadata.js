@@ -19,6 +19,7 @@ const GAME_BY_EXTENSION = new Map([
     [".zoo", "planet-zoo"],
     [".pzblueprint", "planet-zoo"],
     [".zooauto", "planet-zoo"],
+    [".zoo_auto", "planet-zoo"],
 ]);
 const KIND_BY_EXTENSION = new Map([
     [".park2", "park"],
@@ -27,6 +28,7 @@ const KIND_BY_EXTENSION = new Map([
     [".zoo", "park"],
     [".pzblueprint", "blueprint"],
     [".zooauto", "autosave"],
+    [".zoo_auto", "autosave"],
 ]);
 
 function finiteNumber(value) {
