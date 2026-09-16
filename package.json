@@ -43,6 +43,7 @@
     "wait-on": "^9.1.0"
   },
   "scripts": {
+    "postinstall": "node scripts/patch-electron-builder.cjs",
     "start": "vite",
     "build": "vite build",
     "build:electron": "vite build --mode electron",
