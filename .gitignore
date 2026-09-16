@@ -76,3 +76,31 @@ nul
 *.pzblueprint
 *.zooauto
 *.PlanetCreations
+
+# Local security verification builds
+/.security-build/
+/.audit-build/
+/luac.out
+
+# Local research, AI notes and internal operating reports
+.codex/
+.agents/
+.cursor/
+/.local-notes/
+/research/
+/notes/
+/memos/
+/scripts/research/
+/scripts/benchmark-*.cjs
+/regeln
+/src/components/ui/Spinner.txt
+
+# Only the README and public release notes are versioned documentation.
+# The release workflow requires docs/releases/v<version>.md.
+*.md
+!README.md
+/docs/*
+!/docs/releases/
+/docs/releases/*
+!/docs/releases/v[0-9]*.md
+/docs/releases/*-*.md
