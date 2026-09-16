@@ -38,7 +38,7 @@ const { OBSIntegration } = require('./modules/OBSIntegration');
 const { StreamlabsIntegration } = require('./modules/StreamlabsIntegration');
 const { responseToBuffer, responseToFile } = require('./modules/ResponseBuffer');
 const { getDistributionInfo } = require('./modules/DistributionChannel');
-const { getNewerReleaseVersion } = require('./modules/ReleaseVersion');
+const { ClientUpdater } = require('./modules/ClientUpdater');
 const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { normalizeOverlayShortcuts, applyOverlayShortcuts } = require('./modules/OverlayShortcuts');
@@ -70,6 +70,7 @@ let gameProcessTimer;
 let activeGameId = null;
 let gameProcessCheckInFlight = false;
 let updateCheckTimer;
+let clientUpdater;
 let overlayDragState = null;
 let overlayDragFlushTimer = null;
 let pendingOverlayDragPoint = null;
@@ -1294,34 +1295,22 @@ log.info('App starting...');
 log.info(`Distribution channel: ${distributionInfo.channel}`);
 
 // --- UPDATE-LOGIK ---
-async function checkForUpdatesViaAPI() {
-    if (isStoreBuild) return;
-    const owner = 'kutmandur';
-    const repo = 'PlanetCreations';
-    const currentVersion = app.getVersion();
-    const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            log.warn(`Manual update check: Could not fetch release info from GitHub. Status: ${response.status}`);
-            return;
-        }
-        const release = await response.json();
-        const latestVersion = getNewerReleaseVersion(release.tag_name, currentVersion);
-
-        if (latestVersion) {
-            log.info(`Manual update check: Update available: ${latestVersion}`);
-            mainWindow.webContents.send('update-info-available', {
-                version: latestVersion,
-                url: release.html_url
-            });
-        } else {
-            log.info('Manual update check: App is up-to-date.');
-        }
-    } catch (error) {
-        log.error('Manual update check failed:', error);
+function getClientUpdater() {
+    if (!clientUpdater) {
+        clientUpdater = new ClientUpdater({
+            updater: autoUpdater,
+            version: app.getVersion(),
+            isStore: isStoreBuild,
+            enabled: !isDev,
+            statePath: path.join(app.getPath('userData'), 'update-check.json'),
+            notify: status => broadcastToAppWindows('client-update-status-changed', status),
+            legacyEvent: (channel, payload) => {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+            },
+            logger: log,
+        });
     }
+    return clientUpdater;
 }
 
 function startDailyUpdateChecks() {
@@ -1329,10 +1318,7 @@ function startDailyUpdateChecks() {
     if (updateCheckTimer) clearInterval(updateCheckTimer);
     updateCheckTimer = setInterval(() => {
         log.info('Running scheduled daily update check...');
-        autoUpdater.checkForUpdates().catch((error) => {
-            // The updater also emits an error event, which runs the GitHub API fallback.
-            log.warn('Scheduled update check failed:', error);
-        });
+        getClientUpdater().check().catch(error => log.warn('Scheduled update check failed:', error));
         refreshHostedWebViews();
     }, UPDATE_CHECK_INTERVAL_MS);
 }
@@ -1654,7 +1640,7 @@ function createWindow({ openOnline = false } = {}) {
 
     mainWindow.once('ready-to-show', () => {
         if (!isDev && autoUpdater) {
-            autoUpdater.checkForUpdates();
+            getClientUpdater().check().catch(error => log.warn('Startup update check failed:', error));
             startDailyUpdateChecks();
         }
     });
@@ -1673,19 +1659,16 @@ function createWindow({ openOnline = false } = {}) {
     }
 }
 
-// --- AUTO-UPDATE EVENTS ---
-if (autoUpdater) {
-    autoUpdater.on('error', (error) => {
-        log.error('Auto-update error:', error);
-        checkForUpdatesViaAPI();
-    });
-    autoUpdater.on('update-available', () => {
-        mainWindow?.webContents.send('update-available');
-    });
-    autoUpdater.on('update-downloaded', () => {
-        mainWindow?.webContents.send('update-downloaded');
-    });
-}
+// --- AUTO-UPDATE IPC ---
+ipcMain.handle('get-client-update-status', event => {
+    requireTrustedIpcSender(event, true);
+    return getClientUpdater().getStatus();
+});
+ipcMain.handle('check-client-updates', event => {
+    requireTrustedIpcSender(event, true);
+    if (isStoreBuild) throw new Error('Updates are managed by the Microsoft Store.');
+    return getClientUpdater().check();
+});
 ipcMain.on('restart-app', (event) => {
     if (!isTrustedIpcSender(event, true) || !autoUpdater) return;
     isQuitting = true;

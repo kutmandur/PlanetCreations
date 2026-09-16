@@ -51,7 +51,7 @@ test('a network-triggered bundled fallback keeps probing the hosted UI', () => {
 test('the tray window keeps network sessions alive while hidden', () => {
     const createWindowSource = mainSource.slice(
         mainSource.indexOf('function createWindow'),
-        mainSource.indexOf('// --- AUTO-UPDATE EVENTS ---'),
+        mainSource.indexOf('// --- AUTO-UPDATE IPC ---'),
     );
     assert.match(createWindowSource, /backgroundThrottling:\s*false/);
     assert.doesNotMatch(createWindowSource, /backgroundThrottling:\s*true/);

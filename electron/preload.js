@@ -106,7 +106,10 @@ const hostedApi = {
   reportHostedUiReady: (capabilities) => ipcRenderer.invoke('report-hosted-ui-ready', capabilities),
 
   openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
+  getClientUpdateStatus: () => ipcRenderer.invoke('get-client-update-status'),
   ...(distributionInfo.isStore ? {} : {
+    checkForUpdates: () => ipcRenderer.invoke('check-client-updates'),
+    onClientUpdateStatusChanged: (callback) => listen('client-update-status-changed', callback, (_event, status) => [status]),
     onUpdateInfoAvailable: (callback) => listen('update-info-available', callback, (_event, info) => [info]),
     onUpdateAvailable: (callback) => listen('update-available', callback, (_event, ...args) => args),
     onUpdateDownloaded: (callback) => listen('update-downloaded', callback, (_event, ...args) => args),

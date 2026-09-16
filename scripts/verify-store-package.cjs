@@ -63,9 +63,14 @@ try {
     const mainSource = asar.extractFile(asarPath, 'electron/main.js').toString('utf8');
     const distributionSource = archive.getEntry('app/resources/app.asar.unpacked/electron/modules/DistributionChannel.js')?.getData().toString('utf8') ||
         asar.extractFile(asarPath, 'electron/modules/DistributionChannel.js').toString('utf8');
+    const updaterSource = archive.getEntry('app/resources/app.asar.unpacked/electron/modules/ClientUpdater.js')?.getData().toString('utf8') ||
+        asar.extractFile(asarPath, 'electron/modules/ClientUpdater.js').toString('utf8');
     if (!distributionSource.includes('windowsStore = process.windowsStore') ||
         !mainSource.includes("const autoUpdater = isStoreBuild ? null : require('electron-updater').autoUpdater;") ||
-        !/async function checkForUpdatesViaAPI\(\)\s*\{\s*if \(isStoreBuild\) return;/.test(mainSource) ||
+        !mainSource.includes('isStore: isStoreBuild') ||
+        !/ipcMain\.handle\('check-client-updates',[\s\S]*?if \(isStoreBuild\) throw/.test(mainSource) ||
+        !/check\(\)\s*\{\s*if \(this.isStore \|\| !this.enabled \|\| !this.updater\) return/.test(updaterSource) ||
+        !/async checkReleaseApi[^]*?\s*if \(this.isStore \|\| !this.enabled \|\| !this.updater\) return;/.test(updaterSource) ||
         !/function startDailyUpdateChecks\(\)\s*\{\s*if \(isDev \|\| !autoUpdater\) return;/.test(mainSource)) {
         throw new Error('The packed Store client must disable both electron-updater and its GitHub API fallback.');
     }

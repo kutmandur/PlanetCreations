@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { acceleratorFromKeyboardEvent, displayAccelerator } from '../../utils/keyboardShortcut';
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
+import ClientUpdateSettings from './ClientUpdateSettings';
 
 const cardClass = 'pc-theme-card bg-white p-6 rounded-lg shadow-md space-y-4';
 const buttonClass = 'rounded-lg bg-gray-800 px-4 py-2 text-sm font-bold text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -110,6 +111,7 @@ export default function ClientSettings({ setModalMessage }) {
             <h2 className="text-2xl font-bold text-gray-800">Client</h2>
             <p className="mt-1 text-gray-600">Settings for this device. Available in the desktop client, including without signing in.</p>
         </div>
+        <ClientUpdateSettings />
         {Object.keys(errors).length > 0 && <div role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">
             {Object.entries(errors).map(([key, error]) => <p key={key}>{error}</p>)}
             <button type="button" className="mt-2 underline" onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>
