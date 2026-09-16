@@ -32,8 +32,8 @@ test('scans native and legacy Zoo autosaves and extracts matching desktop/server
     fs.mkdirSync(saves, { recursive: true });
     const zip = new AdmZip();
     zip.addFile('metadata', wrap(JSON.stringify({ sName: 'Autosaved Zoo', tSave: { nAnimalCount: 38 } })));
-    for (const extension of ['.zoo_auto', '.zooauto', '.ZOO_AUTO']) {
-        const name = `Zoo${extension}`;
+    for (const [index, extension] of ['.zoo_auto', '.zooauto', '.ZOO_AUTO'].entries()) {
+        const name = `${index === 2 ? 'ZooUpper' : 'Zoo'}${extension}`;
         const filePath = path.join(saves, name);
         zip.writeZip(filePath);
         assert.equal(isFrontierSavePath(filePath), true);
@@ -49,8 +49,8 @@ test('scans native and legacy Zoo autosaves and extracts matching desktop/server
     }
     fs.writeFileSync(path.join(saves, 'Ignored.zoo_auto.bak'), 'not a save');
     const scanned = scanGamesFromPath(root);
-    // Windows filenames are case-insensitive, so the uppercase fixture overwrites the native one.
-    assert.equal(scanned['Planet Zoo'].autosaves.length, process.platform === 'win32' ? 2 : 3);
+    // Distinct base names also work on case-insensitive APFS/NTFS volumes.
+    assert.equal(scanned['Planet Zoo'].autosaves.length, 3);
     assert.equal(scanned['Planet Zoo'].parks.length, 0);
     assert.equal(findLatestCollaborationSave(scanned, 'planet-zoo', 'Zoo.zoo_auto').success, true);
 });
