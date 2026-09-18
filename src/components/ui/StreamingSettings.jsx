@@ -304,6 +304,19 @@ const StreamingSettings = ({ setModalMessage }) => {
                 {isSaving ? 'Saving...' : 'Save & Connect'}
             </button>
 
+            <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-gray-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-gray-200">
+                <p className="font-bold">Chat bot moderator check</p>
+                <p className="mt-2">
+                    The bot checks its moderator permissions when a PlanetCreations LIVE session starts.
+                    Once confirmed, it greets the chat in English and lists the available commands once per session.
+                    If permissions are missing or cannot be confirmed, the bot skips that chat for the rest of the session.
+                </p>
+                <p className="mt-2">
+                    After adding the bot as a moderator, end and restart the LIVE session in PlanetCreations to check again.
+                    Your broadcast can keep running. Changing the linked creation does not restart the check.
+                </p>
+            </div>
+
             <section aria-labelledby="youtube-bot-setup-heading" className="mt-6 border-t border-gray-200 pt-6 dark:border-gray-700">
                 <h3 id="youtube-bot-setup-heading" className="text-lg font-bold text-gray-800 dark:text-gray-100">
                     Set up the YouTube chat bot
@@ -343,6 +356,10 @@ const StreamingSettings = ({ setModalMessage }) => {
                 </div>
                 <p role="status" className="mt-2 text-sm text-gray-600 dark:text-gray-300">{copyMessage}</p>
                 <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
+                    On YouTube, the bot first posts an English message saying it is checking moderator permissions.
+                    It waits up to 45 seconds for confirmation before skipping the chat.
+                </p>
+                <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
                     To test, keep your stream running with LIVE active in PlanetCreations, switch YouTube&apos;s chat view
                     to <strong>Live chat</strong> and send <code>!builder</code>. Repeating the same command has a 60-second cooldown.
                 </p>
@@ -357,8 +374,9 @@ const StreamingSettings = ({ setModalMessage }) => {
                     Set up the Twitch chat bot
                 </h3>
                 <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-                    If you use moderation bots or link filters, add <strong>planetcreationsbot</strong> as a moderator
-                    so its replies and creation links can appear in chat.
+                    Add <strong>planetcreationsbot</strong> as a moderator so it passes the session check.
+                    This also allows its replies and creation links through Twitch&apos;s link filter.
+                    If you use other moderation bots, check their link permissions as well.
                 </p>
                 <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm text-gray-700 dark:text-gray-200">
                     <li>Open your Twitch channel&apos;s chat while signed in as the channel owner.</li>

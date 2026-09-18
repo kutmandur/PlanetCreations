@@ -1,10 +1,23 @@
 const {openYoutubeChatStream, youtubeRetryDelay} = require('./youtubeChatStream');
+const {StreamChatSessionStore} = require('./streamChatSessionStore');
 const CHAT_COMMANDS = Object.freeze({
     creation: /^!creation(?:\s|$)/i,
     builder: /^!builder(?:\s|$)/i,
     community: /^!community(?:\s|$)/i,
 });
 const COMMAND_COOLDOWN_MS = 60 * 1000;
+const TWITCH_ROLE_TIMEOUT_MS = 20 * 1000;
+const YOUTUBE_ROLE_TIMEOUT_MS = 45 * 1000;
+const YOUTUBE_ROLE_PROBE_MESSAGE = 'PlanetCreationsBot connected: checking moderator permissions for chat commands.';
+
+function chatSessionKey(session) {
+    return JSON.stringify([session.uid || '', session.sessionId || '', session.platformStreamId || '']);
+}
+
+function chatSessionStoreKey(session) {
+    return JSON.stringify([session.platform, session.broadcasterLogin?.toLowerCase() || session.platformStreamId,
+        chatSessionKey(session)]);
+}
 
 function safeChatLabel(value, fallback) {
     return String(value || '')
@@ -132,7 +145,7 @@ class StreamCommandContextResolver {
         return promise;
     }
 
-    prefetchSessions(sessions) {
+    retainSessions(sessions) {
         const activeBuilderKeys = new Set(sessions.map((session) => this.builderCacheKey(session)));
         const activeCommunityKeys = new Set(sessions.map((session) => this.cacheKey(session)));
         for (const key of this.builderCache.keys()) {
@@ -144,6 +157,10 @@ class StreamCommandContextResolver {
         for (const key of this.communityCache.keys()) {
             if (!activeCommunityKeys.has(key)) this.communityCache.delete(key);
         }
+    }
+
+    prefetchSessions(sessions) {
+        this.retainSessions(sessions);
         for (const session of sessions) {
             this.resolveBuilder(session).catch((error) => {
                 console.warn('Could not preload stream builder data:', error.message);
@@ -199,6 +216,18 @@ async function streamCommandChatMessage(command, session, resolver) {
     return null;
 }
 
+async function streamGreetingChatMessage(session, resolver) {
+    const [builder, community] = await Promise.all([
+        resolver?.resolveBuilder(session), resolver?.resolveCommunity(session),
+    ]);
+    const commands = [];
+    if (creationUrl(session)) commands.push('!creation (current creation)');
+    if (builder && session.uid) commands.push('!builder (builder profile)');
+    if (community?.slug) commands.push('!community (community)');
+    return 'Hello! PlanetCreationsBot is ready.' +
+        (commands.length ? ` Commands: ${commands.join(', ')}.` : '');
+}
+
 function expandPlatformSessions(sessions) {
     return sessions.flatMap((session) => {
         const streams = session?.streams && typeof session.streams === 'object' ?
@@ -211,8 +240,9 @@ function expandPlatformSessions(sessions) {
 }
 
 class TwitchChatAdapter {
-    constructor(db, {contextResolver = null} = {}) {
+    constructor(db, {contextResolver = null, sessionStore = new StreamChatSessionStore()} = {}) {
         this.db = db;
+        this.sessionStore = sessionStore;
         this.username = String(process.env.TWITCH_BOT_USERNAME || '').toLowerCase();
         this.clientId = process.env.TWITCH_BOT_CLIENT_ID || '';
         this.clientSecret = process.env.TWITCH_BOT_CLIENT_SECRET || '';
@@ -226,6 +256,7 @@ class TwitchChatAdapter {
         this.socket = null;
         this.connected = false;
         this.sessionsByChannel = new Map();
+        this.channelStates = new Map();
         this.joined = new Set();
         this.cooldowns = new Map();
         this.contextResolver = contextResolver || new StreamCommandContextResolver(db);
@@ -320,7 +351,7 @@ class TwitchChatAdapter {
     }
 
     async connect() {
-        if (!this.configured || this.socket || this.connecting) return;
+        if (!this.configured || !this.hasEligibleSessions || this.socket || this.connecting) return;
         this.connecting = true;
         let token;
         try {
@@ -328,13 +359,14 @@ class TwitchChatAdapter {
         } catch (error) {
             console.error('Twitch chat bot authentication failed:', error.message);
             this.connecting = false;
-            if (!this.reconnectTimer) this.reconnectTimer = setTimeout(() => {
+            if (this.hasEligibleSessions && !this.reconnectTimer) this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = null;
                 this.connect().catch(() => {});
             }, 60_000);
             return;
         }
         this.connecting = false;
+        if (!this.hasEligibleSessions) return;
         this.socket = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
         this.socket.addEventListener('open', () => {
             this.connected = true;
@@ -349,7 +381,8 @@ class TwitchChatAdapter {
             this.socket = null;
             this.connected = false;
             this.joined.clear();
-            if (!this.reconnectTimer) this.reconnectTimer = setTimeout(() => {
+            for (const state of this.channelStates.values()) clearTimeout(state.timer);
+            if (this.hasEligibleSessions && !this.reconnectTimer) this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = null;
                 this.connect().catch(() => {});
             }, 15_000);
@@ -380,6 +413,33 @@ class TwitchChatAdapter {
                 this.send(line.replace(/^PING/, 'PONG'));
                 return;
             }
+            // USERSTATE describes this bot, unlike the tags on a viewer's PRIVMSG.
+            const userState = line.match(/^@([^ ]+) :tmi\.twitch\.tv USERSTATE #(\w+)\s*$/);
+            if (userState) {
+                const channel = userState[2].toLowerCase();
+                const state = this.channelStates.get(channel);
+                if (!state || state.status !== 'pending' || !this.joined.has(channel)) return;
+                const tags = new Map(userState[1].split(';').map((tag) => tag.split('=')));
+                const badges = String(tags.get('badges') || '').split(',');
+                if (tags.get('mod') === '1' || badges.includes('moderator/1') ||
+                    badges.includes('broadcaster/1') || channel === this.username) {
+                    clearTimeout(state.timer);
+                    try {
+                        this.sessionStore.save(state.storeKey, {status: 'allowed'});
+                        state.status = 'allowed';
+                    } catch (error) {
+                        this.ignoreSession(channel, state, 'session decision could not be saved');
+                        return;
+                    }
+                    console.log(`Twitch moderator role confirmed in #${channel}.`);
+                    this.greetSession(channel, state).catch((error) => {
+                        console.warn(`Twitch greeting failed in #${channel}:`, error.message);
+                    });
+                } else if (tags.get('mod') === '0') {
+                    this.ignoreSession(channel, state, 'bot is not a moderator');
+                }
+                return;
+            }
             const match = line.match(/PRIVMSG #(\w+) :(.+)$/);
             const command = match ? getChatCommand(match[2]) : null;
             if (!match || !command) return;
@@ -391,47 +451,111 @@ class TwitchChatAdapter {
     }
 
     async respondToCommand(channel, command) {
+        const state = this.channelStates.get(channel);
+        const session = this.sessionsByChannel.get(channel);
+        if (!session || state?.status !== 'allowed' || !this.connected || !this.joined.has(channel)) return;
         console.log(`Twitch !${command} received in #${channel}.`);
         const cooldownKey = `${channel}:${command}`;
         if (Date.now() - (this.cooldowns.get(cooldownKey) || 0) < COMMAND_COOLDOWN_MS) return;
         this.cooldowns.set(cooldownKey, Date.now());
-        const session = this.sessionsByChannel.get(channel);
         const message = await streamCommandChatMessage(command, session, this.contextResolver);
-        if (!message) return;
+        if (!message || this.channelStates.get(channel) !== state ||
+            this.sessionsByChannel.get(channel) !== session || state.status !== 'allowed' ||
+            !this.connected || !this.joined.has(channel)) return;
         this.send(`PRIVMSG #${channel} :${message}`);
         console.log(`Twitch !${command} response sent in #${channel}.`);
     }
 
+    async greetSession(channel, state) {
+        if (state.greetingAttempted) return;
+        this.sessionStore.save(state.storeKey, {greetingAttempted: true});
+        state.greetingAttempted = true;
+        const session = this.sessionsByChannel.get(channel);
+        const message = await streamGreetingChatMessage(session, this.contextResolver);
+        if (this.channelStates.get(channel) !== state || state.status !== 'allowed' ||
+            !this.connected || !this.joined.has(channel)) return;
+        this.send(`PRIVMSG #${channel} :${message}`);
+    }
+
     syncSessions(sessions) {
-        if (this.prefetchOnSync) this.contextResolver.prefetchSessions(sessions);
+        if (this.prefetchOnSync) this.contextResolver.retainSessions(sessions);
         this.sessionsByChannel = new Map(sessions
             .filter((session) => session.platform === 'twitch' && session.broadcasterLogin)
             .map((session) => [String(session.broadcasterLogin).toLowerCase(), session]));
+        for (const [channel, state] of this.channelStates) {
+            const session = this.sessionsByChannel.get(channel);
+            if (!session || state.key !== chatSessionKey(session)) {
+                clearTimeout(state.timer);
+                if (this.joined.delete(channel)) this.send(`PART #${channel}`);
+                this.channelStates.delete(channel);
+                for (const command of Object.keys(CHAT_COMMANDS)) this.cooldowns.delete(`${channel}:${command}`);
+            }
+        }
+        for (const [channel, session] of this.sessionsByChannel) {
+            if (!this.channelStates.has(channel)) {
+                const storeKey = chatSessionStoreKey(session);
+                const saved = this.sessionStore.get(storeKey);
+                this.channelStates.set(channel, {key: chatSessionKey(session), storeKey,
+                    status: saved.status || 'pending', greetingAttempted: saved.greetingAttempted === true, timer: null});
+            }
+        }
+        this.syncJoins();
         if (!this.socket) this.connect().catch(() => {});
-        else this.syncJoins();
+    }
+
+    get hasEligibleSessions() {
+        return [...this.channelStates.values()].some((state) => state.status !== 'ignored');
+    }
+
+    ignoreSession(channel, state, reason) {
+        if (this.channelStates.get(channel) !== state || state.status !== 'pending') return;
+        clearTimeout(state.timer);
+        state.status = 'ignored';
+        try { this.sessionStore.save(state.storeKey, {status: 'ignored'}); }
+        catch (error) { console.warn('Could not save ignored Twitch session:', error.message); }
+        console.log(`Twitch chat ignored in #${channel} for this session: ${reason}.`);
+        this.syncJoins();
     }
 
     syncJoins() {
+        if (!this.hasEligibleSessions) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         if (!this.connected) return;
-        for (const channel of this.sessionsByChannel.keys()) {
+        for (const [channel, state] of this.channelStates) {
+            if (state.status === 'ignored') continue;
             if (!this.joined.has(channel)) {
                 this.send(`JOIN #${channel}`);
                 this.joined.add(channel);
+                if (state.status === 'pending') {
+                    clearTimeout(state.timer);
+                    state.timer = setTimeout(() => {
+                        this.ignoreSession(channel, state, 'moderator role could not be verified');
+                    }, TWITCH_ROLE_TIMEOUT_MS);
+                    state.timer.unref?.();
+                } else if (state.status === 'allowed') {
+                    this.greetSession(channel, state).catch((error) => {
+                        console.warn(`Twitch greeting failed in #${channel}:`, error.message);
+                    });
+                }
                 if (this.debug) console.log(`Twitch chat bot requested JOIN #${channel}.`);
             }
         }
         for (const channel of [...this.joined]) {
-            if (!this.sessionsByChannel.has(channel)) {
+            if (!this.channelStates.has(channel) || this.channelStates.get(channel).status === 'ignored') {
                 this.send(`PART #${channel}`);
                 this.joined.delete(channel);
             }
         }
+        if (!this.hasEligibleSessions) this.socket?.close();
     }
 }
 
 class YouTubeChatAdapter {
-    constructor(db, {contextResolver = null, openStream = openYoutubeChatStream} = {}) {
+    constructor(db, {contextResolver = null, openStream = openYoutubeChatStream, sessionStore = new StreamChatSessionStore()} = {}) {
         this.db = db;
+        this.sessionStore = sessionStore;
         this.openStream = openStream;
         this.clientId = process.env.YOUTUBE_BOT_CLIENT_ID || '';
         this.clientSecret = process.env.YOUTUBE_BOT_CLIENT_SECRET || '';
@@ -502,11 +626,11 @@ class YouTubeChatAdapter {
         return this.accessToken;
     }
 
-    async resolveLiveChatId(videoId) {
+    async resolveLiveChatId(videoId, signal) {
         const accessToken = await this.getAccessToken();
         const response = await fetch(
             `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}`,
-            {headers: {Authorization: `Bearer ${accessToken}`}},
+            {headers: {Authorization: `Bearer ${accessToken}`}, signal},
         );
         if (!response.ok) {
             throw await youtubeApiError(response, 'resolve live chat');
@@ -514,14 +638,61 @@ class YouTubeChatAdapter {
         return (await response.json()).items?.[0]?.liveStreamingDetails?.activeLiveChatId || null;
     }
 
-    async postCommandResponse(liveChatId, session, command) {
+    isCurrent(state) {
+        return this.pollers.get(state.videoId) === state && !state.ended;
+    }
+
+    stopState(state) {
+        state.ended = true;
+        clearTimeout(state.timer);
+        clearTimeout(state.roleTimer);
+        state.abortController?.abort();
+        state.stream?.cancel();
+    }
+
+    ignoreSession(state, reason) {
+        if (!this.isCurrent(state)) return;
+        state.roleStatus = 'ignored';
+        try { this.sessionStore.save(state.storeKey, {roleStatus: 'ignored'}); }
+        catch (error) { console.warn('Could not save ignored YouTube session:', error.message); }
+        this.stopState(state);
+        console.warn(`YouTube chat ignored for video ${state.videoId} for this session: ${reason}.`);
+    }
+
+    async greetSession(state) {
+        if (state.greetingAttempted) return;
+        state.greetingAttempted = true;
+        try {
+            this.sessionStore.save(state.storeKey, {greetingAttempted: true});
+            const message = await streamGreetingChatMessage(state.session, this.contextResolver);
+            if (!this.isCurrent(state)) return;
+            const accessToken = await this.getAccessToken();
+            if (!this.isCurrent(state) || state.roleStatus !== 'allowed') return;
+            await this.postChatMessage(state.liveChatId, message, accessToken, state.abortController.signal);
+            console.log(`YouTube greeting sent for video ${state.videoId}.`);
+        } catch (error) {
+            // Do not resend an ambiguous write or reconnect the working chat just for a greeting.
+            if (this.isCurrent(state)) console.warn(`YouTube greeting failed for video ${state.videoId}:`, error.message);
+        }
+    }
+
+    async postCommandResponse(liveChatId, session, command, state) {
+        if (!state || !this.isCurrent(state) || state.roleStatus !== 'allowed') return;
         const cooldownKey = `${liveChatId}:${command}`;
         if (Date.now() - (this.cooldowns.get(cooldownKey) || 0) < COMMAND_COOLDOWN_MS) return;
         const message = await streamCommandChatMessage(command, session, this.contextResolver);
-        if (!message) return;
+        if (!message || !this.isCurrent(state)) return;
         const accessToken = await this.getAccessToken();
+        if (!this.isCurrent(state) || state.session !== session) return;
+        await this.postChatMessage(liveChatId, message, accessToken, state.abortController?.signal);
+        this.cooldowns.set(cooldownKey, Date.now());
+        console.log(`YouTube !${command} response sent for video ${session.platformStreamId}.`);
+    }
+
+    async postChatMessage(liveChatId, message, accessToken, signal) {
         const response = await fetch('https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet', {
             method: 'POST',
+            signal,
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
@@ -535,22 +706,48 @@ class YouTubeChatAdapter {
             }),
         });
         if (!response.ok) throw await youtubeApiError(response, 'post chat response');
-        this.cooldowns.set(cooldownKey, Date.now());
-        console.log(`YouTube !${command} response sent for video ${session.platformStreamId}.`);
+        return response.json();
     }
 
     async handlePage(state, data) {
-        if (this.pollers.get(state.videoId) !== state) return;
+        if (!this.isCurrent(state)) return;
+        if (data.offlineAt) {
+            this.stopState(state);
+            console.log('YouTube chat ended for video ' + state.videoId + '.');
+            return;
+        }
+        if (state.roleStatus === 'pending') {
+            // Only the server-issued ID of our own probe proves this bot's role.
+            const probe = (data.items || []).find((item) => state.probeId && item.id === state.probeId);
+            if (probe) {
+                if (probe.authorDetails?.isChatModerator === true || probe.authorDetails?.isChatOwner === true) {
+                    try {
+                        this.sessionStore.save(state.storeKey, {roleStatus: 'allowed'});
+                    } catch (error) {
+                        this.ignoreSession(state, 'session decision could not be saved');
+                        return;
+                    }
+                    state.roleStatus = 'allowed';
+                    clearTimeout(state.roleTimer);
+                    console.log(`YouTube moderator role confirmed for video ${state.videoId}.`);
+                } else {
+                    this.ignoreSession(state, 'start message did not confirm moderator permissions');
+                    return;
+                }
+            }
+        }
+        if (state.roleStatus === 'allowed') await this.greetSession(state);
         for (const item of data.items || []) {
+            if (!this.isCurrent(state)) return;
             if (state.seen.has(item.id)) continue;
             const command = getChatCommand(item.snippet?.displayMessage);
             const publishedAt = Date.parse(item.snippet?.publishedAt || '');
             const isNewForWorker = state.initialized || (
                 Number.isFinite(publishedAt) && publishedAt >= state.startedAt
             );
-            if (isNewForWorker && command) {
+            if (state.roleStatus === 'allowed' && isNewForWorker && command) {
                 console.log('YouTube !' + command + ' received for video ' + state.videoId + '.');
-                await this.postCommandResponse(state.liveChatId, state.session, command);
+                await this.postCommandResponse(state.liveChatId, state.session, command, state);
             }
             state.seen.add(item.id);
         }
@@ -559,15 +756,10 @@ class YouTubeChatAdapter {
         state.lastError = null;
         state.attempts = 0;
         if (state.seen.size > 500) state.seen = new Set([...state.seen].slice(-250));
-        if (data.offlineAt) {
-            state.ended = true;
-            state.stream?.cancel();
-            console.log('YouTube chat ended for video ' + state.videoId + '.');
-        }
     }
 
     async connectStream(state) {
-        if (this.pollers.get(state.videoId) !== state || state.ended) return;
+        if (!this.isCurrent(state)) return;
         let finished = false;
         const retry = (error) => {
             if (finished || this.pollers.get(state.videoId) !== state || state.ended) return;
@@ -578,7 +770,7 @@ class YouTubeChatAdapter {
             if (error.code === 16 || /unauthenticated/i.test(error.message)) {
                 this.accessTokenExpiresAt = 0;
             }
-            if (/liveChatEnded|liveChatDisabled/i.test(error.message)) state.ended = true;
+            if (/liveChatEnded|liveChatDisabled/i.test(error.message)) this.stopState(state);
             if (state.lastError !== error.message) {
                 console.warn('YouTube chat for ' + state.videoId + ': ' + error.message +
                     (state.ended ? ' Stopped.' : ' Retry at ' + new Date(Date.now() + delay).toISOString()));
@@ -587,10 +779,28 @@ class YouTubeChatAdapter {
             if (!state.ended) state.timer = setTimeout(() => this.connectStream(state), delay);
         };
         try {
-            if (!state.liveChatId) state.liveChatId = await this.resolveLiveChatId(state.videoId);
+            if (!state.liveChatId) state.liveChatId = await this.resolveLiveChatId(state.videoId, state.abortController.signal);
             if (!state.liveChatId) throw new Error('No active YouTube live chat.');
             const accessToken = await this.getAccessToken();
-            if (this.pollers.get(state.videoId) !== state) return;
+            if (!this.isCurrent(state)) return;
+            if (!state.probeAttempted) {
+                // Never retry this write: an ambiguous network failure may already have posted it.
+                state.probeAttempted = true;
+                try {
+                    this.sessionStore.save(state.storeKey, {probeAttempted: true,
+                        liveChatId: state.liveChatId, checkedAt: state.checkedAt});
+                    const probe = await this.postChatMessage(state.liveChatId, YOUTUBE_ROLE_PROBE_MESSAGE,
+                        accessToken, state.abortController.signal);
+                    if (!this.isCurrent(state)) return;
+                    if (!probe?.id) throw new Error('YouTube did not return a start message ID');
+                    state.probeId = probe.id;
+                    this.sessionStore.save(state.storeKey, {probeId: probe.id});
+                } catch (error) {
+                    this.ignoreSession(state, `start message could not be confirmed (${error.message})`);
+                    return;
+                }
+            }
+            if (!this.isCurrent(state)) return;
             const stream = this.openStream({accessToken, liveChatId: state.liveChatId, pageToken: state.pageToken});
             state.stream = stream;
             let queue = Promise.resolve();
@@ -612,19 +822,31 @@ class YouTubeChatAdapter {
 
     syncSessions(sessions) {
         if (!this.configured) return;
-        if (this.prefetchOnSync) this.contextResolver.prefetchSessions(sessions);
+        if (this.prefetchOnSync) this.contextResolver.retainSessions(sessions);
         const active = new Map(sessions
             .filter((session) => session.platform === 'youtube' && session.platformStreamId)
             .map((session) => [session.platformStreamId, session]));
         for (const [videoId, session] of active) {
             const existing = this.pollers.get(videoId);
-            if (existing) {
+            if (existing && existing.key === chatSessionKey(session)) {
                 existing.session = session;
             } else {
+                if (existing) this.stopState(existing);
+                const storeKey = chatSessionStoreKey(session);
+                const saved = this.sessionStore.get(storeKey);
                 const state = {
                     videoId,
                     session,
-                    liveChatId: null,
+                    key: chatSessionKey(session),
+                    storeKey,
+                    roleStatus: saved.roleStatus || 'pending',
+                    probeAttempted: saved.probeAttempted === true,
+                    probeId: saved.probeId || null,
+                    greetingAttempted: saved.greetingAttempted === true,
+                    checkedAt: saved.checkedAt || Date.now(),
+                    roleTimer: null,
+                    abortController: new AbortController(),
+                    liveChatId: saved.liveChatId || null,
                     pageToken: null,
                     seen: new Set(),
                     timer: null,
@@ -633,14 +855,28 @@ class YouTubeChatAdapter {
                     lastError: null,
                 };
                 this.pollers.set(videoId, state);
+                if (state.roleStatus === 'ignored' || (state.probeAttempted && !state.probeId)) {
+                    this.ignoreSession(state, 'restoring a skipped or unconfirmed session');
+                    continue;
+                }
+                if (state.roleStatus === 'pending') {
+                    const remaining = state.checkedAt + YOUTUBE_ROLE_TIMEOUT_MS - Date.now();
+                    if (remaining <= 0) {
+                        this.ignoreSession(state, 'moderator check expired before restart');
+                        continue;
+                    }
+                    state.roleTimer = setTimeout(() => {
+                        this.ignoreSession(state, 'moderator check timed out without confirmation');
+                    }, remaining);
+                    state.roleTimer.unref?.();
+                }
                 this.connectStream(state);
             }
         }
         for (const [videoId, state] of this.pollers) {
             if (!active.has(videoId)) {
-                clearTimeout(state.timer);
                 this.pollers.delete(videoId);
-                state.stream?.cancel();
+                this.stopState(state);
             }
         }
     }
@@ -663,8 +899,15 @@ async function youtubeApiError(response, operation) {
 
 function startStreamChatBots(db) {
     const contextResolver = new StreamCommandContextResolver(db);
-    const twitch = new TwitchChatAdapter(db, {contextResolver});
-    const youtube = new YouTubeChatAdapter(db, {contextResolver});
+    let sessionStore;
+    try {
+        sessionStore = new StreamChatSessionStore(require('node:path').join(__dirname, '..', '.stream-chat-sessions.json'));
+    } catch (error) {
+        console.error('Stream chat bots stopped: session cache could not be loaded:', error.message);
+        return () => {};
+    }
+    const twitch = new TwitchChatAdapter(db, {contextResolver, sessionStore});
+    const youtube = new YouTubeChatAdapter(db, {contextResolver, sessionStore});
     if (!twitch.configured) console.log('Twitch chat bot disabled: bot username/token are not configured.');
     if (!youtube.configured) console.log('YouTube chat bot disabled: OAuth/API credentials are not configured.');
 
@@ -672,7 +915,13 @@ function startStreamChatBots(db) {
         const sessions = snapshot.docs.map((doc) => ({uid: doc.id, ...doc.data()}))
             .filter((session) => session.status === 'active');
         const platformSessions = expandPlatformSessions(sessions);
-        contextResolver.prefetchSessions(platformSessions);
+        try {
+            sessionStore.retain(platformSessions.map(chatSessionStoreKey));
+        } catch (error) {
+            console.error('Stream chat session cache could not be updated:', error.message);
+        }
+        // Load command context lazily, after any required moderator check passes.
+        contextResolver.retainSessions(platformSessions);
         twitch.syncSessions(platformSessions);
         youtube.syncSessions(platformSessions);
     }, (error) => console.error('Stream chat bot session listener failed:', error));
@@ -693,6 +942,7 @@ module.exports = {
     isCreationCommand,
     platformLinkMatchesSession,
     streamCommandChatMessage,
+    streamGreetingChatMessage,
     startStreamChatBots,
     twitchChannelLogin,
     youtubeChannelId,

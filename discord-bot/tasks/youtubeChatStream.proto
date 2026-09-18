@@ -19,6 +19,11 @@ message LiveChatMessageListResponse {
 message LiveChatMessage {
   optional string id = 101;
   optional LiveChatMessageSnippet snippet = 2;
+  optional LiveChatMessageAuthorDetails author_details = 3;
+}
+message LiveChatMessageAuthorDetails {
+  optional bool is_chat_owner = 5;
+  optional bool is_chat_moderator = 7;
 }
 message LiveChatMessageSnippet {
   optional int32 type = 1;

@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {StreamChatSessionStore} = require('./streamChatSessionStore');
 const {
     StreamCommandContextResolver,
+    TwitchChatAdapter,
     YouTubeChatAdapter,
     builderChatMessage,
     builderUrl,
@@ -14,6 +16,7 @@ const {
     isCreationCommand,
     platformLinkMatchesSession,
     streamCommandChatMessage,
+    streamGreetingChatMessage,
     twitchChannelLogin,
     youtubeChannelId,
     youtubeApiError,
@@ -68,7 +71,7 @@ test('handles a new command received by the first YouTube streamed response', as
     global.fetch = async (url, options = {}) => {
         if (String(url).includes('/liveChat/messages') && options.method === 'POST') {
             responses.push(JSON.parse(options.body).snippet.textMessageDetails.messageText);
-            return {ok: true, status: 200};
+            return {ok: true, status: 200, json: async () => ({id: 'response-1'})};
         }
         return {
             ok: true,
@@ -102,6 +105,8 @@ test('handles a new command received by the first YouTube streamed response', as
             initialized: false,
             startedAt: now,
             lastError: null,
+            roleStatus: 'allowed',
+            greetingAttempted: true,
         };
         adapter.pollers.set(state.videoId, state);
         await adapter.handlePage(state, await (await global.fetch('test')).json());
@@ -111,6 +116,168 @@ test('handles a new command received by the first YouTube streamed response', as
     } finally {
         global.fetch = originalFetch;
     }
+});
+
+test('greetings advertise only commands with linked content', async () => {
+    const session = {uid: 'owner', creationId: 'park'};
+    const resolver = {resolveBuilder: async () => ({}), resolveCommunity: async () => null};
+    const greeting = await streamGreetingChatMessage(session, resolver);
+    assert.match(greeting, /!creation/);
+    assert.match(greeting, /!builder/);
+    assert.doesNotMatch(greeting, /!community/);
+    resolver.resolveCommunity = async () => ({slug: 'builders'});
+    assert.match(await streamGreetingChatMessage(session, resolver), /!community/);
+    assert.equal(await streamGreetingChatMessage({}, {
+        resolveBuilder: async () => null, resolveCommunity: async () => null,
+    }), 'Hello! PlanetCreationsBot is ready.');
+});
+
+function twitchHarness(t, {sessionStore} = {}) {
+    const sent = [];
+    const contextResolver = {
+        resolveBuilder: t.mock.fn(async () => ({username: 'Builder'})),
+        resolveCommunity: t.mock.fn(async () => null),
+    };
+    const adapter = new TwitchChatAdapter(null, {contextResolver, sessionStore});
+    adapter.username = 'planetcreationsbot';
+    adapter.send = (line) => sent.push(line);
+    const open = () => {
+        adapter.connected = true;
+        adapter.socket = {close: () => {
+            adapter.connected = false;
+            adapter.socket = null;
+            adapter.joined.clear();
+        }};
+    };
+    open();
+    const session = {uid: 'owner', sessionId: 'session-1', platform: 'twitch',
+        broadcasterLogin: 'builder', platformStreamId: 'stream-1', creationId: 'park-1'};
+    const role = (mod) => adapter.handleFrame(`@badges=;mod=${mod} :tmi.twitch.tv USERSTATE #builder\r\n`);
+    t.after(() => adapter.syncSessions([]));
+    return {adapter, sent, session, contextResolver, open, role};
+}
+
+const settleChat = () => new Promise((resolve) => setImmediate(resolve));
+
+test('Twitch ignores non-moderator sessions without loading context or trying again on updates', async (t) => {
+    const {adapter, sent, session, contextResolver, role, open} = twitchHarness(t);
+    adapter.syncSessions([session]);
+    adapter.handleFrame('@mod=1 :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #builder :!builder\r\n');
+    await settleChat();
+    assert.equal(contextResolver.resolveBuilder.mock.callCount(), 0);
+    role(0);
+    assert.ok(sent.includes('PART #builder'));
+    assert.equal(adapter.hasEligibleSessions, false);
+    adapter.syncSessions([{...session, creationId: 'park-2', revision: 2}]);
+    open();
+    adapter.syncJoins();
+    role(1);
+    await adapter.respondToCommand('builder', 'builder');
+    assert.equal(sent.filter((line) => line === 'JOIN #builder').length, 1);
+    assert.equal(sent.filter((line) => line.startsWith('PRIVMSG')).length, 0);
+    assert.equal(contextResolver.resolveCommunity.mock.callCount(), 0);
+});
+
+test('Twitch moderator check and greeting happen once across reconnects and creation switches', async (t) => {
+    const {adapter, sent, session, role, open} = twitchHarness(t);
+    adapter.syncSessions([session]);
+    role(1);
+    role(1);
+    await settleChat();
+    adapter.syncSessions([{...session, creationId: 'park-2'}]);
+    adapter.joined.clear();
+    open();
+    adapter.syncJoins();
+    role(1);
+    await settleChat();
+    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 1);
+    await adapter.respondToCommand('builder', 'creation');
+    assert.ok(sent.some((line) => line.includes('/creation/park-2')));
+    adapter.syncSessions([{...session, sessionId: 'session-2'}]);
+    await adapter.respondToCommand('builder', 'creation');
+    assert.equal(sent.filter((line) => line.includes('/creation/')).length, 1);
+    role(1);
+    await settleChat();
+    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 2);
+});
+
+test('a new Twitch session can qualify after the prior session was ignored', async (t) => {
+    const {adapter, sent, session, role, open} = twitchHarness(t);
+    adapter.syncSessions([session]);
+    role(0);
+    open();
+    adapter.syncSessions([{...session, sessionId: 'session-2'}]);
+    role(1);
+    await settleChat();
+    assert.equal(sent.filter((line) => line === 'JOIN #builder').length, 2);
+    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 1);
+});
+
+test('missing Twitch role confirmation times out and a late role cannot reactivate the session', async (t) => {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    const {adapter, sent, session, role, contextResolver} = twitchHarness(t);
+    adapter.syncSessions([session]);
+    adapter.handleFrame('@badges= :tmi.twitch.tv USERSTATE #builder\r\n');
+    t.mock.timers.tick(20_000);
+    role(1);
+    await settleChat();
+    assert.equal(adapter.hasEligibleSessions, false);
+    assert.ok(sent.includes('PART #builder'));
+    assert.equal(contextResolver.resolveBuilder.mock.callCount(), 0);
+});
+
+test('Twitch does not send a delayed greeting after a session ends', async (t) => {
+    const {adapter, sent, session, role, contextResolver} = twitchHarness(t);
+    let finish;
+    contextResolver.resolveBuilder = () => new Promise((resolve) => {finish = resolve;});
+    adapter.syncSessions([session]);
+    role(1);
+    adapter.syncSessions([]);
+    finish({username: 'Builder'});
+    await settleChat();
+    assert.equal(sent.filter((line) => line.startsWith('PRIVMSG')).length, 0);
+});
+
+test('Twitch remembers the decision and greeting when the adapter restarts', async (t) => {
+    const sessionStore = new StreamChatSessionStore();
+    const first = twitchHarness(t, {sessionStore});
+    first.adapter.syncSessions([first.session]);
+    first.role(1);
+    await settleChat();
+    first.adapter.syncSessions([]);
+    const restarted = twitchHarness(t, {sessionStore});
+    restarted.adapter.syncSessions([first.session]);
+    restarted.role(1);
+    await settleChat();
+    assert.equal(restarted.sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 0);
+    assert.equal(restarted.contextResolver.resolveBuilder.mock.callCount(), 0);
+    restarted.adapter.syncSessions([{...first.session, sessionId: 'session-2'}]);
+    restarted.role(0);
+    const ignoredRestart = twitchHarness(t, {sessionStore});
+    ignoredRestart.adapter.syncSessions([{...first.session, sessionId: 'session-2'}]);
+    assert.equal(ignoredRestart.sent.filter((line) => line.startsWith('JOIN')).length, 0);
+});
+
+test('session decisions persist atomically on disk and ended sessions are pruned', (t) => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'pc-chat-session-test-'));
+    const file = path.join(directory, 'sessions.json');
+    t.after(() => {
+        fs.rmSync(file, {force: true});
+        fs.rmSync(`${file}.${process.pid}.tmp`, {force: true});
+        fs.rmdirSync(directory);
+    });
+    const store = new StreamChatSessionStore(file);
+    store.save('session-1', {status: 'allowed'});
+    store.save('session-1', {greetingAttempted: true});
+    store.save('session-2', {roleStatus: 'ignored'});
+    const restored = new StreamChatSessionStore(file);
+    assert.deepEqual(restored.get('session-1'), {status: 'allowed', greetingAttempted: true});
+    assert.deepEqual(restored.get('session-2'), {roleStatus: 'ignored'});
+    restored.retain(['session-2']);
+    assert.deepEqual(new StreamChatSessionStore(file).get('session-1'), {});
+    assert.equal(fs.existsSync(`${file}.${process.pid}.tmp`), false);
 });
 
 test('builds the current creation link from server session state', () => {

@@ -11,7 +11,7 @@ function openYoutubeChatStream({accessToken, liveChatId, pageToken}) {
     const headers = new grpc.Metadata();
     headers.set('authorization', 'Bearer ' + accessToken);
     const stream = client.streamList({
-        liveChatId, pageToken: pageToken || undefined, part: ['snippet'], maxResults: 200,
+        liveChatId, pageToken: pageToken || undefined, part: ['snippet', 'authorDetails'], maxResults: 200,
     }, headers, {deadline: Date.now() + 50 * 60 * 1000});
     stream.once('status', () => client.close());
     return stream;
