@@ -129,7 +129,7 @@ test('greetings advertise only commands with linked content', async () => {
     assert.match(await streamGreetingChatMessage(session, resolver), /!community/);
     assert.equal(await streamGreetingChatMessage({}, {
         resolveBuilder: async () => null, resolveCommunity: async () => null,
-    }), 'Hello! PlanetCreationsBot is ready.');
+    }), "Hi chat! I'm the PlanetCreations bot. Enjoy the stream!");
 });
 
 function twitchHarness(t, {sessionStore} = {}) {
@@ -190,7 +190,7 @@ test('Twitch moderator check and greeting happen once across reconnects and crea
     adapter.syncJoins();
     role(1);
     await settleChat();
-    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 1);
+    assert.equal(sent.filter((line) => line.includes("Hi chat! I'm the PlanetCreations bot")).length, 1);
     await adapter.respondToCommand('builder', 'creation');
     assert.ok(sent.some((line) => line.includes('/creation/park-2')));
     adapter.syncSessions([{...session, sessionId: 'session-2'}]);
@@ -198,7 +198,7 @@ test('Twitch moderator check and greeting happen once across reconnects and crea
     assert.equal(sent.filter((line) => line.includes('/creation/')).length, 1);
     role(1);
     await settleChat();
-    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 2);
+    assert.equal(sent.filter((line) => line.includes("Hi chat! I'm the PlanetCreations bot")).length, 2);
 });
 
 test('a new Twitch session can qualify after the prior session was ignored', async (t) => {
@@ -210,7 +210,7 @@ test('a new Twitch session can qualify after the prior session was ignored', asy
     role(1);
     await settleChat();
     assert.equal(sent.filter((line) => line === 'JOIN #builder').length, 2);
-    assert.equal(sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 1);
+    assert.equal(sent.filter((line) => line.includes("Hi chat! I'm the PlanetCreations bot")).length, 1);
 });
 
 test('missing Twitch role confirmation times out and a late role cannot reactivate the session', async (t) => {
@@ -249,7 +249,7 @@ test('Twitch remembers the decision and greeting when the adapter restarts', asy
     restarted.adapter.syncSessions([first.session]);
     restarted.role(1);
     await settleChat();
-    assert.equal(restarted.sent.filter((line) => line.includes('PlanetCreationsBot is ready')).length, 0);
+    assert.equal(restarted.sent.filter((line) => line.includes("Hi chat! I'm the PlanetCreations bot")).length, 0);
     assert.equal(restarted.contextResolver.resolveBuilder.mock.callCount(), 0);
     restarted.adapter.syncSessions([{...first.session, sessionId: 'session-2'}]);
     restarted.role(0);

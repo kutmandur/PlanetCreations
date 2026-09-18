@@ -122,7 +122,7 @@ test('YouTube posts one probe, requires its own moderator confirmation, greets o
     confirm();
     await settle();
     assert.equal(messages.length, 2);
-    assert.match(messages[1], /Hello! PlanetCreationsBot is ready/);
+    assert.match(messages[1], /Hi chat! I'm the PlanetCreations bot/);
     for (const commandName of ['!creation', '!builder', '!community']) assert.ok(messages[1].includes(commandName));
     command('command-2');
     await settle();
@@ -189,7 +189,7 @@ test('a new YouTube session on the same video checks again after the previous on
     confirm(true, 'message-2');
     await settle();
     assert.equal(messages.filter((text) => text.includes('checking moderator permissions')).length, 2);
-    assert.equal(messages.filter((text) => text.includes('PlanetCreationsBot is ready')).length, 1);
+    assert.equal(messages.filter((text) => text.includes("Hi chat! I'm the PlanetCreations bot")).length, 1);
 });
 
 test('YouTube reconnects after confirmation without repeating the probe or greeting', async (t) => {

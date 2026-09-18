@@ -221,11 +221,12 @@ async function streamGreetingChatMessage(session, resolver) {
         resolver?.resolveBuilder(session), resolver?.resolveCommunity(session),
     ]);
     const commands = [];
-    if (creationUrl(session)) commands.push('!creation (current creation)');
-    if (builder && session.uid) commands.push('!builder (builder profile)');
-    if (community?.slug) commands.push('!community (community)');
-    return 'Hello! PlanetCreationsBot is ready.' +
-        (commands.length ? ` Commands: ${commands.join(', ')}.` : '');
+    if (creationUrl(session)) commands.push('!creation for the current creation');
+    if (builder && session.uid) commands.push('!builder to meet the builder');
+    if (community?.slug) commands.push('!community to find their community');
+    return "Hi chat! I'm the PlanetCreations bot" +
+        (commands.length ? `, here to help you explore! Type ${commands.join(', ')}.` : '.') +
+        ' Enjoy the stream!';
 }
 
 function expandPlatformSessions(sessions) {
