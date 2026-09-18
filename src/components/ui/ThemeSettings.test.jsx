@@ -49,6 +49,61 @@ it('blocks invalid URLs and keeps reset as an unsaved draft', async () => {
     await screen.findByText(/Theme saved/);
     expect(getActivePersonalTheme()).toEqual(DEFAULT_PERSONAL_THEME);
 });
+
+it('previews both formats and saves the optional portrait image only on explicit save', async () => {
+    const backgroundUrl = 'https://i.postimg.cc/abc/wide.jpg';
+    const portraitBackgroundUrl = 'https://i.postimg.cc/abc/tall.jpg';
+    hydratePersonalTheme(user.uid, { backgroundUrl });
+    render(<ThemeSettings user={user} />);
+    fireEvent.change(screen.getByLabelText('Portrait background image'), { target: { value: portraitBackgroundUrl } });
+    expect(document.querySelector('.pc-theme-preview img')).toHaveAttribute('src', backgroundUrl);
+    act(() => hydratePersonalTheme(user.uid, { backgroundUrl, cardColor: '#123456' }));
+    expect(screen.getByLabelText('Portrait background image')).toHaveValue(portraitBackgroundUrl);
+    fireEvent.click(screen.getByRole('button', { name: 'Portrait', exact: true }));
+    expect(document.querySelector('.pc-theme-preview img')).toHaveAttribute('src', portraitBackgroundUrl);
+    expect(screen.getByRole('button', { name: 'Portrait', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Landscape', exact: true }));
+    expect(document.querySelector('.pc-theme-preview img')).toHaveAttribute('src', backgroundUrl);
+    expect(savePersonalTheme).not.toHaveBeenCalled();
+    expect(getActivePersonalTheme().portraitBackgroundUrl).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Save theme' }));
+    await screen.findByText(/Theme saved/);
+    expect(savePersonalTheme).toHaveBeenCalledExactlyOnceWith(user.uid, expect.objectContaining({ backgroundUrl, portraitBackgroundUrl }));
+    expect(getActivePersonalTheme().portraitBackgroundUrl).toBe(portraitBackgroundUrl);
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+    expect(screen.getByLabelText('Portrait background image')).toHaveValue('');
+    expect(getActivePersonalTheme().portraitBackgroundUrl).toBe(portraitBackgroundUrl);
+});
+
+it('rejects invalid portrait links and previews a standard-image fallback after a load error', () => {
+    const backgroundUrl = 'https://i.postimg.cc/abc/wide.jpg';
+    hydratePersonalTheme(user.uid, { backgroundUrl });
+    render(<ThemeSettings user={user} />);
+    fireEvent.change(screen.getByLabelText('Portrait background image'), { target: { value: 'https://postimg.cc/gallery' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('Portrait background');
+    expect(screen.getByRole('button', { name: 'Save theme' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Portrait background image'), { target: { value: 'https://i.postimg.cc/abc/tall.jpg' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Portrait', exact: true }));
+    fireEvent.error(document.querySelector('.pc-theme-preview img'));
+    expect(document.querySelector('.pc-theme-preview img')).toHaveAttribute('src', backgroundUrl);
+    expect(screen.getByRole('status')).toHaveTextContent('standard background image is shown instead');
+});
+
+it('extracts colors from the selected portrait image and cancels work when the source changes', async () => {
+    const portraitBackgroundUrl = 'https://i.postimg.cc/abc/tall.jpg';
+    hydratePersonalTheme(user.uid, { backgroundUrl: 'https://i.postimg.cc/abc/wide.jpg', portraitBackgroundUrl });
+    extractThemePalette.mockResolvedValueOnce({ colors: ['#123456'], cardColor: '#123456', accentColor: '#abcdef' });
+    render(<ThemeSettings user={user} />);
+    fireEvent.change(screen.getByLabelText('Image for color suggestions'), { target: { value: 'portraitBackgroundUrl' } });
+    expect(extractThemePalette).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest colors from image' }));
+    await screen.findByRole('button', { name: 'Use suggested combination' });
+    expect(extractThemePalette).toHaveBeenCalledWith(portraitBackgroundUrl, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(document.querySelector('.pc-theme-preview img')).toHaveAttribute('src', portraitBackgroundUrl);
+    fireEvent.change(screen.getByLabelText('Image for color suggestions'), { target: { value: 'backgroundUrl' } });
+    expect(screen.queryByRole('button', { name: 'Use suggested combination' })).not.toBeInTheDocument();
+    expect(savePersonalTheme).not.toHaveBeenCalled();
+});
 it('preserves the draft after failed saves and remote updates', async () => {
     render(<ThemeSettings user={user} />);
     fireEvent.change(screen.getByLabelText('Card color'), { target: { value: '#123456' } });

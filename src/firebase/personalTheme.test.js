@@ -29,7 +29,15 @@ it('leaves the applied theme unchanged after a failed save', async () => {
 it('rejects other accounts and invalid links before writing', async () => {
     await expect(savePersonalTheme('bob', {})).rejects.toThrow('sign in');
     await expect(savePersonalTheme('alice', { backgroundUrl: 'javascript:alert(1)' })).rejects.toThrow('Direct Link');
+    await expect(savePersonalTheme('alice', { portraitBackgroundUrl: 'https://evil.test/picture.jpg' })).rejects.toThrow('Portrait background');
     expect(updateDoc).not.toHaveBeenCalled();
+});
+it('syncs both background images with one account write and no separate document', async () => {
+    const images = { backgroundUrl: 'https://i.postimg.cc/abc/wide.jpg', portraitBackgroundUrl: 'https://i.postimg.cc/abc/tall.jpg' };
+    const saved = await savePersonalTheme('alice', images);
+    expect(updateDoc).toHaveBeenCalledExactlyOnceWith('users/alice', { personalTheme: { ...DEFAULT_PERSONAL_THEME, ...images } });
+    expect(saved.portraitBackgroundUrl).toBe(images.portraitBackgroundUrl);
+    expect(readCachedPersonalTheme('alice')).toEqual(saved);
 });
 it('does not reapply the old account theme when a save completes after logout', async () => {
     let resolveWrite;

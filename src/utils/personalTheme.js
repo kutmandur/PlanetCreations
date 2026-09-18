@@ -1,5 +1,5 @@
 export const PERSONAL_THEME_EVENT = 'pc-personal-theme-change';
-export const DEFAULT_PERSONAL_THEME = Object.freeze({ version: 1, backgroundUrl: '', cardColor: '', accentColor: '', adaptToColorScheme: false });
+export const DEFAULT_PERSONAL_THEME = Object.freeze({ version: 1, backgroundUrl: '', portraitBackgroundUrl: '', cardColor: '', accentColor: '', adaptToColorScheme: false });
 const CACHE_PREFIX = 'pcPersonalTheme.v1:';
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 let activeUid = null;
@@ -21,6 +21,7 @@ export function normalizePersonalTheme(value) {
     return {
         version: 1,
         backgroundUrl: normalizeBackgroundUrl(data.backgroundUrl),
+        portraitBackgroundUrl: normalizeBackgroundUrl(data.portraitBackgroundUrl),
         cardColor: typeof data.cardColor === 'string' && HEX_COLOR.test(data.cardColor) ? data.cardColor.toLowerCase() : '',
         accentColor: typeof data.accentColor === 'string' && HEX_COLOR.test(data.accentColor) ? data.accentColor.toLowerCase() : '',
         adaptToColorScheme: data.adaptToColorScheme === true,
@@ -29,8 +30,11 @@ export function normalizePersonalTheme(value) {
 
 export function validatePersonalTheme(value) {
     if (!value || typeof value !== 'object') return 'Invalid theme settings.';
-    if (value.backgroundUrl && (typeof value.backgroundUrl !== 'string' || (value.backgroundUrl.trim() && !normalizeBackgroundUrl(value.backgroundUrl)))) {
-        return 'Use a Postimages Direct Link (https://i.postimg.cc/…/image.jpg), not an image page or gallery link.';
+    for (const field of ['backgroundUrl', 'portraitBackgroundUrl']) {
+        const url = value[field];
+        if (url && (typeof url !== 'string' || (url.trim() && !normalizeBackgroundUrl(url)))) {
+            return `${field === 'portraitBackgroundUrl' ? 'Portrait background: ' : ''}Use a Postimages Direct Link (https://i.postimg.cc/…/image.jpg), not an image page or gallery link.`;
+        }
     }
     if ([value.cardColor, value.accentColor].some(color => color && (typeof color !== 'string' || !HEX_COLOR.test(color)))) {
         return 'Enter colors as six-digit hex values, for example #2563eb.';
@@ -39,6 +43,12 @@ export function validatePersonalTheme(value) {
         return 'Choose whether colors should adapt to light and dark mode.';
     }
     return '';
+}
+
+export function resolvePersonalThemeBackground(value, portrait = false, unavailableUrls = []) {
+    const theme = normalizePersonalTheme(value);
+    const candidates = portrait ? [theme.portraitBackgroundUrl, theme.backgroundUrl] : [theme.backgroundUrl];
+    return candidates.find(url => url && !unavailableUrls.includes(url)) || '';
 }
 
 function luminance(hex) {
@@ -136,7 +146,7 @@ function applyPersonalTheme(theme) {
     const root = document.documentElement;
     root.toggleAttribute('data-pc-card-theme', Boolean(activeUid && activeTheme.cardColor));
     root.toggleAttribute('data-pc-accent-theme', Boolean(activeUid && activeTheme.accentColor));
-    root.toggleAttribute('data-pc-background-theme', Boolean(activeUid && activeTheme.backgroundUrl));
+    root.toggleAttribute('data-pc-background-theme', Boolean(activeUid && (activeTheme.backgroundUrl || activeTheme.portraitBackgroundUrl)));
     window.dispatchEvent(new CustomEvent(PERSONAL_THEME_EVENT, { detail: { uid: activeUid, theme: { ...activeTheme } } }));
 }
 

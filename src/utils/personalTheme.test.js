@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DEFAULT_PERSONAL_THEME, getActivePersonalTheme, hydratePersonalTheme, normalizeBackgroundUrl,
     normalizePersonalTheme, personalThemeVariables, readCachedPersonalTheme, setPersonalThemeUser,
-    resolvePersonalThemeColors, validatePersonalTheme, watchPersonalThemeCache,
+    resolvePersonalThemeBackground, resolvePersonalThemeColors, validatePersonalTheme, watchPersonalThemeCache,
 } from './personalTheme';
 import { applyTheme } from './theme';
 
@@ -32,6 +32,34 @@ it.each([
 ])('rejects unsafe or non-image links: %s', url => {
     expect(normalizeBackgroundUrl(url)).toBe('');
     expect(validatePersonalTheme({ backgroundUrl: url })).not.toBe('');
+    expect(validatePersonalTheme({ portraitBackgroundUrl: url })).toContain('Portrait background:');
+});
+it('keeps existing themes compatible and selects the portrait image only for portrait windows', () => {
+    const backgroundUrl = 'https://i.postimg.cc/abc/landscape.jpg';
+    const portraitBackgroundUrl = 'https://i.postimg.cc/abc/portrait.jpg';
+    const legacy = normalizePersonalTheme({ version: 1, backgroundUrl });
+    expect(legacy.portraitBackgroundUrl).toBe('');
+    expect(resolvePersonalThemeBackground(legacy, true)).toBe(backgroundUrl);
+    const theme = { backgroundUrl, portraitBackgroundUrl };
+    expect(resolvePersonalThemeBackground(theme)).toBe(backgroundUrl);
+    expect(resolvePersonalThemeBackground(theme, true)).toBe(portraitBackgroundUrl);
+    expect(resolvePersonalThemeBackground(theme, true, [portraitBackgroundUrl])).toBe(backgroundUrl);
+    expect(resolvePersonalThemeBackground(theme, true, [portraitBackgroundUrl, backgroundUrl])).toBe('');
+    expect(resolvePersonalThemeBackground({ portraitBackgroundUrl }, false)).toBe('');
+    expect(resolvePersonalThemeBackground({ portraitBackgroundUrl }, true)).toBe(portraitBackgroundUrl);
+});
+
+it('caches portrait-only themes for the signed-in account and clears them at logout', () => {
+    const portraitBackgroundUrl = 'https://i.postimg.cc/abc/portrait.webp';
+    hydratePersonalTheme('alice', { portraitBackgroundUrl });
+    setPersonalThemeUser('alice');
+    expect(getActivePersonalTheme().portraitBackgroundUrl).toBe(portraitBackgroundUrl);
+    expect(readCachedPersonalTheme('alice').portraitBackgroundUrl).toBe(portraitBackgroundUrl);
+    expect(document.documentElement.hasAttribute('data-pc-background-theme')).toBe(true);
+    setPersonalThemeUser('bob');
+    expect(getActivePersonalTheme().portraitBackgroundUrl).toBe('');
+    setPersonalThemeUser(null);
+    expect(document.documentElement.hasAttribute('data-pc-background-theme')).toBe(false);
 });
 it('tolerates malformed remote and cached values without executing CSS', () => {
     const invalid = { backgroundUrl: {}, cardColor: 'red; background:url(https://evil.test)', accentColor: ['#ffffff'] };
