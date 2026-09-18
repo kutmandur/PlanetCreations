@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
+const YOUTUBE_BOT_CHANNEL_URL = 'https://www.youtube.com/channel/UCmDRfBoKKcQkPgbxNeGiYug';
+
 const PROVIDERS = {
     obs: {
         label: 'OBS Studio',
@@ -32,6 +34,7 @@ const StreamingSettings = ({ setModalMessage }) => {
     const [secret, setSecret] = useState('');
     const [secretDirty, setSecretDirty] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [copyMessage, setCopyMessage] = useState('');
     const supported = Boolean(window.electronAPI?.getObsStatus);
 
     useEffect(() => {
@@ -101,6 +104,15 @@ const StreamingSettings = ({ setModalMessage }) => {
             setModalMessage(`Could not update the streaming settings: ${error.message}`);
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const handleCopyBotChannel = async () => {
+        try {
+            await navigator.clipboard.writeText(YOUTUBE_BOT_CHANNEL_URL);
+            setCopyMessage('Channel URL copied. Paste it into Standard moderators in YouTube Studio.');
+        } catch {
+            setCopyMessage('Could not copy automatically. Select the channel URL above and copy it manually.');
         }
     };
 
@@ -291,6 +303,79 @@ const StreamingSettings = ({ setModalMessage }) => {
             >
                 {isSaving ? 'Saving...' : 'Save & Connect'}
             </button>
+
+            <section aria-labelledby="youtube-bot-setup-heading" className="mt-6 border-t border-gray-200 pt-6 dark:border-gray-700">
+                <h3 id="youtube-bot-setup-heading" className="text-lg font-bold text-gray-800 dark:text-gray-100">
+                    Set up the YouTube chat bot
+                </h3>
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                    Bot replies include links, which YouTube may filter. Add <strong>PlanetCreationsBot</strong> as
+                    a <strong>Standard moderator</strong> once for your channel. You can add it by channel URL even
+                    when it does not appear in the chat or viewer list.
+                </p>
+                <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm text-gray-700 dark:text-gray-200">
+                    <li>
+                        Open <a href="https://studio.youtube.com/" target="_blank" rel="noopener noreferrer"
+                            className="text-blue-600 underline dark:text-blue-300">YouTube Studio</a> and select the channel you stream on.
+                    </li>
+                    <li>
+                        Go to <strong>Settings → Community moderation → User management</strong> and paste the bot channel URL
+                        below into <strong>Standard moderators</strong>.
+                    </li>
+                    <li>Select <strong>PlanetCreationsBot</strong> from the result and click <strong>Save</strong>.</li>
+                </ol>
+                <label htmlFor="youtube-bot-channel-url" className="mt-4 block text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    Bot channel URL
+                </label>
+                <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <input
+                        id="youtube-bot-channel-url"
+                        type="text"
+                        readOnly
+                        value={YOUTUBE_BOT_CHANNEL_URL}
+                        onFocus={(event) => event.target.select()}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                    />
+                    <button type="button" onClick={handleCopyBotChannel}
+                        className="shrink-0 rounded-lg bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-600">
+                        Copy channel URL
+                    </button>
+                </div>
+                <p role="status" className="mt-2 text-sm text-gray-600 dark:text-gray-300">{copyMessage}</p>
+                <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
+                    To test, keep your stream running with LIVE active in PlanetCreations, switch YouTube&apos;s chat view
+                    to <strong>Live chat</strong> and send <code>!builder</code>. Repeating the same command has a 60-second cooldown.
+                </p>
+                <a href="https://support.google.com/youtube/answer/9826490" target="_blank" rel="noopener noreferrer"
+                    className="mt-2 inline-block text-sm text-blue-600 underline dark:text-blue-300">
+                    YouTube&apos;s moderator setup guide
+                </a>
+            </section>
+
+            <section aria-labelledby="twitch-bot-setup-heading" className="mt-6 border-t border-gray-200 pt-6 dark:border-gray-700">
+                <h3 id="twitch-bot-setup-heading" className="text-lg font-bold text-gray-800 dark:text-gray-100">
+                    Set up the Twitch chat bot
+                </h3>
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                    If you use moderation bots or link filters, add <strong>planetcreationsbot</strong> as a moderator
+                    so its replies and creation links can appear in chat.
+                </p>
+                <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm text-gray-700 dark:text-gray-200">
+                    <li>Open your Twitch channel&apos;s chat while signed in as the channel owner.</li>
+                    <li>
+                        Send <code className="select-all rounded bg-gray-100 px-2 py-1 dark:bg-gray-800">/mod planetcreationsbot</code>.
+                        You can use <code>/mods</code> to check that the bot is listed.
+                    </li>
+                    <li>
+                        If another moderation bot still blocks the replies, add <strong>planetcreationsbot</strong> to
+                        that bot&apos;s allowlist for chat messages and links.
+                    </li>
+                </ol>
+                <a href="https://help.twitch.tv/s/article/Managing-Roles-for-your-Channel" target="_blank" rel="noopener noreferrer"
+                    className="mt-3 inline-block text-sm text-blue-600 underline dark:text-blue-300">
+                    Twitch&apos;s moderator setup guide
+                </a>
+            </section>
 
         </div>
     );
