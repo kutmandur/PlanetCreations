@@ -31,6 +31,7 @@ const {recordCreationView, publishViewTotals} = require("./creationViews");
 const {removeBallot} = require("./securityMigration");
 const {setEventVote} = require("./eventVoting");
 const {isClaimableUpload, settleFailedUpload} = require("./uploadRecovery");
+const {isAccountActive, assertNotDeleting} = require("./accountLifecycle");
 const {requireObjectEtag, boundedBodyToBuffer} = require("./uploadIntegrity");
 const {
     getMatchDecision,
@@ -330,7 +331,8 @@ const authenticate = async (req, res, next) => {
     }
     const idToken = req.headers.authorization.split('Bearer ')[1];
     try {
-        const decodedIdToken = await auth.verifyIdToken(idToken);
+        const decodedIdToken = await auth.verifyIdToken(idToken, true);
+        await assertNotDeleting(db, decodedIdToken.uid);
         req.user = decodedIdToken;
         next();
     } catch {
@@ -1899,232 +1901,6 @@ exports.unlinkDiscordAccount = onCallWith(
     },
 );
 
-async function removeDeletedUserFromCollaborations(userId) {
-    const [ownedSnapshot, membershipSnapshot] = await Promise.all([
-        db.collection("collaborations")
-            .where("ownerId", "==", userId)
-            .limit(1)
-            .get(),
-        db.collection("collaborations")
-            .where("memberIds", "array-contains", userId)
-            .get(),
-    ]);
-    if (!ownedSnapshot.empty) {
-        throw new functions.https.HttpsError(
-            "failed-precondition",
-            "Delete collaborations you own before deleting this account.",
-        );
-    }
-    const activeBuild = membershipSnapshot.docs.find((document) =>
-        hasActiveCollaborationBuildLock(document.data(), userId),
-    );
-    if (activeBuild) {
-        throw new functions.https.HttpsError(
-            "failed-precondition",
-            "Finish the active collaboration build session before deleting " +
-                "this account.",
-        );
-    }
-
-    for (let index = 0; index < membershipSnapshot.docs.length; index += 200) {
-        const batch = db.batch();
-        membershipSnapshot.docs.slice(index, index + 200)
-            .forEach((collaborationDocument) => {
-                batch.delete(collaborationDocument.ref.collection("members")
-                    .doc(userId));
-                batch.update(
-                    collaborationDocument.ref,
-                    buildCollaborationMemberDepartureUpdate(
-                        batch,
-                        collaborationDocument.data(),
-                        userId,
-                    ),
-                );
-            });
-        await batch.commit();
-    }
-
-    const [
-        receivedGrants,
-        sentGrants,
-        legacyUserInvitations,
-        legacyReceivedInvitations,
-        legacySentInvitations,
-    ] = await Promise.all([
-        collaborationInvitationGrantCollection
-            .where("targetUserId", "==", userId)
-            .get(),
-        collaborationInvitationGrantCollection
-            .where("senderId", "==", userId)
-            .get(),
-        db.collection(`users/${userId}/collaborationInvites`).get(),
-        db.collectionGroup("invitations")
-            .where("targetUserId", "==", userId)
-            .get(),
-        db.collectionGroup("invitations")
-            .where("senderId", "==", userId)
-            .get(),
-    ]);
-    const invitationRefs = new Map();
-    [
-        ...receivedGrants.docs,
-        ...sentGrants.docs,
-        ...legacyUserInvitations.docs,
-        ...legacyReceivedInvitations.docs,
-        ...legacySentInvitations.docs,
-    ]
-        .forEach((document) => invitationRefs.set(
-            document.ref.path,
-            document.ref,
-        ));
-    await deleteDocumentRefs([...invitationRefs.values()]);
-}
-
-exports.deleteOwnAccount = onCall(async (data, context) => {
-    if (!context.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'You must be logged in to perform this action.');
-    }
-    const userId = context.auth.uid;
-    console.log(`User ${userId} initiating self-deletion.`);
-
-    try {
-        await removeDeletedUserFromCollaborations(userId);
-        const batch = db.batch();
-        const profileRef = db.doc(`profiles/${userId}`);
-        const userRef = db.doc(`users/${userId}`);
-        const [profileSnap, userSnap] = await Promise.all([
-            profileRef.get(),
-            userRef.get(),
-        ]);
-        const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
-        const discordId = userSnap.data()?.discordId;
-        const accountLinkRef = discordId ?
-            db.doc(`discordAccountLinks/${discordId}`) :
-            null;
-        const accountLinkSnap = accountLinkRef ?
-            await accountLinkRef.get() :
-            null;
-        
-        const membershipsRef = db.collection(`profiles/${userId}/communityMemberships`);
-        const membershipsSnap = await membershipsRef.get();
-        const communityIds = membershipsSnap.docs.map(doc => doc.id);
-
-        const creationsRef = db.collection('creations').where('userId', '==', userId);
-        const creationsSnap = await creationsRef.get();
-        creationsSnap.forEach(doc => batch.delete(doc.ref));
-        const clientQueuesSnap = await db.collection(`clientInstallQueues/${userId}/clients`).get();
-        clientQueuesSnap.forEach(doc => batch.delete(doc.ref));
-
-        communityIds.forEach(communityId => {
-            const memberRef = db.doc(`communitys/${communityId}/members/${userId}`);
-            batch.delete(memberRef);
-        });
-
-        batch.delete(profileRef);
-        batch.delete(userRef);
-        batch.delete(db.doc(`privateOAuthCredentials/${userId}`));
-        if (accountLinkRef && accountLinkSnap.exists &&
-            accountLinkSnap.data().uid === userId) {
-            batch.delete(accountLinkRef);
-        }
-        // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
-        // (Personalisierung) und Inbox explizit mitlöschen.
-        batch.delete(db.doc(`users/${userId}/meta/interests`));
-        batch.delete(db.doc(`users/${userId}/meta/inbox`));
-        if (username) {
-            batch.delete(db.doc(`usernames/${username}`));
-        }
-
-        await batch.commit();
-        await auth.deleteUser(userId);
-
-        return { success: true, message: `User ${userId} and all their content has been deleted.` };
-    } catch (error) {
-        console.error(`Failed to delete user ${userId}:`, error);
-        if (error instanceof functions.https.HttpsError) throw error;
-        throw new functions.https.HttpsError('internal', 'An error occurred during the account deletion process.');
-    }
-});
-
-exports.deleteUserAndContent = onCall(async (data, context) => {
-    if (!context.auth || context.auth.token.role !== 'admin') {
-        throw new functions.https.HttpsError('permission-denied', 'Only admins can perform this action.');
-    }
-    const { userIdToDelete } = data;
-    if (!userIdToDelete) {
-        throw new functions.https.HttpsError('invalid-argument', 'A userIdToDelete must be provided.');
-    }
-    if (userIdToDelete === context.auth.uid) {
-        throw new functions.https.HttpsError('invalid-argument', 'Admins cannot delete their own accounts.');
-    }
-
-    console.log(`Admin ${context.auth.uid} initiating deletion for user ${userIdToDelete}.`);
-
-    try {
-        await removeDeletedUserFromCollaborations(userIdToDelete);
-        const batch = db.batch();
-        const profileRef = db.doc(`profiles/${userIdToDelete}`);
-        const userRef = db.doc(`users/${userIdToDelete}`);
-        const [profileSnap, userSnap] = await Promise.all([
-            profileRef.get(),
-            userRef.get(),
-        ]);
-        const username = profileSnap.exists ? profileSnap.data().username.toLowerCase() : null;
-        const discordId = userSnap.data()?.discordId;
-        const accountLinkRef = discordId ?
-            db.doc(`discordAccountLinks/${discordId}`) :
-            null;
-        const accountLinkSnap = accountLinkRef ?
-            await accountLinkRef.get() :
-            null;
-        
-        const membershipsRef = db.collection(`profiles/${userIdToDelete}/communityMemberships`);
-        const membershipsSnap = await membershipsRef.get();
-        const communityIds = membershipsSnap.docs.map(doc => doc.id);
-
-        const creationsRef = db.collection('creations').where('userId', '==', userIdToDelete);
-        const creationsSnap = await creationsRef.get();
-        creationsSnap.forEach(doc => batch.delete(doc.ref));
-        const clientQueuesSnap = await db.collection(`clientInstallQueues/${userIdToDelete}/clients`).get();
-        clientQueuesSnap.forEach(doc => batch.delete(doc.ref));
-        console.log(`Deleting ${creationsSnap.size} creations...`);
-
-        communityIds.forEach(communityId => {
-            const memberRef = db.doc(`communitys/${communityId}/members/${userIdToDelete}`);
-            batch.delete(memberRef);
-        });
-        console.log(`Deleting from ${communityIds.length} community member lists...`);
-
-        batch.delete(profileRef);
-        batch.delete(userRef);
-        batch.delete(db.doc(`privateOAuthCredentials/${userIdToDelete}`));
-        if (accountLinkRef && accountLinkSnap.exists &&
-            accountLinkSnap.data().uid === userIdToDelete) {
-            batch.delete(accountLinkRef);
-        }
-        // Subcollections werden vom Doc-Delete NICHT erfasst — Interessen-Map
-        // (Personalisierung) und Inbox explizit mitlöschen.
-        batch.delete(db.doc(`users/${userIdToDelete}/meta/interests`));
-        batch.delete(db.doc(`users/${userIdToDelete}/meta/inbox`));
-        if (username) {
-            batch.delete(db.doc(`usernames/${username}`));
-        }
-        console.log("Deleting main user documents...");
-
-        await batch.commit();
-        console.log("Firestore data deleted successfully.");
-
-        await auth.deleteUser(userIdToDelete);
-        console.log(`Successfully deleted user ${userIdToDelete} from Firebase Auth.`);
-
-        return { success: true, message: `User ${userIdToDelete} and all their content has been deleted.` };
-    } catch (error) {
-        console.error(`Failed to delete user ${userIdToDelete}:`, error);
-        if (error instanceof functions.https.HttpsError) throw error;
-        throw new functions.https.HttpsError('internal', 'An error occurred during the deletion process.');
-    }
-});
-
 exports.getAllUserEmails = onCall(async (data, context) => {
   if (!context.auth || context.auth.token.role !== 'admin') {
     throw new functions.https.HttpsError(
@@ -2855,6 +2631,7 @@ exports.onCommunityJoinRequestCreated = documentCreated(
         await Promise.all([...staffDocs.values()]
             .filter(staffDoc => staffDoc.id !== userId)
             .map(staffDoc => notifyUser(staffDoc.id, 'communityJoinRequest', {
+                relatedUserIds: [userId],
                 title: 'New community join request',
                 message: `${applicant} wants to join ${communityData.name || 'your community'}.`,
                 link: `/manager/${communityId}?tab=Requests`,
@@ -3310,6 +3087,7 @@ async function syncLiveStateToClients(uid, session, creation, {
     clearCreationIds = [],
     preserveQr = false,
 } = {}) {
+    if (!await isAccountActive(db, uid)) return;
     const clients = await db.collection(`clientInstallQueues/${uid}/clients`).get();
     if (clients.empty) return;
     const now = Timestamp.now();
@@ -3328,7 +3106,7 @@ async function syncLiveStateToClients(uid, session, creation, {
             creationIds: clearCreationIds,
             setAt: now,
         };
-        batch.set(clientDoc.ref, update, {merge: true});
+        batch.update(clientDoc.ref, update);
     });
     await batch.commit();
 }
@@ -3869,10 +3647,10 @@ async function clearLiveSessionInternal(uid, requestedIds = [], expectedSessionI
             if (snap.exists && snap.data().userId === uid && snap.data().liveStream) clearRefs.push(ref);
         }
         for (const ref of clearRefs) tx.update(ref, {liveStream: FieldValue.delete()});
-        if (pointerId || sessionSnap.exists) tx.set(userRef, {
+        if (userSnap.exists && (pointerId || sessionSnap.exists)) tx.update(userRef, {
             liveCreationId: FieldValue.delete(),
             liveSessionId: FieldValue.delete(),
-        }, {merge: true});
+        });
         for (const claim of channelClaims) {
             if (claim.snap.exists && claimBelongsToSession(
                 claim.snap.data(), uid, session?.sessionId,
@@ -4231,10 +4009,10 @@ exports.sweepLiveStreams = scheduled(
                 const userRef = db.doc(`users/${userId}`);
                 const userSnap = await userRef.get();
                 if (userSnap.data()?.liveCreationId === docSnap.id) {
-                    batch.set(userRef, {
+                    batch.update(userRef, {
                         liveCreationId: FieldValue.delete(),
                         liveSessionId: FieldValue.delete(),
-                    }, {merge: true});
+                    });
                 }
             }
             await batch.commit();
@@ -5435,6 +5213,12 @@ exports.deleteCollaboration = onCallWith({
             );
         }
 
+        return deleteCollaborationData(collaborationSnap);
+    });
+
+async function deleteCollaborationData(collaborationSnap) {
+    const collaborationRef = collaborationSnap.ref;
+    const collaborationId = collaborationRef.id;
         const uploadSessions = await uploadSessionCollection
             .where("collaborationId", "==", collaborationId)
             .get();
@@ -5509,7 +5293,7 @@ exports.deleteCollaboration = onCallWith({
             deletedInvitationGrantCount: invitationGrants.size,
             deletedLegacyInvitationCount: legacyUserInvitations.size,
         };
-    });
+}
 
 // Direct invitations use private server-authoritative grants plus the standard
 // notification inbox. The visible inbox item is never an authorization source.
@@ -5638,6 +5422,7 @@ exports.sendCollaborationInvitation = onCall(async (data, context) => {
 
     try {
         await notifyUser(targetUserId, "collaborationInvite", {
+            relatedUserIds: [senderId],
             title: "Collaboration invitation",
             message: `${invitation.senderUsername} invited you to join ` +
                 `${invitation.collaborationTitle}.`,
@@ -7765,7 +7550,7 @@ exports.publishCollaboration = onCallWith(
                     eventIds: [],
                     changelog,
                     contributors,
-                    contributorIds: contributors.map(({uid}) => uid),
+                    contributorIds: contributors.map(({uid}) => uid).filter(Boolean),
                     sourceCollaborationId: collaborationId,
                     sourceCollaborationTitle:
                         String(collaboration.title || "Collaboration")
@@ -8150,47 +7935,13 @@ exports.notifyOnCommunityRoleChange = documentUpdated(
         return null;
     });
 
-// --- Cascade-Cleanup beim Löschen einer Community (serverseitig, da Clients die
-//     Index-Docs nicht schreiben/löschen dürfen). Alles best-effort (.catch). ---
+// Retry the complete cascade; partial failures must remain visible.
 exports.onCommunityDelete = documentDeleted(
     'communitys/{communityId}',
-    async (snap, context) => {
-        const communityId = context.params.communityId;
-
-        // 1) Community-Link-Docs entfernen (danach räumen die Link-Doc-Trigger die Indexe)
-        try {
-            const linkSnap = await db.collection(`communitys/${communityId}/creations`).get();
-            if (!linkSnap.empty) {
-                const b = db.batch();
-                linkSnap.docs.forEach(d => b.delete(d.ref));
-                await b.commit();
-            }
-        } catch (e) { console.error('community link cleanup failed:', e.message); }
-
-        // 2) Community-Suchindex + zugehörige Showcase-Indexe löschen
-        await deleteMapIndex(db, 'community', communityId).catch(() => {});
-        try {
-            const showcaseStateSnap = await db.collection('showcaseIndexState')
-                .where('m.communityId', '==', communityId).get();
-            await Promise.all(showcaseStateSnap.docs.map(showcaseDoc =>
-                deleteMapIndex(db, 'showcase', showcaseDoc.id).catch(() => {})));
-        } catch (e) { console.error('showcaseIndex cleanup failed:', e.message); }
-
-        // 3) Events der Community (inkl. voters-Subcollection) löschen
-        try {
-            const eventsSnap = await db.collection('events')
-                .where('communityId', '==', communityId).get();
-            for (const evDoc of eventsSnap.docs) {
-                const votersSnap = await db.collection(`events/${evDoc.id}/voters`).get();
-                const b = db.batch();
-                votersSnap.docs.forEach(v => b.delete(v.ref));
-                b.delete(evDoc.ref);
-                await b.commit();
-            }
-        } catch (e) { console.error('events cleanup failed:', e.message); }
-
-        return null;
-    });
+    async (snap, context) => require('./communityDeletion').deleteCommunityData(
+        db, context.params.communityId,
+        {deleteIndex: (kind, id) => deleteMapIndex(db, kind, id)},
+    ), {retry: true});
 
 /**
  * Bug-Reports als JSON abrufen (nur Admins) — für Troubleshooting-Tools.
@@ -8829,6 +8580,9 @@ exports.maintainSecurityState = scheduled(
                 deleteExpiredSecurityDocuments("oauthStates"),
                 deleteExpiredSecurityDocuments("securityRateLimits"),
                 migrateLegacyDiscordCredentials(),
+                deleteExpiredSecurityDocuments("accountDeletionLocks"),
+                deleteExpiredSecurityDocuments("accountDeletionReceipts"),
+                deleteExpiredSecurityDocuments("accountOperations"),
             ]);
         console.log("Security state maintenance completed.", {
             credentialsMigrated,
@@ -8864,19 +8618,12 @@ exports.cleanupUnverifiedUsers = scheduled(
             for (const user of listUsersResult.users) {
                 // Check: Not email verified AND created more than 48 hours ago
                 if (!user.emailVerified && new Date(user.metadata.creationTime) < cutoff) {
-                    console.log(`Deleting unverified user: ${user.email} (created: ${user.metadata.creationTime})`);
+
 
                     try {
-                        // Delete user from Firebase Auth
-                        await auth.deleteUser(user.uid);
-
-                        // Delete associated Firestore documents
-                         await Promise.allSettled([
-                             db.doc(`users/${user.uid}`).delete(),
-                             db.doc(`profiles/${user.uid}`).delete(),
-                             db.doc(`privateOAuthCredentials/${user.uid}`).delete(),
-                         ]);
-
+                        if (!(await db.doc('accountDeletionLocks/' + user.uid).get()).exists) {
+                            await accountDeletion.service.request(user.uid, {trusted: true});
+                        }
                         deletedCount++;
                     } catch (error) {
                         console.error(`Failed to delete user ${user.uid}:`, error);
@@ -8922,14 +8669,158 @@ exports.queueDiscordCommunity = documentWritten('communitys/{communityId}', asyn
 }, {retry: true});
 
 exports.cleanupEventVoting = documentDeleted('events/{eventId}', async (snap) => {
-    for (const name of ['ballots', 'voteTotals', 'voters']) await db.recursiveDelete(snap.ref.collection(name));
+    for (const name of ['ballots', 'anonymousBallots', 'voteTotals', 'voters']) await db.recursiveDelete(snap.ref.collection(name));
 }, {retry: true});
 exports.cleanupAccountBallots = documentDeleted('users/{userId}', async (snap, context) => {
-    const ballots = await db.collectionGroup('ballots').where('userId', '==', context.params.userId).get();
-    for (const ballot of ballots.docs) await removeBallot(db, ballot.ref);
+    await require('./accountDeletion').anonymizeBallots(db, context.params.userId);
 }, {retry: true});
 exports.cleanupCreationBallots = documentDeleted('creations/{creationId}', async (snap, context) => {
-    const ballots = await db.collectionGroup('ballots').where('creationIds', 'array-contains', context.params.creationId).get();
-    for (const ballot of ballots.docs) await removeBallot(db, ballot.ref, {creationId: context.params.creationId});
+    for (const name of ['ballots', 'anonymousBallots']) {
+        const ballots = await db.collectionGroup(name).where('creationIds', 'array-contains', context.params.creationId).get();
+        for (const ballot of ballots.docs) await removeBallot(db, ballot.ref, {creationId: context.params.creationId});
+    }
     await db.doc(`creationStats/${context.params.creationId}`).delete();
 }, {retry: true});
+
+// All entry points share the same durable deletion pipeline.
+const accountDeletionData = require('./accountDeletionData');
+const accountDeletion = require('./accountDeletionEndpoints').accountDeletionEndpoints({
+    db, auth,
+    services: {
+        deleteIndex: (kind, id) => deleteMapIndex(db, kind, id),
+        departureUpdate: buildCollaborationMemberDepartureUpdate,
+        deleteObjects: deleteR2Objects,
+        isEligibleSuccessor: async uid => {
+            try { return !(await auth.getUser(uid)).disabled; }
+            catch (error) { if (error.code === 'auth/user-not-found') return false; throw error; }
+        },
+        deleteCollaboration: async (snapshot, uid) => {
+            const publications = await db.collection('creations').where('sourceCollaborationId', '==', snapshot.id).get();
+            for (const publication of publications.docs) await deleteAccountCreation(publication, uid);
+            await deleteCollaborationData(snapshot);
+        },
+        deleteCreation: deleteAccountCreation,
+        transferCreation: async (snapshot, nextOwner) => {
+            const data = snapshot.data(), update = {userId: nextOwner};
+            const profile = await db.doc(`profiles/${nextOwner}`).get();
+            update.username = profile.data()?.username || 'Unknown contributor';
+            update.userProfilePictureUrl = profile.data()?.profilePictureUrl || null;
+            for (const field of ['backupObjectKey', 'rideAnalysisObjectKey']) {
+                const oldKey = data[field];
+                if (!oldKey) continue;
+                const prefix = field === 'backupObjectKey' ? 'creation-backups' : 'creation-ride-analysis';
+                if (!oldKey.startsWith(`${prefix}/${data.userId}/${snapshot.id}/`) || oldKey.includes('..')) throw Error('Unexpected publication storage path.');
+                const newKey = oldKey.replace(`${prefix}/${data.userId}/`, `${prefix}/${nextOwner}/`);
+                await getS3().send(new CopyObjectCommand({Bucket: getR2Bucket(), Key: newKey,
+                    CopySource: `${getR2Bucket()}/${oldKey.split('/').map(encodeURIComponent).join('/')}`}));
+                await getS3().send(new HeadObjectCommand({Bucket: getR2Bucket(), Key: newKey}));
+                update[field] = newKey;
+            }
+            await snapshot.ref.update(update);
+        },
+        removeCommunityContributions: (community, uid) => accountDeletionData.removeCommunityContributions(db, community, uid),
+        removeReferences: uid => accountDeletionData.removeReferences(db, uid, {deleteObjects: deleteR2Objects}),
+        prepareCommunity: async (ref, uid) => {
+            const links = await ref.collection('creations').get();
+            for (const link of links.docs) for (const kind of ['general', 'showcase']) await enqueueDelivery(db, {communityId: ref.id, creationId: link.id, kind});
+            const events = await db.collection('events').where('communityId', '==', ref.id).get();
+            for (const event of events.docs) for (const [creationId, messageId] of Object.entries(event.data().autoPostedSubmissions || {})) {
+                const channelId = event.data().discordSubmissionChannelId;
+                await enqueueDelivery(db, {communityId: ref.id, creationId, eventId: event.id, kind: 'event', legacy: channelId ? {messageId, channelId} : null});
+            }
+            await trackAccountDiscordDeliveries(uid, 'communityId', ref.id);
+        },
+        finishCommunity: async (ref, uid) => {
+            const deliveries = await db.collection('discordDeliveries').where('communityId', '==', ref.id).get();
+            for (const delivery of deliveries.docs) await enqueueDelivery(db, delivery.data());
+            await trackAccountDiscordDeliveries(uid, 'communityId', ref.id);
+        },
+        revokeCredentials: async uid => {
+            await clearLiveSessionInternal(uid);
+            const credential = await db.doc(`privateOAuthCredentials/${uid}`).get();
+            const user = await db.doc(`users/${uid}`).get();
+            const token = credential.data()?.refreshToken || user.data()?.discordRefreshToken;
+            if (!token) return;
+            const response = await fetch('https://discord.com/api/oauth2/token/revoke', {
+                method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({client_id: DISCORD_CLIENT_ID, client_secret: discordClientSecret.value(), token, token_type_hint: 'refresh_token'}),
+                signal: AbortSignal.timeout(15000),
+            });
+            if (!response.ok) throw Error('OAuth revocation failed.');
+        },
+        deleteStorage: async uid => {
+            for (const prefix of ['temp-uploads', 'creation-backups', 'creation-ride-analysis']) {
+                const keys = await listAccountStorageKeys(`${prefix}/${uid}/`);
+                await deleteR2Objects(keys);
+                if ((await listAccountStorageKeys(`${prefix}/${uid}/`)).length) throw Error('Account objects remain.');
+            }
+        },
+        deleteIdentity: async (uid, job) => {
+            await accountDeletionData.deleteIdentity(db, uid, job);
+            await removeMapIndexEntry(db, 'user', 'all', uid);
+        },
+        verify: async uid => {
+            const removed = await db.collection(`accountDeletionLocks/${uid}/creations`).get();
+            for (const creation of removed.docs) {
+                await db.recursiveDelete(db.doc(`creations/${creation.id}`));
+                await db.recursiveDelete(db.doc(`creationFollowers/${creation.id}`));
+                await removeDeletedCreationIndexes(creation.id, creation.data());
+                await trackAccountDiscordDeliveries(uid, 'creationId', creation.id);
+            }
+            const deliveries = await db.collection(`accountDeletionLocks/${uid}/deliveries`).get();
+            for (const delivery of deliveries.docs) {
+                const deliveryRef = db.doc(`discordDeliveries/${delivery.id}`);
+                const previous = await deliveryRef.get();
+                if (previous.exists) await enqueueDelivery(db, previous.data());
+                const current = await deliveryRef.get();
+                if (current.exists && (current.data().pending || current.data().binding || current.data().legacy || current.data().sendingSince || current.data().status === 'needs-review')) throw Error('Discord cleanup is not confirmed.');
+                await current.ref.delete();
+            }
+            for (const name of ['users', 'profiles', 'privateOAuthCredentials', 'applications']) {
+                if ((await db.doc(`${name}/${uid}`).get()).exists) throw Error('Account data reappeared.');
+            }
+            const creations = await db.collection('creations').where('userId', '==', uid).limit(1).get();
+            if (!creations.empty) throw Error('Account creations remain.');
+        },
+    },
+}, [r2AccessKeyId, r2SecretAccessKey, discordClientSecret]);
+Object.assign(exports, accountDeletion.exports);
+
+async function listAccountStorageKeys(prefix) {
+    const keys = [];
+    let continuation;
+    do {
+        const result = await getS3().send(new ListObjectsV2Command({Bucket: getR2Bucket(), Prefix: prefix, ContinuationToken: continuation}));
+        for (const object of result.Contents || []) {
+            if (!object.Key.startsWith(prefix) || object.Key.includes('..') || object.Key.includes('\\')) throw Error('Unsafe account object key.');
+            keys.push(object.Key);
+        }
+        continuation = result.IsTruncated ? result.NextContinuationToken : null;
+        if (result.IsTruncated && !continuation) throw Error('Missing storage continuation.');
+    } while (continuation);
+    return keys;
+}
+
+async function deleteAccountCreation(snapshot, uid) {
+    if (uid) await db.doc(`accountDeletionLocks/${uid}/creations/${snapshot.id}`).set({creationId: snapshot.id,
+        game: snapshot.data().game || null, communityIds: snapshot.data().communityIds || []});
+    await accountDeletionData.deleteCreationData(db, snapshot, {
+        deleteObjects: deleteR2Objects,
+        removeIndex: removeDeletedCreationIndexes,
+    });
+    if (uid) await trackAccountDiscordDeliveries(uid, 'creationId', snapshot.id);
+}
+
+async function removeDeletedCreationIndexes(id, data) {
+    if (data.game) await removeMapIndexEntry(db, 'search', data.game, id);
+    for (const community of data.communityIds || []) await removeMapIndexEntry(db, 'community', community, id);
+    for (const [family, collection] of [['search', 'searchIndexLocations'], ['community', 'communitySearchIndexLocations'], ['showcase', 'showcaseIndexLocations']]) {
+        const locations = await db.collection(collection).where('entryId', '==', id).get();
+        for (const location of locations.docs) if (location.data().scopeId) await removeMapIndexEntry(db, family, location.data().scopeId, id);
+    }
+}
+
+async function trackAccountDiscordDeliveries(uid, field, id) {
+    const deliveries = await db.collection('discordDeliveries').where(field, '==', id).get();
+    for (const delivery of deliveries.docs) await db.doc(`accountDeletionLocks/${uid}/deliveries/${delivery.id}`).set({pending: true});
+}

@@ -38,7 +38,7 @@ async function enqueueDelivery(db, {communityId, creationId, eventId = null, kin
         tx.set(ref, {communityId, creationId, eventId, kind, hash, present, pending: true,
             revision: (job.data()?.revision || 0) + 1, updatedAt: FieldValue.serverTimestamp(),
             // Legacy IDs are candidates only. The bot must prove authorship, guild and Creation URL.
-            ...(adoptCandidate ? {legacy: candidate} : {}),
+            ...(adoptCandidate ? {legacy: {...candidate, guildId: c.discordServerId || candidate.guildId || null}} : {}),
         }, {merge: true});
     });
 }

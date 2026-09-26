@@ -26,6 +26,37 @@ npm run electron-dev
 The `functions/` and `discord-bot/` directories have their own package manifests,
 configuration examples and tests. Install their dependencies separately.
 
+## Account deletion integration
+
+Clients first call `getAccountDeletionPreview` and show all owned communities.
+Confirm that these communities will be deleted unless ownership is transferred
+in Community Settings first. Other members' creations are only disconnected.
+After reauthentication (within five minutes), call `deleteOwnAccount` with
+`{protocolVersion: 2, confirmedCommunityIds: [...], receipt: "<64 hex characters>"}`.
+Generate the receipt securely and save it before sending; retry with the same
+receipt after a lost response. `accepted: true` means queued, not completed.
+Sign out and clear account caches, then poll `getAccountDeletionStatus` with
+`{receipt}`. The receipt is a private capability; never put it in URLs or logs.
+The status endpoint supports signed-out callers and retains App Check enforcement.
+Native iOS uses these same endpoints; its UI and provider reauthentication live
+in the separate iOS repository.
+
+`resumeAccountDeletions` resumes checkpointed phases every minute. A safety window
+of at least 22 minutes drains old writers and signed upload URLs. Failed storage,
+OAuth or Discord cleanup remains pending/retrying. Collaboration owners transfer
+to a remaining active member, or the empty collaboration is deleted. Personal
+saves are removed; history remains anonymously until the collaboration is deleted.
+Event votes retain anonymous totals. Final receipts and minimal deletion fences
+expire after 30 days and are removed by `maintainSecurityState`; captured account
+identity is removed on completion. Infrastructure backups, external copies and
+provider log retention require separate operational policies.
+
+Run `node --test tests/account-lifecycle.emulator.cjs` with Firestore/Auth emulators
+on `127.0.0.1:8080` / `127.0.0.1:9099` and `GCLOUD_PROJECT=demo-planetcreations-rules`.
+The integration test uses real handlers and synthetic storage, including more
+than 500 creations. Deploy the affected Functions, rules, indexes, web client and
+Discord bot together; do not enable the new client against the old backend.
+
 ## Releases
 
 GitHub Actions builds Windows, macOS and Linux from version tags. Store packages

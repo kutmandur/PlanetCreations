@@ -59,7 +59,8 @@
     "package:store": "npm run build:electron && npm run package:store:artifact",
     "package:store:artifact": "electron-builder --config electron-builder.store.cjs --publish never",
     "verify:store-package": "node scripts/verify-store-package.cjs",
-    "generate:appx-assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-appx-assets.ps1"
+    "generate:appx-assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-appx-assets.ps1",
+    "test:account-deletion": "firebase emulators:exec --only firestore,auth --project demo-planetcreations-rules --config firebase.e2e.json \"node --test tests/account-lifecycle.emulator.cjs\""
   },
   "overrides": {
     "js-yaml": "^4.3.2",

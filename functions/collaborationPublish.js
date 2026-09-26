@@ -3,6 +3,7 @@
 const SAFE_CONTRIBUTOR_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 function normalizeContributor(value) {
+    if (value?.deleted === true && !value.uid) return {uid: null, username: "Deleted user", deleted: true};
     const uid = typeof value?.uid === "string" ? value.uid.trim() : "";
     const username = typeof value?.username === "string" ?
         value.username.trim().slice(0, 30) : "";

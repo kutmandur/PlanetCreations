@@ -474,7 +474,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const isSiteStaff = userProfile && ['admin', 'moderator'].includes(userProfile.role);
     const canDelete = isSiteStaff || (isOwner && !creation.sourceCollaborationId);
     const collaborationContributors = (creation.contributors || []).filter(
-        (contributor) => contributor?.uid && contributor?.username,
+        (contributor) => (contributor?.uid || contributor?.deleted) && contributor?.username,
     );
     const color = getGameColor(creation.game);
     const liveStream = creation.liveStream;
@@ -825,7 +825,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                     </p>
                                 )}
                                 <div className="mt-3 flex flex-wrap justify-center gap-2">
-                                    {collaborationContributors.map((contributor) => (
+                                    {collaborationContributors.map((contributor, index) => contributor.deleted ? (
+                                        <span key={`deleted-${index}`} className="rounded-full border px-3 py-1.5 text-sm">Deleted user</span>
+                                    ) : (
                                         <Link
                                             key={contributor.uid}
                                             to={`/profile/${contributor.uid}`}

@@ -10,6 +10,13 @@
       "ignore": [
         "node_modules",
         ".git",
+        "**/*.test.js",
+        "scripts",
+        "eslint.config.js",
+        "**/*.md",
+        "**/*.log",
+        ".local-notes",
+        ".env.example",
         "firebase-debug.log",
         "firebase-debug.*.log"
       ],

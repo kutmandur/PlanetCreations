@@ -2,6 +2,7 @@ const {createHash} = require("node:crypto");
 const {notificationContext} = require("./notificationContext");
 const {FieldValue, getFirestore, Timestamp} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
+const {isAccountActive} = require("./accountLifecycle");
 
 // Shared notification fan-out: append to a user's single capped inbox doc
 // (users/{uid}/meta/inbox) and send a web-push (FCM) to their stored tokens,
@@ -66,7 +67,7 @@ async function sendPush(uid, tokens, { title, body, link, type }) {
  * Notify a single user. `type` gates delivery via the user's prefs; `link` is a
  * react-router path (e.g. "/creation/123") used by both the in-app item and push.
  */
-async function deliverNotification(uid, type, { title, message, link, eventKey = notificationContext.getStore() }) {
+async function deliverNotification(uid, type, { title, message, link, relatedUserIds = [], eventKey = notificationContext.getStore() }) {
     if (!uid) return;
     const db = getFirestore();
     const inboxRef = db.doc(`users/${uid}/meta/inbox`);
@@ -75,6 +76,8 @@ async function deliverNotification(uid, type, { title, message, link, eventKey =
     let wantPush = true;
 
     await db.runTransaction(async (tx) => {
+        pushTokens = []; wantPush = false;
+        if (!await isAccountActive(db, uid, tx)) return;
         const snap = await tx.get(inboxRef);
         const data = snap.exists ? snap.data() : {};
         const prefs = data.prefs || {};
@@ -99,6 +102,7 @@ async function deliverNotification(uid, type, { title, message, link, eventKey =
                 link: link || "/",
                 timestamp: Timestamp.now(),
                 isRead: false,
+                relatedUserIds: [...new Set(relatedUserIds.filter(value => typeof value === 'string' && value))],
             };
             // Prepend newest, drop the oldest beyond the cap (FIFO ring buffer).
             const items = [item, ...(data.items || [])].slice(0, INBOX_CAP);
@@ -110,7 +114,7 @@ async function deliverNotification(uid, type, { title, message, link, eventKey =
         }
     });
 
-    if (wantPush) {
+    if (wantPush && await isAccountActive(db, uid)) {
         await sendPush(uid, pushTokens, { title, body: message, link, type });
     }
 }

@@ -167,7 +167,7 @@ test('Discord enqueue retains legacy evidence even before the migration has run'
     await enqueueDelivery(db, target);
     await enqueueDelivery(db, target);
     const job = (await db.collection('discordDeliveries').get()).docs[0].data();
-    assert.deepEqual(job.legacy, {messageId: 'old-message', channelId: 'old-channel'});
+    assert.deepEqual(job.legacy, {messageId: 'old-message', channelId: 'old-channel', guildId: 'guild'});
     assert.equal(job.revision, 1);
 });
 
@@ -179,6 +179,7 @@ test('report and notification retries produce one durable result', async () => {
     const snap = await ref.get();
     await Promise.all([countReport(db, snap), countReport(db, snap)]);
     assert.equal((await db.doc('creations/park').get()).data().reportCount, 1);
+    await db.doc('users/member').set({role: 'user'});
     await Promise.all([1, 2, 3].map(() => notifyUser('member', 'newCreation', {eventKey: 'stable-trigger', title: 'New park', link: '/creation/park'})));
     const inbox = (await db.doc('users/member/meta/inbox').get()).data();
     assert.equal(inbox.items.length, 1);

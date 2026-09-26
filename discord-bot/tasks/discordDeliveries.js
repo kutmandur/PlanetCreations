@@ -37,12 +37,15 @@ async function processDelivery(client, db, ref) {
             (job.kind === 'event' ? eventSnap?.exists && (creation.eventIds || []).includes(job.eventId) :
                 linkSnap.exists && (job.kind === 'showcase' ? link.showcaseVideoUrl : !(creation.eventIds || []).length)));
         let channel;
-        if (present || (!binding && job.legacy)) {
+        if (present || (!binding && job.legacy && !job.legacy.guildId)) {
             channel = await client.channels.fetch(present ? channelId : job.legacy.channelId);
-            await assertCommunityGuildAccess(client, db, community, channel);
+            // A deletion may outlive the community and its owner's OAuth grant.
+            // The private delivery record captured the guild while it existed;
+            // fetchOwned still verifies guild, bot authorship and Creation URL.
+            if (present || !job.legacy?.guildId) await assertCommunityGuildAccess(client, db, community, channel);
         }
         if (!binding && job.legacy) {
-            const candidate = {...job.legacy, guildId: community.discordServerId};
+            const candidate = {...job.legacy, guildId: job.legacy.guildId || community.discordServerId};
             const message = await fetchOwned(client, candidate, job.creationId);
             if (message) binding = candidate;
         }

@@ -2,6 +2,7 @@
 
 const {notificationContext} = require("./notificationContext");
 const functions = require("firebase-functions/v2");
+const {withAccountOperation, eventAccountUid} = require("./accountLifecycle");
 
 const REQUEST_RUNTIME_OPTIONS = Object.freeze({
   concurrency: 1,
@@ -37,13 +38,21 @@ function callable(handler) {
 }
 
 function callableWith(options, handler) {
+  const {allowDeletingAccount = false, ...runtimeOptions} = options;
   return functions.https.onCall(
     {
       ...REQUEST_RUNTIME_OPTIONS,
-      ...options,
+      ...runtimeOptions,
       enforceAppCheck,
     },
-    (request) => handler(request.data, request),
+    (request) => {
+      if (allowDeletingAccount) return handler(request.data, request);
+      const targets = [...new Set([request.auth?.uid, request.data?.targetUserId,
+        request.data?.newOwnerId, request.data?.memberId].filter(uid => typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid)))];
+      const invoke = index => index === targets.length ? handler(request.data, request) :
+        withAccountOperation(targets[index], () => invoke(index + 1), {timeoutSeconds: options.timeoutSeconds || 540});
+      return invoke(0);
+    },
   );
 }
 
@@ -64,7 +73,9 @@ function documentCreated(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
+    (event) => notificationContext.run(event.id, () => withAccountOperation(
+      eventAccountUid(event, event.data), () => handler(event.data, event),
+      {skipDeleted: true, timeoutSeconds: options.timeoutSeconds || 540})),
   );
 }
 
@@ -86,7 +97,9 @@ function documentUpdated(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
+    (event) => notificationContext.run(event.id, () => withAccountOperation(
+      eventAccountUid(event, event.data?.after), () => handler(event.data, event),
+      {skipDeleted: true, timeoutSeconds: options.timeoutSeconds || 540})),
   );
 }
 
@@ -97,7 +110,9 @@ function documentWritten(document, handler, options = {}) {
       ...options,
       document,
     },
-    (event) => notificationContext.run(event.id, () => handler(event.data, event)),
+    (event) => notificationContext.run(event.id, () => withAccountOperation(
+      eventAccountUid(event, event.data?.after), () => handler(event.data, event),
+      {skipDeleted: true, timeoutSeconds: options.timeoutSeconds || 540})),
   );
 }
 

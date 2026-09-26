@@ -4,10 +4,11 @@ service cloud.firestore {
 
     // --- Helper Functions ---
     function isLoggedIn() {
-      return request.auth != null;
+      return request.auth != null &&
+        !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.auth.uid));
     }
     function isOwner(userId) {
-      return request.auth.uid == userId;
+      return isLoggedIn() && request.auth.uid == userId;
     }
     function isAdmin() {
       return isLoggedIn() && request.auth.token.get('role', '') == 'admin';
@@ -253,10 +254,13 @@ service cloud.firestore {
       allow read: if true;
       allow create: if (isInfluencer() || isModerator()) &&
         isValidCommunityData(request.resource.data) &&
+        !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.resource.data.ownerId)) &&
         isValidCommunitySlug(request.resource.data.get('slug', '')) &&
         (isAdmin() || !('isPartner' in request.resource.data.keys()));
       allow update: if isLoggedIn() &&
         isValidCommunityData(request.resource.data) &&
+        (request.resource.data.ownerId == resource.data.ownerId ||
+          !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.resource.data.ownerId))) &&
         (
           request.resource.data.get('slug', '') == resource.data.get('slug', '') ||
           isValidCommunitySlug(request.resource.data.get('slug', ''))
@@ -544,6 +548,7 @@ service cloud.firestore {
           // Fremdes Profil: eingeloggte Nutzer dürfen sich NUR selbst in die
           // followers-Liste eintragen/austragen (Follow/Unfollow) — nichts anderes.
           (isLoggedIn() && request.auth.uid != userId &&
+           !exists(/databases/$(database)/documents/accountDeletionLocks/$(userId)) &&
            request.resource.data.get('followers', []) is list &&
            request.resource.data.get('followers', []).size() == request.resource.data.get('followers', []).toSet().size() &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers']) && (

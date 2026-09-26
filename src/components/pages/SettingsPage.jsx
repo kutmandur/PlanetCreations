@@ -19,6 +19,7 @@ import { hydratePersonalTheme } from '../../utils/personalTheme';
 import ClientSettings from '../ui/ClientSettings';
 import StreamingSettings from '../ui/StreamingSettings';
 import Icon from '../ui/Icon';
+import {previewAccountDeletion, communityDeletionWarning, requestAccountDeletion} from '../../firebase/accountDeletion';
 
 const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clientOnly = false, onBackToLibrary }) => {
     const [loading, setLoading] = useState(false);
@@ -248,26 +249,25 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
         }
     };
 
-    const handleDeleteAccount = () => {
+    const handleDeleteAccount = async () => {
         if (!deleteInput) {
             setModalMessage("Please enter your password to confirm deletion.");
             return;
         }
+        let communities;
+        try { communities = (await previewAccountDeletion()).communities; }
+        catch (error) { setModalMessage(`Unable to prepare account deletion: ${error.message}`); return; }
         setConfirmation({
-            message: `This action is irreversible. Are you sure you want to delete your account and all associated data?`,
+            message: `This action is irreversible. Delete your account and personal content? Collaboration history and event votes will be kept anonymously.${communityDeletionWarning(communities)}`,
             onConfirm: async () => {
                 setLoading(true);
                 try {
                     const credential = EmailAuthProvider.credential(user.email, deleteInput);
                     await reauthenticateWithCredential(user, credential);
                     
-                    const functions = getFunctions();
-                    const deleteOwnAccount = httpsCallable(functions, 'deleteOwnAccount');
-                    await deleteOwnAccount();
-                    
-                    setModalMessage("Account deleted successfully. You will be logged out.");
+                    await requestAccountDeletion(communities);
                 } catch (error) {
-                    setModalMessage(`Error deleting account: ${error.message}. Please check your password.`);
+                    setModalMessage(`Account deletion: ${error.message}`);
                 } finally {
                     setLoading(false);
                     setDeleteInput('');

@@ -15,7 +15,8 @@ import {
 import {
     connectFirestoreEmulator,
     getFirestore,
-    enableIndexedDbPersistence
+    enableIndexedDbPersistence,
+    clearIndexedDbPersistence
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 
@@ -123,7 +124,9 @@ if (isConfigured) {
         );
     } else {
         // ✅ 2. Call the function with its correct name
-        enableIndexedDbPersistence(db).catch((err) => {
+        const persistence = localStorage.getItem('pc-clear-firestore-cache') ?
+            clearIndexedDbPersistence(db).then(() => localStorage.removeItem('pc-clear-firestore-cache')).then(() => enableIndexedDbPersistence(db)) : enableIndexedDbPersistence(db);
+        persistence.catch((err) => {
             if (err.code === 'failed-precondition') {
                 // Multiple tabs open, persistence can only be enabled in one.
                 console.warn("Firestore persistence failed: Multiple tabs open.");

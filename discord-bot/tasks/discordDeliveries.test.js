@@ -52,3 +52,15 @@ test('failed deletion remains pending for retry', async () => {
     assert.equal(f.records.get(f.ref.path).pending, true);
     assert.equal(f.records.get(f.ref.path).status, 'retry');
 });
+
+test('legacy deletion retains ownership checks after the community and account disappear', async () => {
+    for (const author of ['bot', 'victim']) {
+        const f = fixture({present: false, author});
+        await f.ref.update({legacy: {messageId: 'message', channelId: 'channel', guildId: 'guild'}});
+        f.records.delete('communitys/community');
+        f.records.delete('users/owner');
+        await processDelivery(f.client, f.db, f.ref);
+        assert.equal(f.calls.delete, author === 'bot' ? 1 : 0);
+        assert.equal(f.records.get(f.ref.path).status, author === 'bot' ? 'delivered' : 'needs-review');
+    }
+});

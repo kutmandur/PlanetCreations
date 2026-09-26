@@ -35,6 +35,15 @@ test("account cleanup legacy invitation queries retain their indexes", () => {
     );
 });
 
+test("deletion cleanup can query anonymous votes and expires only completed fences", () => {
+    const anonymous = indexConfiguration.fieldOverrides.find(item => item.collectionGroup === 'anonymousBallots' && item.fieldPath === 'creationIds');
+    assert.ok(anonymous.indexes.some(index => index.arrayConfig === 'CONTAINS' && index.queryScope === 'COLLECTION_GROUP'));
+    for (const name of ['accountDeletionLocks', 'accountDeletionReceipts']) {
+        assert.equal(indexConfiguration.fieldOverrides.find(item => item.collectionGroup === name && item.fieldPath === 'expiresAt').ttl, true);
+    }
+    assert.equal(hasCollectionGroupAscendingIndex('communityMemberships', 'communityId'), true);
+});
+
 test("large YouTube shard maps are excluded from automatic indexing", () => {
     assert.equal(
         hasDisabledFieldIndex("youtubeVideoIndexShards", "c"),

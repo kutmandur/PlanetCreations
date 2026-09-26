@@ -8,6 +8,8 @@ async function migrateEventVotes(db, eventId, {apply = false} = {}) {
     const legacy = await db.collectionGroup("votes").where("eventId", "==", eventId).get();
     const ballots = new Map();
     const issues = [];
+    const anonymous = await ref.collection("anonymousBallots").get();
+    const anonymousIds = anonymous.docs.flatMap(doc => doc.data().creationIds || []);
     for (const vote of legacy.docs) {
         if (vote.data().type !== "event_vote") continue;
         const parts = vote.ref.path.split("/");
@@ -18,7 +20,7 @@ async function migrateEventVotes(db, eventId, {apply = false} = {}) {
         const ids = ballots.get(uid) || new Set(); ids.add(parts[1]); ballots.set(uid, ids);
     }
     const report = {eventId, schema: event.data().voteSchemaVersion || 1, ballots: ballots.size,
-        votes: [...ballots.values()].reduce((sum, ids) => sum + ids.size, 0), issues, applied: false};
+        votes: [...ballots.values()].reduce((sum, ids) => sum + ids.size, anonymousIds.length), issues, applied: false};
     // Historical limits/permissions may have changed; flag, never silently discard votes.
     const limit = event.data().voteType === "multiple" ? Number(event.data().voteLimit) || 1 : 1;
     for (const [uid, ids] of ballots) if (ids.size > limit) issues.push({uid, reason: "Historical ballot exceeds current limit"});
@@ -27,6 +29,7 @@ async function migrateEventVotes(db, eventId, {apply = false} = {}) {
         await ref.update({voteSchemaVersion: 1.5}); // Resumable migration lock; readers retain old totals.
         const writer = db.bulkWriter();
         const counts = Array.from({length: VOTE_SHARDS}, () => ({}));
+        for (const id of anonymousIds) counts[Number(voteShard(id))][id] = (counts[Number(voteShard(id))][id] || 0) + 1;
         for (const [uid, ids] of ballots) {
             writer.set(ref.collection("ballots").doc(uid), {userId: uid, eventId, creationIds: [...ids], revision: 0});
             for (const id of ids) counts[Number(voteShard(id))][id] = (counts[Number(voteShard(id))][id] || 0) + 1;
@@ -37,7 +40,7 @@ async function migrateEventVotes(db, eventId, {apply = false} = {}) {
         }
         await writer.close();
         const migrated = await ref.collection("ballots").get();
-        const sum = migrated.docs.reduce((total, ballot) => total + ballot.data().creationIds.length, 0);
+        const sum = migrated.docs.reduce((total, ballot) => total + ballot.data().creationIds.length, anonymousIds.length);
         if (sum !== report.votes || migrated.size !== ballots.size) throw new Error("Ballot verification failed; migration remains locked.");
         await ref.update({voteSchemaVersion: 2, voteMigration: {sourceVotes: report.votes, ballotCount: report.ballots, completedAt: new Date()}});
     }

@@ -1,3 +1,4 @@
+import {previewAccountDeletion, communityDeletionWarning} from '../../firebase/accountDeletion';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { onSnapshot, collection, query, where, doc, getDoc, orderBy, limit, getDocs, startAfter, writeBatch, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
@@ -607,15 +608,18 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         });
     };
 
-    const handleDeleteUser = () => {
+    const handleDeleteUser = async () => {
+        let communities;
+        try { communities = (await previewAccountDeletion(userId)).communities; }
+        catch (error) { setModalMessage(`Unable to prepare deletion: ${error.message}`); return; }
         setConfirmation({
-            message: `Are you sure you want to permanently delete "${profile?.username || 'this user'}" and all of their content? This cannot be undone.`,
+            message: `Are you sure you want to permanently delete "${profile?.username || 'this user'}" and all of their content? This cannot be undone.${communityDeletionWarning(communities)}`,
             onConfirm: async () => {
                 try {
                     const functions = getFunctions();
                     const deleteUserAndContent = httpsCallable(functions, 'deleteUserAndContent');
-                    await deleteUserAndContent({ userIdToDelete: userId });
-                    setModalMessage("User and all their content has been deleted.");
+                    await deleteUserAndContent({ protocolVersion: 2, userIdToDelete: userId, confirmedCommunityIds: communities.map(item => item.id) });
+                    setModalMessage("Account deletion was accepted and will continue in the background.");
                     navigate('/');
                 } catch (error) {
                     console.error("Error deleting user:", error);

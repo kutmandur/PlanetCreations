@@ -43,6 +43,16 @@ function authenticatedFirestore(uid, tokenOptions = {}) {
   return testEnvironment.authenticatedContext(uid, tokenOptions).firestore();
 }
 
+test("account deletion fence blocks existing client credentials and protects private jobs", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), `accountDeletionLocks/${OWNER_ID}`), {state: "deleting"});
+  });
+  const db = authenticatedFirestore(OWNER_ID);
+  await assertFails(setDoc(doc(db, `users/${OWNER_ID}/meta/arbitrary`), {value: "late write"}));
+  await assertFails(getDoc(doc(db, `accountDeletionJobs/${OWNER_ID}`)));
+  await assertFails(deleteDoc(doc(db, `accountDeletionLocks/${OWNER_ID}`)));
+});
+
 async function seedCollaboration() {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();

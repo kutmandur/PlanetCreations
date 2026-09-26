@@ -1,4 +1,19 @@
 const memory = new Map();
+let disabled = false;
+export async function clearIndexSnapshots() {
+    disabled = true;
+    memory.clear();
+    const db = await database();
+    if (!db) return;
+    try {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('snapshots', 'readwrite');
+            tx.objectStore('snapshots').clear();
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+        });
+    } finally { db.close(); }
+}
 const database = () => new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') { resolve(null); return; }
     const request = indexedDB.open('planetcreations-index-snapshots-v1', 1);
@@ -21,11 +36,12 @@ export async function readIndexSnapshot(key) {
     } catch { return null; } finally { db?.close(); }
 }
 export async function saveIndexSnapshot(key, value) {
+    if (disabled) return;
     memory.delete(key); memory.set(key, value);
     while (memory.size > 8) memory.delete(memory.keys().next().value);
     let db;
     try {
-        db = await database(); if (!db) return;
+        db = await database(); if (!db || disabled) return;
         await new Promise((resolve, reject) => {
             const tx = db.transaction('snapshots', 'readwrite');
             const store = tx.objectStore('snapshots');

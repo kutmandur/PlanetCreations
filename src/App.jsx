@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
+import AccountDeletionStatus from './components/ui/AccountDeletionStatus';
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -1135,6 +1136,7 @@ export default function App() {
         <QueryClientProvider client={queryClient}>
             <Router>
                 <AppContent />
+                <AccountDeletionStatus />
             </Router>
         </QueryClientProvider>
     );
