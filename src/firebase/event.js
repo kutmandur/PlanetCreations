@@ -15,7 +15,7 @@ export const deleteEvent = async (eventId) => {
     batch.delete(eventRef);
 
     // 2. Find all creations that were part of this event
-    const creationsQuery = query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId));
+    const creationsQuery = query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('eventIds', 'array-contains', eventId));
     const creationsSnapshot = await getDocs(creationsQuery);
 
     // 3. For each creation, remove the eventId from its eventIds array

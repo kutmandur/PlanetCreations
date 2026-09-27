@@ -89,6 +89,7 @@ export const COMMUNITY_PERMISSION_DEFINITIONS = [
         moderatorDefaultEnabled: true,
         group: 'Management permissions',
     },
+    {key:'manageModerationAppeals',rankField:'canManageModerationAppeals',label:'Manage moderation appeals',description:'View moderation decisions affecting this community and its showcases, and submit appeals to the platform moderation team.',defaultEnabled:false,moderatorDefaultEnabled:true,group:'Management permissions'},
 ];
 
 const buildRankPermissionDefaults = (role = 'custom') => Object.fromEntries(

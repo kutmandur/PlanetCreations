@@ -1,0 +1,30 @@
+import React from 'react';
+import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
+import ModerationNotices from './ModerationNotices';
+const state=vi.hoisted(()=>({list:vi.fn(),appeal:vi.fn(),navigate:vi.fn()}));
+vi.mock('../../firebase/config',()=>({db:{}}));
+vi.mock('react-router-dom',()=>({useNavigate:()=>state.navigate}));
+vi.mock('firebase/firestore',()=>({collection:vi.fn(),doc:vi.fn(),onSnapshot:vi.fn()}));
+vi.mock('firebase/functions',()=>({getFunctions:vi.fn(),httpsCallable:(_,name)=>name==='getCommunityModeration'?state.list:state.appeal}));
+afterEach(()=>{cleanup();vi.clearAllMocks();});
+test('community appeal uses the selected case and refreshes after acceptance',async()=>{
+ const item={id:'case',targetPath:'/showcase/showcase',status:'withhold',reason:'Review video',canAppeal:true,expiresAtMillis:Date.now()+86400000,updatedAtMillis:Date.now()};
+ state.list.mockResolvedValueOnce({data:{items:[item]}}).mockResolvedValue({data:{items:[{...item,status:'appealed',canAppeal:false}]}});
+ state.appeal.mockResolvedValue({data:{accepted:true}});
+ render(<ModerationNotices communityId="community"/>);
+ await screen.findByText('Review video');
+ expect(state.list).toHaveBeenCalledWith({communityId:'community'});
+ fireEvent.click(screen.getByRole('button',{name:'View content'}));
+ expect(state.navigate).toHaveBeenCalledWith('/showcase/showcase');
+ fireEvent.change(screen.getByRole('textbox',{name:'Reason for appeal'}),{target:{value:'Please check the context'}});
+ fireEvent.click(screen.getByRole('button',{name:'Request another review'}));
+ await waitFor(()=>expect(state.appeal).toHaveBeenCalledWith({caseId:'case',reason:'Please check the context'}));
+ await screen.findByText(/Your appeal has been received/);
+ expect(screen.queryByRole('button',{name:'Request another review'})).not.toBeInTheDocument();
+});
+test('permission rejection exposes no decisions or appeal actions',async()=>{
+ state.list.mockRejectedValue(new Error('Community moderation appeal permission required.'));
+ render(<ModerationNotices communityId="community"/>);
+ await screen.findByText('Community moderation appeal permission required.');
+ expect(screen.queryByRole('button',{name:'Request another review'})).not.toBeInTheDocument();
+});

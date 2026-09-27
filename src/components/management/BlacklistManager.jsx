@@ -1,6 +1,5 @@
+import {getFunctions, httpsCallable} from 'firebase/functions';
 import React, { useState, useMemo } from 'react';
-import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { db } from '../../firebase/config';
 import Spinner from '../ui/Spinner';
 
 const Highlight = ({ text, highlight }) => {
@@ -39,9 +38,8 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
         }
 
         setLoading(true);
-        const blacklistRef = doc(db, 'meta', 'blacklist');
         try {
-            await updateDoc(blacklistRef, { words: arrayUnion(wordToAdd) });
+            await httpsCallable(getFunctions(), 'updateContentPolicy')({action:'add',word:wordToAdd});
             setNewWord('');
         } catch (error) {
             setModalMessage(`Error adding word: ${error.message}`);
@@ -52,9 +50,8 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
 
     const handleDeleteWord = async (wordToDelete) => {
         setLoading(true);
-        const blacklistRef = doc(db, 'meta', 'blacklist');
         try {
-            await updateDoc(blacklistRef, { words: arrayRemove(wordToDelete) });
+            await httpsCallable(getFunctions(), 'updateContentPolicy')({action:'remove',word:wordToDelete});
         } catch (error) {
             setModalMessage(`Error deleting word: ${error.message}`);
         } finally {
@@ -71,6 +68,8 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <h2 className="text-2xl font-bold mb-4">Manage Blacklist</h2>
+            <p className="mb-3 text-sm">Terms are checked on the server and in Firestore rules. Draft text is kept for correction. Review terms carefully to avoid blocking ordinary game descriptions.</p>
+            <button className="mb-4 underline" disabled={loading} onClick={async()=>{setLoading(true);try{await httpsCallable(getFunctions(),'updateContentPolicy')({action:'publish'});setModalMessage('Current text policy published.');}catch(error){setModalMessage(error.message);}finally{setLoading(false);}}}>Publish current terms to the shared policy</button>
             <div className="flex space-x-2 mb-4">
                 <input
                     type="text"
@@ -106,7 +105,7 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
                     </div>
                 ) : (
                     <p className="text-gray-500">
-                        {blacklist.length > 0 ? 'No matching words found.' : 'The blacklist is currently empty.'}
+                        {blacklist.length > 0 ? 'No matching words found.' : 'No custom terms configured. The standard safety terms remain active.'}
                     </p>
                 )}
             </div>

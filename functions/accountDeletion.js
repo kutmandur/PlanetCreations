@@ -34,7 +34,7 @@ function createAccountDeletionService({db, auth, services, now = Date.now, grace
         const token = suppliedReceipt || randomBytes(32).toString("hex");
         const existing = await jobs.doc(uid).get();
         if (existing.exists) {
-            if (existing.data().receiptHash === hash(token)) return {accepted: true, receipt: token, state: existing.data().state};
+            if (existing.data().receiptHash === hash(token)) return {accepted: true, receipt: token, ...(await status(token))};
             throw new HttpsError("failed-precondition", "Account deletion is already in progress. Use the saved receipt.");
         }
         const account = await auth.getUser(uid).catch(error => {
@@ -56,16 +56,19 @@ function createAccountDeletionService({db, auth, services, now = Date.now, grace
                 notBefore: Timestamp.fromMillis(now() + graceMs), email: account.email || (trusted ? deletedEmail : null),
                 username: profile.data()?.username?.toLowerCase() || null, receiptHash: hash(token)});
             tx.create(db.doc(`accountDeletionLocks/${uid}`), {createdAt: Timestamp.fromMillis(now())});
-            tx.create(db.doc(`accountDeletionReceipts/${hash(token)}`), {uid, state: "pending", phase: "drain"});
+            tx.create(db.doc(`accountDeletionReceipts/${hash(token)}`), {uid, state: "pending", phase: "drain", acceptedAt: Timestamp.fromMillis(now()), earliestProcessingAt: Timestamp.fromMillis(now() + graceMs)});
         });
-        return {accepted: true, receipt: token, state: "pending"};
+        return {accepted: true, receipt: token, ...(await status(token))};
     }
     async function status(token) {
         if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) throw new HttpsError("invalid-argument", "Invalid deletion receipt.");
         const receipt = await db.doc(`accountDeletionReceipts/${hash(token)}`).get();
         if (!receipt.exists) throw new HttpsError("not-found", "Deletion receipt not found.");
-        const {state, phase} = receipt.data();
-        return {state, phase};
+        const data = receipt.data();
+        if (data.expiresAt?.toMillis() <= now()) return {state: 'expired'};
+        const timestamps = Object.fromEntries(['acceptedAt','earliestProcessingAt','completedAt','expiresAt'].map(key => [key, data[key]?.toMillis?.() || null]));
+        return {state: data.state, phase: data.phase, ...timestamps,
+            needsAttention: data.state !== 'complete' && Boolean(timestamps.acceptedAt && now() - timestamps.acceptedAt > 24 * 3600000)};
     }
     async function page(job, collection, work) {
         let query = db.collection(collection).orderBy(FieldPath.documentId()).limit(PAGE_SIZE);
@@ -100,6 +103,7 @@ function createAccountDeletionService({db, auth, services, now = Date.now, grace
                 const uploadDeadline = operations.docs.reduce((latest, op) => Math.max(latest, op.data().expiresAt.toMillis() + 10 * 60 * 1000), job.notBefore.toMillis());
                 if (uploadDeadline > job.notBefore.toMillis()) {
                     await ref.update({notBefore: Timestamp.fromMillis(uploadDeadline)});
+                    await receipt.update({earliestProcessingAt: Timestamp.fromMillis(uploadDeadline)});
                     return;
                 }
                 for (const op of operations.docs) {

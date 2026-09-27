@@ -1,3 +1,6 @@
+vi.mock('../ui/ModerationNotices', () => ({ default: () => <div>Content reviews</div> }));
+const testLocation = vi.hoisted(() => ({ search: '' }));
+vi.mock('react-router-dom', () => ({ useLocation: () => testLocation }));
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -17,7 +20,13 @@ vi.mock('../ui/PersonalizationSettings', () => ({ default: () => <div>Feed prefe
 vi.mock('../modals/InfluencerApplicationModal', () => ({ default: () => null }));
 
 const user = { uid: 'test', emailVerified: true };
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setPersonalThemeUser(null); delete window.electronAPI; });
+beforeEach(() => { testLocation.search=''; vi.clearAllMocks(); localStorage.clear(); setPersonalThemeUser(null); delete window.electronAPI; });
+
+it('opens content reviews directly from a notification on narrow screens', () => {
+    testLocation.search='?section=reviews&case=test-review';
+    render(<SettingsPage user={user} setModalMessage={vi.fn()} />);
+    expect(screen.getByText('Content reviews', {selector:'div'})).toBeVisible();
+});
 afterEach(() => { cleanup(); setPersonalThemeUser(null); delete window.electronAPI; });
 
 it('keeps client-only preferences out of normal browser settings', () => {

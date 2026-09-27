@@ -18,5 +18,6 @@ export const getCommunityManagerTabs = (
   ),
   ...(permissions?.manageEvents ? ['Events'] : []),
   ...(permissions?.manageShowcases ? ['Showcases'] : []),
+  ...(permissions?.manageModerationAppeals ? ['Moderation'] : []),
   ...(canManageSettings ? ['Settings'] : []),
 ];

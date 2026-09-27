@@ -75,7 +75,8 @@ test("durable deletion requires community confirmation and retries failures befo
     fail = false;
     for (let i = 0; i < 3; i++) await service.run(uid);
     assert.equal(deletedAuth, true);
-    assert.deepEqual(await service.status(result.receipt), {state: "complete", phase: "complete"});
+    assert.equal((await service.status(result.receipt)).state, "complete");
+    assert.equal((await service.status(result.receipt)).expiresAt - (await service.status(result.receipt)).completedAt, 30 * 86400000);
     assert.equal((await db.doc(`accountDeletionJobs/${uid}`).get()).exists, false);
 });
 
@@ -85,7 +86,7 @@ test("collaboration transfers owner, removes personal saves and anonymizes histo
     const uid = "lifecycle-owner", other = "lifecycle-successor";
     await db.doc(`users/${other}`).set({role: "user"});
     await db.doc(`accountDeletionLocks/${other}`).delete();
-    await ref.set({ownerId: uid, memberIds: [uid, other], currentVersion: {uploadedBy: uid}, buildLock: {activeBuilderId: uid}});
+    await ref.set({galleryOwnerId:uid,galleryImageUrls:['own-gallery'],bannerOwnerId:other,bannerImageUrl:'other-banner',ownerId: uid, memberIds: [uid, other], currentVersion: {uploadedBy: uid}, buildLock: {activeBuilderId: uid}});
     await ref.collection("members").doc(uid).set({role: "owner", username: "Private name"});
     await ref.collection("members").doc(other).set({role: "editor", username: "Remaining"});
     await ref.collection("comments").doc("history").set({authorId: uid, authorUsername: "Private name", authorAvatarUrl: "private-avatar", content: "History"});
@@ -93,6 +94,8 @@ test("collaboration transfers owner, removes personal saves and anonymizes histo
     await file.set({currentVersion: {uploadedBy: uid}});
     await file.collection("versions").doc("own").set({uploadedBy: uid, versionNumber: 2, storageKey: "collaboration-files/lifecycle-collab/save/own"});
     await file.collection("versions").doc("other").set({uploadedBy: other, versionNumber: 1, storageKey: "collaboration-files/lifecycle-collab/save/other"});
+    await ref.collection('todos').doc('personal-task').set({createdBy:uid,text:'Personal task details'});
+    await ref.collection('uploads').doc('other-history').set({userId:other,completedTodos:[{id:'personal-task',text:'Personal task details'}]});
     const deleted = [];
     const services = {deleteObjects: async keys => deleted.push(...keys), deleteCreation: doc => db.recursiveDelete(doc.ref),
         transferCreation: () => assert.fail("no publication"), deleteCollaboration: doc => db.recursiveDelete(doc.ref),
@@ -100,10 +103,13 @@ test("collaboration transfers owner, removes personal saves and anonymizes histo
     for (let i = 0; i < 2; i++) await removeAccountFromCollaboration(db, ref, uid, services);
     assert.deepEqual(deleted, ["collaboration-files/lifecycle-collab/save/own"]);
     assert.equal((await ref.get()).data().ownerId, other);
+    assert.deepEqual((await ref.get()).data().galleryImageUrls,[]);
+    assert.equal((await ref.get()).data().bannerImageUrl,'other-banner');
+    assert.equal((await ref.collection('uploads').doc('other-history').get()).data().completedTodos[0].text,'Content removed after account deletion.');
     assert.equal((await ref.get()).data().currentVersion.versionId, "other");
     assert.equal((await file.collection("versions").doc("other").get()).exists, true);
     assert.deepEqual((await ref.collection("comments").doc("history").get()).data(),
-        {authorId: null, authorUsername: "Deleted user", authorAvatarUrl: null, content: "History"});
+        {authorId: null, authorUsername: "Deleted user", authorAvatarUrl: null, content: "Content removed after account deletion.", contentDeleted: true});
     await removeAccountFromCollaboration(db, ref, other, services);
     assert.equal((await ref.get()).exists, false);
     assert.equal((await ref.collection("comments").doc("history").get()).exists, false);
@@ -234,7 +240,7 @@ test("real deletion endpoints clean a complete account in pages while preserving
         assert.equal((await endpoints.deleteOwnAccount.run(request)).receipt, result.receipt);
         await db.doc(`accountDeletionJobs/${uid}`).update({notBefore: new Date(0)});
         for (let i = 0; i < 40 && (await db.doc(`accountDeletionJobs/${uid}`).get()).exists; i++) await endpoints.resumeAccountDeletions.run({});
-        assert.deepEqual(await endpoints.getAccountDeletionStatus.run({data: {receipt: result.receipt}}), {state: 'complete', phase: 'complete'});
+        assert.equal((await endpoints.getAccountDeletionStatus.run({data: {receipt: result.receipt}})).state, 'complete');
         await assert.rejects(auth.getUser(uid), error => error.code === 'auth/user-not-found');
         assert.equal((await db.collection('creations').where('userId', '==', uid).get()).size, 0);
         assert.equal((await db.collection(`users/${uid}/following`).get()).size, 0);
@@ -244,4 +250,110 @@ test("real deletion endpoints clean a complete account in pages while preserving
         assert.equal((await db.doc(`applications/${uid}`).get()).exists, false);
         assert.deepEqual([...objects], [foreignObject]);
     } finally { sdk.S3Client.prototype.send = original; }
+});
+
+test("blocking suppresses both directions of personal notifications and preserves system messages", async () => {
+    const {setUserBlock, assertInteractionAllowed} = require('../functions/userBlocking');
+    for (const uid of ['block-a', 'block-b']) {
+        await db.doc(`users/${uid}`).set({});
+        await db.doc(`users/${uid}/meta/inbox`).set({items: [], unreadCount: 0});
+    }
+    await notifyUser('block-a', 'newFollower', {message:'before', relatedUserIds:['block-b']});
+    await db.doc('collaborationInvitationGrants/block-invite').set({senderId:'block-b',targetUserId:'block-a',status:'pending'});
+    await db.doc('communitys/block-community/invites/block-a').set({userId:'block-a',invitedBy:'block-b'});
+    await setUserBlock(db, 'block-a', {targetUserId:'block-b',blocked:true});
+    assert.equal((await db.doc('collaborationInvitationGrants/block-invite').get()).data().status,'cancelled');
+    assert.equal((await db.doc('communitys/block-community/invites/block-a').get()).exists,false);
+    assert.equal((await db.doc('users/block-a/meta/inbox').get()).data().items.length,0);
+    await assert.rejects(assertInteractionAllowed(db,'block-b','block-a'),e=>e.code==='permission-denied');
+    await notifyUser('block-a','newFollower',{message:'blocked',relatedUserIds:['block-b']});
+    await notifyUser('block-b','newFollower',{message:'blocked',relatedUserIds:['block-a']});
+    assert.equal((await db.doc('users/block-b/meta/inbox').get()).data().items.length,0);
+    await notifyUser('block-a','system',{message:'shared project state'});
+    assert.equal((await db.doc('users/block-a/meta/inbox').get()).data().items.length,1);
+    await setUserBlock(db,'block-a',{targetUserId:'block-b',blocked:false});
+    await assertInteractionAllowed(db,'block-a','block-b');
+    await notifyUser('block-b','newFollower',{message:'restored',relatedUserIds:['block-a']});
+    assert.equal((await db.doc('users/block-b/meta/inbox').get()).data().items.length,1);
+});
+
+test('report resolution, media review, appeal and restoration preserve saves and reject unauthorized actions',async()=>{
+    const {submitContentReport}=require('../functions/contentReporting');
+    const {reviewContentReport,appealContentDecision}=require('../functions/contentReview');
+    await db.doc('profiles/review-author').set({role:'user'});
+    await db.doc('profiles/review-staff').set({role:'moderator'});
+    await db.doc('communitys/review-community').set({slug:'review-slug',name:'Review community',ownerId:'review-author'});
+    const canonical=await submitContentReport(db,'review-reporter',{targetType:'community',targetSlug:'review-slug',reason:'Test report'});
+    assert.equal(canonical.targetId,'review-community');
+    assert.equal((await submitContentReport(db,'review-reporter',{targetType:'community',targetId:'review-community',reason:'Duplicate'})).duplicate,true);
+    const creation=db.doc('creations/review-creation');
+    await creation.set({userId:'review-author',title:'Park',imageUrls:['https://example.test/a','https://example.test/b'],backupObjectKey:'keep-save',likes:8});
+    await assert.rejects(submitContentReport(db,'review-reporter',{targetType:'creation',targetId:creation.id,mediaUrl:'https://foreign.test/a',reason:'Fake media'}),e=>e.code==='invalid-argument');
+    const report=await submitContentReport(db,'review-reporter',{targetType:'creation',targetId:creation.id,mediaUrl:'https://example.test/a',reason:'Please review'});
+    const reportSnap=(await db.collection('reports').where('markerId','==',report.markerId).get()).docs[0];
+    await assert.rejects(reviewContentReport(db,'review-author',{reportId:reportSnap.id,action:'withhold',reason:'No staff role'}),e=>e.code==='permission-denied');
+    await reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'withhold',reason:'Review media'});
+    assert.deepEqual((await creation.get()).data().imageUrls,['https://example.test/b']);
+    assert.equal((await creation.get()).data().backupObjectKey,'keep-save');
+    assert.equal((await creation.get()).data().likes,8);
+    const reviewRef=db.doc(`contentReviews/${reportSnap.id}`);
+    const expiry=(await reviewRef.get()).data().expiresAt.toMillis();
+    await assert.rejects(reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'dismiss',reason:'Cannot silently keep content hidden'}),e=>e.code==='failed-precondition');
+    await reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'reviewing',reason:'Reviewing retained content'});
+    assert.equal((await reviewRef.get()).data().expiresAt.toMillis(),expiry);
+    assert.equal((await db.doc(`users/review-author/moderationNotices/${reportSnap.id}`).get()).data().canAppeal,true);
+    await assert.rejects(appealContentDecision(db,'review-reporter',{caseId:reportSnap.id,reason:'Wrong author'}),e=>e.code==='permission-denied');
+    await appealContentDecision(db,'review-author',{caseId:reportSnap.id,reason:'Ordinary game image'});
+    assert.equal((await db.doc(`reports/${reportSnap.id}`).get()).data().status,'appealed');
+    await reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'restore',reason:'Confirmed game screenshot'});
+    assert.deepEqual((await creation.get()).data().imageUrls,['https://example.test/a','https://example.test/b']);
+    assert.equal((await db.doc(`contentReviews/${reportSnap.id}`).get()).data().original,undefined);
+    await assert.rejects(reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'reviewing',reason:'Already closed'}),e=>e.code==='failed-precondition');
+    await reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'withhold',reason:'Second review'});
+    await creation.update({imageUrls:['https://example.test/new']});
+    await assert.rejects(reviewContentReport(db,'review-staff',{reportId:reportSnap.id,action:'restore',reason:'Would overwrite edit'}),e=>e.code==='failed-precondition');
+    await removeReferences(db,'review-author');
+    assert.equal((await db.doc(`contentReviews/${reportSnap.id}`).get()).exists,false);
+});
+
+test('deletion receipts expose waiting, escalation and expiry without treating missing as complete',async()=>{
+    let now=1800000000000;
+    const uid='receipt-timing',receipt='d'.repeat(64);
+    await db.doc(`accountDeletionJobs/${uid}`).delete(); await db.doc(`accountDeletionLocks/${uid}`).delete();
+    const crypto=require('node:crypto');const receiptRef=db.doc(`accountDeletionReceipts/${crypto.createHash('sha256').update(receipt).digest('hex')}`);await receiptRef.delete();
+    const service=createAccountDeletionService({db,now:()=>now,auth:{getUser:async()=>({})},services:{}});
+    const accepted=await service.request(uid,{receipt});
+    assert.equal(accepted.earliestProcessingAt-accepted.acceptedAt,22*60000);
+    assert.equal(accepted.needsAttention,false);
+    now+=25*3600000;assert.equal((await service.status(receipt)).needsAttention,true);
+    const {Timestamp}=req('firebase-admin/firestore');
+    await receiptRef.set({state:'complete',phase:'complete',completedAt:Timestamp.fromMillis(now-31*86400000),expiresAt:Timestamp.fromMillis(now-86400000)});
+    assert.equal((await service.status(receipt)).state,'expired');
+    await receiptRef.delete();await assert.rejects(service.status(receipt),e=>e.code==='not-found');
+});
+
+test('collaboration deletion removes retained moderation history and author notices',async()=>{
+ const {deleteCollaborationReviews}=require('../functions/contentReview');
+ await db.doc('contentReviews/collab-review').set({collaborationId:'review-collab',authorId:'remaining-author',original:{text:'private'}});
+ await db.doc('users/remaining-author/moderationNotices/collab-review').set({status:'withhold'});
+ await db.doc('reports/collab-review').set({collaborationId:'review-collab'});
+ await deleteCollaborationReviews(db,'review-collab');
+ await deleteCollaborationReviews(db,'review-collab');
+ for(const path of ['contentReviews/collab-review','users/remaining-author/moderationNotices/collab-review','reports/collab-review']) assert.equal((await db.doc(path).get()).exists,false);
+});
+
+test('new task snapshots use canonical authorship and cannot resurrect deleted author text',async()=>{
+ const uid='snapshot-builder',author='snapshot-author',collaborationId='snapshot-collab';
+ await db.doc(`users/${uid}`).set({}); await db.doc(`users/${author}`).set({});
+ await db.doc(`collaborations/${collaborationId}`).set({status:'active'});
+ await db.doc(`collaborations/${collaborationId}/members/${uid}`).set({role:'editor'});
+ await db.doc(`collaborations/${collaborationId}/uploads/update`).set({userId:uid});
+ await db.doc(`collaborations/${collaborationId}/todos/task`).set({createdBy:author,text:'Actual task'});
+ const invoke=()=>endpoints.updateCollaborationChangelogEntry.run({auth:{uid,token:{}},data:{collaborationId,changelogEntryId:'update',text:'Built station',imageUrls:[],completedTodos:[{id:'task',text:'Caller supplied text',createdBy:uid}]}});
+ await invoke();
+ const entry=db.doc(`collaborations/${collaborationId}/uploads/update`);
+ assert.deepEqual((await entry.get()).data().completedTodos,[{id:'task',text:'Actual task',createdBy:author}]);
+ await db.doc(`accountDeletionLocks/${author}`).set({state:'deleting'});
+ await invoke();
+ assert.deepEqual((await entry.get()).data().completedTodos,[{id:'task',text:'Content removed after account deletion.',createdBy:null}]);
 });

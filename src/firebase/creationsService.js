@@ -7,7 +7,7 @@ export const fetchCreations = async ({ pageParam = null, queryKey }) => {
     const [, activeTab, sortBy] = queryKey;
     const [sortField, sortDirection] = sortBy.split('_');
     let creationsQuery = query(
-        collection(db, 'creations'),
+        collection(db, 'creations'), where('moderationWithheld', '==', false),
         where('game', '==', activeTab),
         orderBy(sortField, sortDirection || 'desc'),
         limit(ITEMS_PER_PAGE)

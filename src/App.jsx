@@ -1,3 +1,6 @@
+import {submitContentReport} from './firebase/contentReporting';
+import UserBlockingProvider from './components/ui/UserBlockingProvider';
+import AccountRoute from './components/auth/AccountRoute';
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, HashRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
@@ -70,6 +73,8 @@ import {
     COMMUNITY_GUIDELINES,
     MINIMUM_AGE_NOTICE,
     PRIVACY_POLICY,
+    ACCOUNT_DELETION_NOTICE,
+    CONTENT_REVIEW_NOTICE,
     TERMS_OF_SERVICE_FALLBACK,
 } from './content/legalContent';
 
@@ -890,7 +895,7 @@ const AppContent = () => {
     const reportableContent = getReportableContent(location.pathname);
     const showProfileWizard = Boolean(
         user && userProfile && !isOfflineMode && !isGameOverlay &&
-        userProfile.needsProfileSetup && !profileWizardDismissed
+        userProfile.needsProfileSetup && !profileWizardDismissed && location.pathname !== '/settings'
     );
 
     // Während des Wizards Klicks im Header abfangen (außer dem Theme-Toggle, der
@@ -909,31 +914,14 @@ const AppContent = () => {
             return;
         }
         if (!reportableContent) return;
-        const markerRef = doc(db, 'users', user.uid, 'reportedItems', reportableContent.markerId);
-        if ((await getDoc(markerRef)).exists()) {
-            setModalMessage('You have already reported this content.');
-            return;
-        }
         setReportModal({
             ...reportableContent,
-            onConfirm: async (reason) => {
+            onConfirm: async (reason, category, mediaUrl) => {
                 try {
-                    const batch = writeBatch(db);
-                    batch.set(doc(collection(db, 'reports')), {
-                        ...reportableContent,
-                        reason,
-                        reporterId: user.uid,
-                        timestamp: serverTimestamp(),
-                    });
-                    batch.set(markerRef, {
-                        reportedAt: serverTimestamp(),
-                        targetId: reportableContent.targetId,
-                        targetType: reportableContent.targetType,
-                    });
-                    await batch.commit();
+                    await submitContentReport({...reportableContent, ...(mediaUrl?{mediaUrl}:{})}, reason, category);
                     setModalMessage('Content reported successfully. Our moderation team will review it.');
                 } catch (error) {
-                    setModalMessage(`Error submitting report: ${error.message}`);
+                    throw error;
                 }
             },
         });
@@ -960,8 +948,8 @@ const AppContent = () => {
             {confirmation && <ConfirmationModal message={confirmation.message} onConfirm={() => { confirmation.onConfirm(); setConfirmation(null); }} onCancel={() => setConfirmation(null)} />}
             {externalLink && <ExternalLinkModal url={externalLink} onConfirm={() => { if (isSafeHttpUrl(externalLink)) { window.open(externalLink, '_blank', 'noopener,noreferrer'); } setExternalLink(null); }} onCancel={() => setExternalLink(null)} activeTab={activeTab} />}
             {passwordConfirm && <PasswordConfirmationModal message={passwordConfirm.message} onConfirm={(password) => { passwordConfirm.onConfirm(password); setPasswordConfirm(null); }} onCancel={() => setPasswordConfirm(null)} />}
-            {reportModal && <ReportModal targetType={reportModal.targetType || reportModal.type} onConfirm={(reason) => { reportModal.onConfirm(reason); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
-            {strikeModal && <StrikeModal onConfirm={(reason) => { strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
+            {reportModal && <ReportModal targetType={reportModal.targetType || reportModal.type} initialCategory={reportModal.mediaUrl ? 'images' : 'other'} targetId={reportModal.targetId} initialMediaUrl={reportModal.mediaUrl} onConfirm={async (reason, category, mediaUrl) => { await reportModal.onConfirm(reason, category, mediaUrl); setReportModal(null); }} onCancel={() => setReportModal(null)} blacklist={blacklist} />}
+            {strikeModal && <StrikeModal onConfirm={async(reason) => { await strikeModal.onConfirm(reason); setStrikeModal(null); }} onCancel={() => setStrikeModal(null)} />}
             {popoverView && <PopoverModal onClose={() => setPopoverView(null)}>
                 <Suspense fallback={<div className="h-64 flex justify-center items-center"><Spinner /></div>}>
                     {renderPopoverContent()}
@@ -1005,6 +993,8 @@ const AppContent = () => {
                 <Navbar user={user} userProfile={userProfile} onLogout={handleLogout} notifications={notifications} className="flex-shrink-0" setModalMessage={setModalMessage} onReportBug={() => setIsBugReportOpen(true)} />
             )}
 
+            {showProfileWizard && <PreloadLink to="/settings" className="p-3 text-center underline">Account settings, privacy and account deletion</PreloadLink>}
+
             {showVerificationBanner && !isOfflineMode && (
                 <div className="bg-yellow-400 text-center p-2 text-yellow-900 font-semibold flex-shrink-0">
                     Your email is not verified...
@@ -1044,15 +1034,15 @@ const AppContent = () => {
                             <Route path="/showcase/:showcaseId" element={<ShowcasePage />} />
                             <Route path="/overlay/showcase" element={<OverlayShowcasePage localClientId={localClientIdentity?.clientId || ''} />} />
                             <Route path="/terms-of-service" element={<LegalPage userProfile={userProfile} docId="termsOfService" title="Terms of Service" fallbackContent={TERMS_OF_SERVICE_FALLBACK} requiredNotice={MINIMUM_AGE_NOTICE} setModalMessage={setModalMessage} />} />
-                            <Route path="/privacy" element={<LegalPage userProfile={userProfile} docId="privacyPolicy" title="Privacy Policy" fallbackContent={PRIVACY_POLICY} setModalMessage={setModalMessage} />} />
-                            <Route path="/community-guidelines" element={<LegalPage userProfile={userProfile} docId="communityGuidelines" title="Community Content Guidelines" fallbackContent={COMMUNITY_GUIDELINES} setModalMessage={setModalMessage} />} />
+                            <Route path="/privacy" element={<LegalPage userProfile={userProfile} docId="privacyPolicy" title="Privacy Policy" fallbackContent={PRIVACY_POLICY} requiredNotice={<><p>{ACCOUNT_DELETION_NOTICE}</p><p className="mt-4">{CONTENT_REVIEW_NOTICE}</p></>} setModalMessage={setModalMessage} />} />
+                            <Route path="/community-guidelines" element={<LegalPage userProfile={userProfile} docId="communityGuidelines" title="Community Content Guidelines" fallbackContent={COMMUNITY_GUIDELINES} requiredNotice={CONTENT_REVIEW_NOTICE} setModalMessage={setModalMessage} />} />
                             <Route path="/impressum" element={<LegalPage userProfile={userProfile} docId="impressum" title="Impressum / Legal Notice" setModalMessage={setModalMessage} />} />
                             <Route path="/event/:eventId" element={<EventDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} setPopoverView={setPopoverView} blacklist={blacklist} />} />
                             <Route path="/client-info" element={<ClientInfoPage />} />
                             <Route path="/collaboration/:collaborationId" element={<ProtectedRoute user={user} userProfile={userProfile}><CollaborationDetailPage user={user} userProfile={userProfile} setModalMessage={setModalMessage} setConfirmation={setConfirmation} /></ProtectedRoute>} />
                             <Route path="/collaboration/join/:inviteCode" element={<JoinCollaborationPage user={user} setModalMessage={setModalMessage} />} />
 
-                            <Route path="/settings" element={<ProtectedRoute user={user} userProfile={userProfile}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></ProtectedRoute>} />
+                            <Route path="/settings" element={<AccountRoute user={user}><SettingsPage user={user} setModalMessage={setModalMessage} setConfirmation={setConfirmation} activeTab={activeTab} /></AccountRoute>} />
                             <Route path="/profile/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><EditProfilePage user={user} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/create" element={<ProtectedRoute user={user} userProfile={userProfile}><CreationForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} initialGame={activeTab} blacklist={blacklist} /></ProtectedRoute>} />
                             <Route path="/creation/:id/edit" element={<ProtectedRoute user={user} userProfile={userProfile}><CreationForm user={user} userProfile={userProfile} setModalMessage={setModalMessage} blacklist={blacklist} /></ProtectedRoute>} />
@@ -1135,7 +1125,7 @@ export default function App() {
     return (
         <QueryClientProvider client={queryClient}>
             <Router>
-                <AppContent />
+                <UserBlockingProvider><AppContent /></UserBlockingProvider>
                 <AccountDeletionStatus />
             </Router>
         </QueryClientProvider>

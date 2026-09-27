@@ -14,6 +14,7 @@ import GamesManager from '../management/GamesManager';
 import Spinner from '../ui/Spinner';
 import ApplicationCard from '../cards/ApplicationCard';
 import PillTabs from '../ui/PillTabs';
+import ReviewHistoryManager from '../management/ReviewHistoryManager';
 
 const DLC_SEED_DATA = Object.freeze({
     'planet-coaster': [
@@ -75,7 +76,7 @@ const StatCard = ({ title, value, colorClass = 'bg-blue-500', style }) => (
     </div>
 );
 
-const ADMIN_TABS = ['User Management', 'Games & Data', 'Startpage', 'Bug Reports', 'Site Statistics'];
+const ADMIN_TABS = ['User Management', 'Games & Data', 'Startpage', 'Bug Reports', 'Review History', 'Site Statistics'];
 const USER_MANAGEMENT_TABS = ['All Users', 'Applications', 'Influencers', 'Email Export'];
 const STARTPAGE_TABS = ['Search Indexes', 'Feed'];
 
@@ -91,6 +92,7 @@ const ADMIN_ROUTE_TARGETS = Object.freeze({
     feed: { tab: 'Startpage', section: 'Feed' },
     startpage: { tab: 'Startpage', section: 'Search Indexes' },
     'bug-reports': { tab: 'Bug Reports' },
+    'review-history': {tab:'Review History'},
     'site-statistics': { tab: 'Site Statistics' },
     statistics: { tab: 'Site Statistics' },
 });
@@ -744,6 +746,8 @@ const AdminPage = ({ setPopoverView, setModalMessage, setPasswordConfirm }) => {
         }
 
         switch (selectedPanel) {
+            case 'Review History':
+                return <ReviewHistoryManager />;
             case 'User Management':
                 return (
                     <div className={`transition-opacity ${isPending ? 'opacity-50' : 'opacity-100'}`}>

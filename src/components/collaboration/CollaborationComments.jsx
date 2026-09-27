@@ -1,3 +1,5 @@
+import ContentReportButton from '../ui/ContentReportButton';
+import {useUserBlocks} from '../../contexts/BlockingContext';
 import {useQueries} from '@tanstack/react-query';
 import {doc, getDoc} from 'firebase/firestore';
 import {db} from '../../firebase/config';
@@ -6,7 +8,10 @@ import { Link } from 'react-router-dom';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
 
-const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
+const AuthorLink = ({uid, children, ...props}) => uid ? <Link to={`/profile/${uid}`} {...props}>{children}</Link> : <span {...props}>{children}</span>;
+
+const CollaborationComments = ({ comments, currentUserId, onAddComment, collaborationId }) => {
+    const {isBlocked} = useUserBlocks();
     const authorIds = [...new Set(comments.map(comment => comment.authorId).filter(Boolean))];
     const profiles = useQueries({queries: authorIds.map(uid => ({
         queryKey: ['public-author-profile', uid], staleTime: 5 * 60 * 1000,
@@ -54,7 +59,7 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
     // Group comments by date
     const groupedComments = comments.reduce((groups, rawComment) => {
         const author = authors.get(rawComment.authorId);
-        const comment = {...rawComment, authorUsername: author?.username || 'Community member', authorAvatarUrl: author?.profilePictureUrl || null};
+        const comment = {...rawComment, authorUsername: rawComment.authorId ? author?.username || 'Community member' : 'Deleted user', authorAvatarUrl: author?.profilePictureUrl || null};
         const date = comment.createdAt?.toDate?.() || new Date();
         const dateKey = date.toDateString();
 
@@ -101,12 +106,12 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
                                 return (
                                     <div
                                         key={comment.id}
+                                        id={`comment-${comment.id}`}
                                         className={`flex gap-3 ${isOwn ? 'flex-row-reverse' : ''} ${!showAvatar ? 'mt-1' : 'mt-4'}`}
                                     >
                                         {/* Avatar */}
                                         {showAvatar ? (
-                                            <Link
-                                                to={`/profile/${comment.authorId}`}
+                                            <AuthorLink uid={comment.authorId}
                                                 className="flex-shrink-0"
                                             >
                                                 {comment.authorAvatarUrl ? (
@@ -122,21 +127,21 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
                                                         </span>
                                                     </div>
                                                 )}
-                                            </Link>
+                                            </AuthorLink>
                                         ) : (
                                             <div className="w-8 flex-shrink-0" />
                                         )}
 
+                                        {collaborationId && <ContentReportButton target={{targetType:"comment",targetId:comment.id,parentId:collaborationId}} label="Report comment" />}
                                         {/* Message Bubble */}
                                         <div className={`max-w-[70%] ${isOwn ? 'items-end' : 'items-start'}`}>
                                             {showAvatar && (
                                                 <div className={`flex items-center gap-2 mb-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
-                                                    <Link
-                                                        to={`/profile/${comment.authorId}`}
+                                                    <AuthorLink uid={comment.authorId}
                                                         className="text-sm font-medium text-gray-700 hover:text-purple-600"
                                                     >
                                                         {comment.authorUsername}
-                                                    </Link>
+                                                    </AuthorLink>
                                                     <span className="text-xs text-gray-400">
                                                         {formatTime(comment.createdAt)}
                                                     </span>
@@ -150,7 +155,7 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment }) => {
                                                 }`}
                                             >
                                                 <p className="text-sm whitespace-pre-wrap break-words">
-                                                    {comment.content}
+                                                    {isBlocked(comment.authorId) ? 'Comment hidden because you blocked this account.' : comment.content}
                                                 </p>
                                             </div>
                                         </div>

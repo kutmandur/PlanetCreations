@@ -62,7 +62,7 @@ const StreamManagement = ({
         enabled: Boolean(user?.uid),
         staleTime: 2 * 60 * 1000,
         queryFn: async () => {
-            const snapshot = await getDocs(query(collection(db, 'creations'), where('userId', '==', user.uid)));
+            const snapshot = await getDocs(query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('userId', '==', user.uid)));
             return snapshot.docs
                 .map((item) => ({ id: item.id, ...item.data() }))
                 .filter((creation) => !creation.sourceCollaborationId)

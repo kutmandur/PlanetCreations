@@ -7,6 +7,44 @@ service cloud.firestore {
       return request.auth != null &&
         !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.auth.uid));
     }
+    function accountCanWrite() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid)/moderation/state;
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return request.auth != null && (!exists(userPath) || get(userPath).data.get('role', 'user') != 'banned') && (!exists(path) ||
+        (get(path).data.get('banned', false) == false &&
+        (get(path).data.get('suspendedUntil', null) == null || get(path).data.suspendedUntil <= request.time)));
+    }
+    match /users/{userId}/moderation/{id} {
+      allow read: if isOwner(userId) || isModerator();
+      allow write: if accountCanWrite() && (false);
+    }
+    match /users/{userId}/moderationHistory/{id} {
+      allow read: if isOwner(userId) || isModerator();
+      allow write: if accountCanWrite() && (false);
+    }
+    function canInteract(a, b) {
+      return a == b || (!exists(/databases/$(database)/documents/users/$(a)/blocks/$(b)) &&
+        !exists(/databases/$(database)/documents/users/$(b)/blocks/$(a)));
+    }
+    match /moderationIndexBlocks/{id} {
+      allow read: if isModerator();
+      allow write: if false;
+    }
+    match /moderationIndexState/{id} {
+      allow read: if isModerator();
+      allow write: if false;
+    }
+    match /moderationArchiveBlocks/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /moderationArchiveState/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /moderationIndexLocations/{id} {
+      allow read, write: if false;
+    }
     function isOwner(userId) {
       return isLoggedIn() && request.auth.uid == userId;
     }
@@ -34,9 +72,24 @@ service cloud.firestore {
       let communityPath = /databases/$(database)/documents/communitys/$(communityId);
       let invitePath = /databases/$(database)/documents/communitys/$(communityId)/invites/$(userId);
       return get(communityPath).data.get('joinMode', 'open') == 'open' ||
-        exists(invitePath);
+        (exists(invitePath) && canInteract(userId, get(invitePath).data.invitedBy));
     }
 
+    // A server-published, escaped expression is shared with callable validation.
+    // A missing or empty policy uses the same conservative baseline as the server.
+    function acceptableText(value) {
+      let policy = /databases/$(database)/documents/meta/blacklist;
+      let baseline = '(^|.*[^a-z0-9_])(child pornography|child porn|rape you|kill yourself|kinderpornografie|kinderpornographie|bring dich um)([^a-z0-9_].*|$)';
+      let pattern = exists(policy) && get(policy).data.get('words', []).size() > 0 &&
+        get(policy).data.get('pattern', '^a^') != '^a^'
+        ? get(policy).data.pattern : baseline;
+      return value is string && !value.lower().replace('[​‌‍﻿]', '').matches('(?s)' + pattern);
+    }
+    function acceptableContent(data) {
+      return acceptableText(data.get('title', '')) && acceptableText(data.get('description', '')) &&
+        acceptableText(data.get('name', '')) && acceptableText(data.get('bio', '')) &&
+        acceptableText(data.get('message', '')) && acceptableText(data.get('content', '')) && acceptableText(data.get('text', '')) && acceptableText(data.get('note', ''));
+    }
     // --- Data Validation Functions ---
 
     function hasNoServerBackupFields(data) {
@@ -117,8 +170,14 @@ service cloud.firestore {
     // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
+    function validChangelogChange(data, existing) {
+      let old = existing.get('changelog', []);
+      let next = data.get('changelog', []);
+      return next == old || (next is list && next.size() == old.size() + 1 &&
+        next[0:old.size()] == old && acceptableText(next[old.size()].get('text', '')));
+    }
     function isValidCreationCreate(data) {
-      return data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&
+      return data.get('moderationWithheld', false) == false && data.get('moderationHolds', {}) == {} && acceptableContent(data) && validChangelogChange(data, {}) && data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              (
                exists(/databases/$(database)/documents/meta/games)
@@ -137,12 +196,12 @@ service cloud.firestore {
              data.get('activityScore', 0) == 0 && data.get('activityAt', null) == null &&
              data.get('liveStream', null) == null &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20;
+             data.tags is list && acceptableText(data.tags.join(' ')) && data.tags.size() > 0 && data.tags.size() <= 20;
     }
 
     // Validiert Creation-Daten bei Update (verhindert Likes-Manipulation durch normale User)
     function isValidCreationUpdate(data, existing) {
-      return data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+      return data.get('moderationWithheld', false) == existing.get('moderationWithheld', false) && data.get('moderationHolds', {}) == existing.get('moderationHolds', {}) && acceptableContent(data) && validChangelogChange(data, existing) && data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              data.userId == existing.userId &&
              data.game == existing.game &&
              data.get('likes', 0) == existing.get('likes', 0) &&
@@ -151,7 +210,7 @@ service cloud.firestore {
              data.get('reportCount', 0) == existing.get('reportCount', 0) &&
              isValidParkRidePresentation(data) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             data.tags is list && data.tags.size() > 0 && data.tags.size() <= 20 &&
+             data.tags is list && acceptableText(data.tags.join(' ')) && data.tags.size() > 0 && data.tags.size() <= 20 &&
              // Activity-Score wird nur serverseitig gepflegt (onCreationActivityScore,
              // Admin SDK umgeht Rules) — Clients dürfen ihn nicht manipulieren.
              data.get('activityScore', 0) == existing.get('activityScore', 0) &&
@@ -172,7 +231,7 @@ service cloud.firestore {
 
     // Validiert Profile-Daten
     function isValidProfileData(data) {
-      return (!('username' in data.keys()) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 30)) &&
+      return acceptableContent(data) && acceptableText(data.get('username', '')) && (!('username' in data.keys()) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 30)) &&
              (!('bio' in data.keys()) || (data.bio is string && data.bio.size() <= 500));
     }
 
@@ -196,7 +255,7 @@ service cloud.firestore {
     }
 
     function isValidCommunityData(data) {
-      return data.keys().hasAll(['name', 'ownerId']) &&
+      return acceptableContent(data) && data.keys().hasAll(['name', 'ownerId']) &&
              data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 2000)) &&
              (!('membersOnlyInfoPage' in data.keys()) || data.membersOnlyInfoPage is bool) &&
@@ -210,11 +269,11 @@ service cloud.firestore {
 
       // ✅ FIX: Separated 'write' into specific create, update, and delete rules.
       // This ensures the correct variables are used for each operation.
-      allow create: if isLoggedIn() &&
+      allow create: if accountCanWrite() && (isLoggedIn() && acceptableContent(request.resource.data) &&
           request.resource.data.creatorId == request.auth.uid &&
           !request.resource.data.keys().hasAny(['voteSchemaVersion', 'autoPostedSubmissions']) &&
-          (communityMemberCan(request.resource.data.communityId, 'createEvents') || isModerator());
-      allow update: if isLoggedIn() &&
+          (communityMemberCan(request.resource.data.communityId, 'createEvents') || isModerator()));
+      allow update: if accountCanWrite() && (isLoggedIn() && acceptableContent(request.resource.data) &&
           request.resource.data.communityId == resource.data.communityId &&
           request.resource.data.get('voteSchemaVersion', null) == resource.data.get('voteSchemaVersion', null) &&
           request.resource.data.get('autoPostedSubmissions', {}) == resource.data.get('autoPostedSubmissions', {}) &&
@@ -223,41 +282,41 @@ service cloud.firestore {
           isModerator() ||
           (resource.data.creatorId == request.auth.uid &&
            communityMemberCan(resource.data.communityId, 'createEvents'))
-      );
-      allow delete: if isLoggedIn() && (
+      ));
+      allow delete: if accountCanWrite() && (isLoggedIn() && (
           communityMemberCan(resource.data.communityId, 'manageEvents') ||
           isModerator() ||
           (resource.data.creatorId == request.auth.uid &&
            communityMemberCan(resource.data.communityId, 'createEvents'))
-      );
+      ));
       
       match /voters/{userId} {
         allow read: if true;
-        allow create: if false;
-        allow delete: if communityMemberCan(
+        allow create: if accountCanWrite() && (false);
+        allow delete: if accountCanWrite() && (communityMemberCan(
           get(/databases/$(database)/documents/events/$(eventId)).data.communityId,
           'manageEvents'
-        ) || isModerator();
+        ) || isModerator());
       }
     }
 
     match /events/{eventId}/ballots/{userId} {
       allow read: if isLoggedIn() && (isOwner(userId) || isModerator());
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /events/{eventId}/voteTotals/{shardId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
 
     match /communitys/{communityId} {
       allow read: if true;
-      allow create: if (isInfluencer() || isModerator()) &&
+      allow create: if accountCanWrite() && ((isInfluencer() || isModerator()) &&
         isValidCommunityData(request.resource.data) &&
         !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.resource.data.ownerId)) &&
         isValidCommunitySlug(request.resource.data.get('slug', '')) &&
-        (isAdmin() || !('isPartner' in request.resource.data.keys()));
-      allow update: if isLoggedIn() &&
+        (isAdmin() || !('isPartner' in request.resource.data.keys())));
+      allow update: if accountCanWrite() && (isLoggedIn() &&
         isValidCommunityData(request.resource.data) &&
         (request.resource.data.ownerId == resource.data.ownerId ||
           !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.resource.data.ownerId))) &&
@@ -275,8 +334,8 @@ service cloud.firestore {
             communityMemberCan(communityId, 'manageShowcases') &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['showcaseGroups'])
           )
-        );
-      allow delete: if isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin());
+        ));
+      allow delete: if accountCanWrite() && (isLoggedIn() && (get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid || isAdmin()));
 
       match /members/{userId} {
         allow read: if true;
@@ -284,7 +343,7 @@ service cloud.firestore {
         // Community-Owner (seedet beim Erstellen 'owner') und Staff/Site-Mods dürfen
         // beliebige Rollen setzen. Verhindert, dass ein normales Mitglied sich selbst
         // per roles:['owner'] zu Community-Staff hochstuft (isCommunityStaff).
-        allow create: if isLoggedIn() && isOwner(userId) &&
+        allow create: if accountCanWrite() && (isLoggedIn() && isOwner(userId) &&
           !request.resource.data.keys().hasAny(['perms']) && (
             (
               request.resource.data.roles == [get(/databases/$(database)/documents/communitys/$(communityId)).data.get('defaultRankName', 'member').lower()] &&
@@ -293,8 +352,8 @@ service cloud.firestore {
             get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
             communityMemberCan(communityId, 'manageMembers') ||
             isModerator()
-        );
-        allow delete: if isLoggedIn() && (
+        ));
+        allow delete: if accountCanWrite() && (isLoggedIn() && (
           isOwner(userId) ||
           get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
           isAdmin() ||
@@ -302,11 +361,11 @@ service cloud.firestore {
             (communityMemberCan(communityId, 'manageMembers') || isModerator()) &&
             !resource.data.roles.hasAny(['owner', 'moderator'])
           )
-        );
+        ));
         // Owner/Admins dürfen alle Rollen verwalten. Community- und Site-Moderatoren
         // dürfen nur normale Mitglieder/Ränge bearbeiten, nicht Owner oder Moderator.
         // Ein Mitglied darf sein eigenes Doc nur ändern, solange roles unverändert bleibt.
-        allow update: if isLoggedIn() &&
+        allow update: if accountCanWrite() && (isLoggedIn() &&
           request.resource.data.get('perms', []) == resource.data.get('perms', []) && (
             get(/databases/$(database)/documents/communitys/$(communityId)).data.ownerId == request.auth.uid ||
             isAdmin() ||
@@ -317,7 +376,7 @@ service cloud.firestore {
               !request.resource.data.roles.hasAny(['owner', 'moderator'])
             ) ||
             (isOwner(userId) && request.resource.data.roles == resource.data.roles)
-        );
+        ));
       }
       match /joinRequests/{userId} {
         allow read: if isLoggedIn() &&
@@ -326,7 +385,7 @@ service cloud.firestore {
             communityMemberCan(communityId, 'manageJoinRequests') ||
             isModerator()
           );
-        allow create: if isLoggedIn() && isOwner(userId) &&
+        allow create: if accountCanWrite() && (isLoggedIn() && isOwner(userId) &&
           get(/databases/$(database)/documents/communitys/$(communityId)).data.get('joinMode', 'open') == 'application' &&
           request.resource.data.keys().hasOnly([
             'userId', 'username', 'message', 'status', 'createdAt'
@@ -337,21 +396,21 @@ service cloud.firestore {
           request.resource.data.username.size() <= 30 &&
           request.resource.data.username ==
             get(/databases/$(database)/documents/profiles/$(userId)).data.username &&
-          request.resource.data.message is string &&
+          acceptableText(request.resource.data.message) && request.resource.data.message is string &&
           request.resource.data.message.size() <= 1000 &&
           (
             get(/databases/$(database)/documents/communitys/$(communityId)).data.get('allowApplicationMessage', false) == true ||
             request.resource.data.message == ''
           ) &&
           !exists(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
-          request.resource.data.createdAt == request.time;
-        allow update: if false;
-        allow delete: if isLoggedIn() &&
+          request.resource.data.createdAt == request.time);
+        allow update: if accountCanWrite() && (false);
+        allow delete: if accountCanWrite() && (isLoggedIn() &&
           (
             isOwner(userId) ||
             communityMemberCan(communityId, 'manageJoinRequests') ||
             isModerator()
-          );
+          ));
       }
       match /invites/{userId} {
         allow read: if isLoggedIn() &&
@@ -360,46 +419,52 @@ service cloud.firestore {
             communityMemberCan(communityId, 'manageInvitations') ||
             isModerator()
           );
-        allow create: if isLoggedIn() &&
+        allow create: if accountCanWrite() && (isLoggedIn() &&
           (communityMemberCan(communityId, 'manageInvitations') || isModerator()) &&
           request.resource.data.keys().hasOnly([
             'userId', 'communityId', 'username', 'invitedBy', 'invitedAt'
           ]) &&
           request.resource.data.userId == userId &&
           request.resource.data.communityId == communityId &&
-          request.resource.data.invitedBy == request.auth.uid &&
+          request.resource.data.invitedBy == request.auth.uid && canInteract(request.auth.uid, userId) &&
           request.resource.data.username is string &&
           request.resource.data.username ==
             get(/databases/$(database)/documents/profiles/$(userId)).data.username &&
           !exists(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
-          request.resource.data.invitedAt == request.time;
-        allow update: if false;
-        allow delete: if isLoggedIn() &&
+          request.resource.data.invitedAt == request.time);
+        allow update: if accountCanWrite() && (false);
+        allow delete: if accountCanWrite() && (isLoggedIn() &&
           (
             isOwner(userId) ||
             communityMemberCan(communityId, 'manageInvitations') ||
             isModerator()
-          );
+          ));
       }
       match /private/{documentId} {
-        allow read, write: if false;
+        allow read: if false;
+        allow write: if accountCanWrite() && (false);
       }
       match /creations/{creationId} {
         allow read: if true;
         // Nur eigene Creations dürfen in Communitys eingehängt werden
         // (Moderatoren dürfen fremde, z. B. beim Bearbeiten im Auftrag).
-        allow create: if isLoggedIn() &&
+        allow create: if accountCanWrite() && (isLoggedIn() &&
             request.resource.data.keys().hasOnly(['userId', 'creationId', 'linkedAt']) &&
             request.resource.data.get('creationId', creationId) == creationId &&
             request.resource.data.userId == request.auth.uid &&
             ((communityMemberCan(communityId, 'addCreations') &&
               getAfter(/databases/$(database)/documents/creations/$(creationId)).data.userId == request.auth.uid) ||
              communityMemberCan(communityId, 'manageCreations') ||
-             communityMemberCan(communityId, 'manageShowcases') || isModerator());
+             communityMemberCan(communityId, 'manageShowcases') || isModerator()));
         // Owner der Creation darf sein Link-Doc entfernen (Creation aus der
         // Community nehmen) und sich einmalig für das Showcase bewerben —
         // dabei dürfen nur die Bewerbungsfelder geändert werden.
-        allow update: if isLoggedIn() &&
+        allow update: if accountCanWrite() && (isLoggedIn() &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['showcaseModerationWithheld']) &&
+          (!resource.data.get('showcaseModerationWithheld', false)) &&
+          (request.resource.data.get('showcaseGroupId', null) == null ||
+            !exists(/databases/$(database)/documents/showcaseModeration/$(request.resource.data.showcaseGroupId)) ||
+            !get(/databases/$(database)/documents/showcaseModeration/$(request.resource.data.showcaseGroupId)).data.get('withheld', false)) &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'discordMessageId', 'discordChannelId', 'discordShowcaseMessageId',
             'discordShowcaseChannelId', 'reactionCount', 'userId', 'creationId', 'linkedAt'
@@ -416,39 +481,40 @@ service cloud.firestore {
                 // Bereits geshowcaste Creations können sich nicht erneut bewerben
                 !('showcaseVideoUrl' in resource.data && resource.data.showcaseVideoUrl != null)
             )
-        );
-        allow delete: if isLoggedIn() && (
+        ));
+        allow delete: if accountCanWrite() && (isLoggedIn() && (
           communityMemberCan(communityId, 'manageCreations') ||
           isModerator() ||
           resource.data.userId == request.auth.uid
-        );
+        ));
       }
     }
 
     match /creations/{creationId} {
-      allow read: if true;
-      allow create: if isLoggedIn() &&
+      allow read: if resource.data.get('moderationWithheld', false) == false || isModerator() || isOwner(resource.data.userId);
+      allow create: if accountCanWrite() && (isLoggedIn() &&
           request.resource.data.userId == request.auth.uid &&
-          isValidCreationCreate(request.resource.data);
+          isValidCreationCreate(request.resource.data));
       // Views and reaction totals are server-authoritative.
-      allow update: if (isLoggedIn() && (
+      allow update: if accountCanWrite() && ((isLoggedIn() && (
+          !(isOwner(resource.data.userId) && resource.data.get('moderationWithheld', false)) &&
           serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
           collaborationPublicationFieldsAreUnchanged(request.resource.data, resource.data) &&
           eventSubmissionFieldsAreUnchanged(request.resource.data, resource.data) &&
           ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
           (isModerator() && isValidCreationUpdate(request.resource.data, resource.data)))
-       ));
-      allow delete: if isLoggedIn() && (
+       )));
+      allow delete: if accountCanWrite() && (isLoggedIn() && (
         isModerator() ||
         (
           isOwner(resource.data.userId) &&
           resource.data.get('sourceCollaborationId', null) == null
         )
-      );
+      ));
 
       match /votes/{userId} {
         allow read: if true;
-        allow write: if false;
+        allow write: if accountCanWrite() && (false);
       }
       
       // Nur lesen: Der Client schreibt unter creations ausschließlich die
@@ -477,58 +543,68 @@ service cloud.firestore {
     // Client-Regel und sind damit ausschließlich über das Admin SDK erreichbar.
     match /searchIndexState/{gameId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /searchIndexShards/{shardId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /communitySearchIndexState/{communityId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /communitySearchIndexShards/{shardId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /userSearchIndexState/{scopeId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
     match /userSearchIndexShards/{shardId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
+    }
+    function canReadShowcase(showcaseId) {
+      let path = /databases/$(database)/documents/showcaseModeration/$(showcaseId);
+      return !exists(path) || !get(path).data.get('withheld', false) || isModerator() || communityMemberCan(get(path).data.communityId, 'manageModerationAppeals') ||
+        (isLoggedIn() && get(/databases/$(database)/documents/communitys/$(get(path).data.communityId)).data.ownerId == request.auth.uid);
+    }
+    match /showcaseModeration/{showcaseId} {
+      allow read: if canReadShowcase(showcaseId);
+      allow write: if accountCanWrite() && (false);
     }
     match /showcaseIndexState/{showcaseId} {
-      allow read: if true;
-      allow write: if false;
+      allow read: if canReadShowcase(showcaseId);
+      allow write: if accountCanWrite() && (false);
     }
     match /showcaseIndexShards/{shardId} {
-      allow read: if true;
-      allow write: if false;
+      allow read: if canReadShowcase(resource.data.i);
+      allow write: if accountCanWrite() && (false);
     }
 
     // Öffentlicher, rückwärts verketteter YouTube-Videoindex. Ausschließlich die
     // WebSub-/Backfill-Functions schreiben State und Shards über das Admin SDK.
     match /youtubeVideoIndexState/{documentId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
 
     match /youtubeVideoIndexShards/{shardId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
 
     // Bug-Reports: eingeloggte Nutzer melden, nur Admins lesen/verwalten.
     match /bugReports/{reportId} {
-      allow create: if isLoggedIn() &&
+      allow create: if accountCanWrite() && (isLoggedIn() &&
           request.resource.data.userId == request.auth.uid &&
           request.resource.data.status == 'open' &&
           request.resource.data.description is string &&
           request.resource.data.description.size() >= 10 &&
-          request.resource.data.description.size() <= 3000;
-      allow read, update, delete: if isAdmin();
+          request.resource.data.description.size() <= 3000);
+      allow read: if isAdmin();
+      allow update, delete: if accountCanWrite() && isAdmin();
     }
 
     match /profiles/{userId} {
@@ -537,11 +613,11 @@ service cloud.firestore {
       // Clients dürfen bei create nur 'user' setzen und role beim update NICHT ändern —
       // sonst könnte man sich selbst zu admin/moderator machen (ProtectedRoute vertraut
       // profile.role fürs UI-Gating).
-      allow create: if isOwner(userId) && isValidProfileData(request.resource.data) &&
+      allow create: if accountCanWrite() && (isOwner(userId) && isValidProfileData(request.resource.data) &&
           request.resource.data.get('followers', []) == [] &&
-          (!('role' in request.resource.data.keys()) || request.resource.data.role == 'user');
+          (!('role' in request.resource.data.keys()) || request.resource.data.role == 'user'));
       allow update: if
-          ((isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data) &&
+          accountCanWrite() && (((isOwner(userId) || isAdmin()) && isValidProfileData(request.resource.data) &&
            request.resource.data.get('followers', []) == resource.data.get('followers', []) &&
            (isAdmin() || request.resource.data.get('role', 'user') == resource.data.get('role', 'user')))
           ||
@@ -552,7 +628,7 @@ service cloud.firestore {
            request.resource.data.get('followers', []) is list &&
            request.resource.data.get('followers', []).size() == request.resource.data.get('followers', []).toSet().size() &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers']) && (
-             (request.auth.uid in request.resource.data.get('followers', []) &&
+             (canInteract(request.auth.uid, userId) && request.auth.uid in request.resource.data.get('followers', []) &&
               !(request.auth.uid in resource.data.get('followers', [])) &&
               request.resource.data.get('followers', []).hasAll(resource.data.get('followers', [])) &&
               request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() + 1) ||
@@ -560,28 +636,33 @@ service cloud.firestore {
               request.auth.uid in resource.data.get('followers', []) &&
               resource.data.get('followers', []).hasAll(request.resource.data.get('followers', [])) &&
               request.resource.data.get('followers', []).size() == resource.data.get('followers', []).size() - 1)
-           ));
-      allow delete: if false; // Account deletion uses deleteOwnAccount/deleteUserAndContent.
+           )));
+      allow delete: if accountCanWrite() && (false); // Account deletion uses deleteOwnAccount/deleteUserAndContent.
 
       match /communityMemberships/{communityId} {
         allow read: if true;
-        allow create: if isOwner(userId) &&
+        allow create: if accountCanWrite() && (isOwner(userId) &&
           existsAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)) &&
           request.resource.data.roles ==
-            getAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)).data.roles;
-        allow update: if isAdmin();
-        allow delete: if (isOwner(userId) &&
+            getAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId)).data.roles);
+        allow update: if accountCanWrite() && (isAdmin());
+        allow delete: if accountCanWrite() && ((isOwner(userId) &&
           !existsAfter(/databases/$(database)/documents/communitys/$(communityId)/members/$(userId))) ||
-          isAdmin();
+          isAdmin());
       }
     }
 
     match /users/{userId} {
+      match /blocks/{targetUserId} {
+        allow read: if isOwner(userId);
+        allow write: if accountCanWrite() && (false);
+      }
       allow read: if isOwner(userId) || isAdmin();
       // Discord identity and OAuth fields are server-authoritative. Clients must
       // never be able to forge a Discord id/guild list or write provider tokens.
-      allow create: if isOwner(userId) &&
+      allow create: if accountCanWrite() && (isOwner(userId) &&
           request.resource.data.role == 'user' &&
+          request.resource.data.get('strikes', 0) == 0 &&
           request.resource.data.get('reportCount', 0) == 0 &&
           !request.resource.data.keys().hasAny([
             'discordId',
@@ -589,12 +670,13 @@ service cloud.firestore {
             'discordGuilds',
             'discordLinkedAt',
             'discordRefreshToken'
-          ]);
+          ]));
       // reportCount wird serverseitig vom onReportCreated-Trigger gepflegt, nicht
       // mehr vom Client (verhindert Zähler-Manipulation/Harassment).
-      allow update: if (
+      allow update: if accountCanWrite() && ((
           isOwner(userId) &&
           request.resource.data.role == resource.data.role &&
+          request.resource.data.get('strikes', 0) == resource.data.get('strikes', 0) &&
           request.resource.data.get('reportCount', 0) == resource.data.get('reportCount', 0) &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'discordId',
@@ -603,51 +685,58 @@ service cloud.firestore {
             'discordLinkedAt',
             'discordRefreshToken'
           ])
-        ) || isAdmin();
-      allow delete: if isOwner(userId) || isAdmin();
+        ) || isAdmin());
+      allow delete: if accountCanWrite() && (isOwner(userId) || isAdmin());
 
       // Notification hub: single capped inbox doc (users/{uid}/meta/inbox) with
       // items + unreadCount + prefs + pushTokens. Server (admin) writes items on
       // fan-out; the owner writes prefs/pushTokens/mark-read/clear.
       match /meta/{docId} {
         allow read: if isOwner(userId) || isAdmin();
-        allow create: if (isOwner(userId) || isAdmin()) && !request.resource.data.keys().hasAny(['deliveries']);
-        allow update: if (isOwner(userId) || isAdmin()) && request.resource.data.get('deliveries', {}) == resource.data.get('deliveries', {});
-        allow delete: if docId != 'inbox' && (isOwner(userId) || isAdmin());
+        allow create: if accountCanWrite() && ((isOwner(userId) || isAdmin()) && !request.resource.data.keys().hasAny(['deliveries']));
+        allow update: if accountCanWrite() && ((isOwner(userId) || isAdmin()) && request.resource.data.get('deliveries', {}) == resource.data.get('deliveries', {}));
+        allow delete: if accountCanWrite() && (docId != 'inbox' && (isOwner(userId) || isAdmin()));
       }
       match /following/{creationId} {
-        allow read, write: if isOwner(userId);
+        allow read: if isOwner(userId);
+        allow write: if accountCanWrite() && (isOwner(userId));
       }
       match /reportedItems/{creationId} {
-        allow read, write: if isOwner(userId);
-        allow delete: if isModerator();
+        allow read: if isOwner(userId);
+        allow write: if accountCanWrite() && (false);
       }
     }
 
     // OAuth state, refresh tokens, provider-to-user mappings and distributed
     // rate-limit counters are exclusively managed through Cloud Functions.
     match /oauthStates/{stateHash} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
     // Stream sessions contain server-verified platform state and drive atomic
     // creation switches. Desktop devices receive a compact projection through
     // their existing protected client queue; no client may forge session state.
     match /liveSessions/{userId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
     // Atomic, server-owned channel locks prevent two accounts or modified
     // clients from attaching PlanetCreations to the same live channel.
     match /liveChannelClaims/{claimId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
     match /privateOAuthCredentials/{userId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
     match /discordAccountLinks/{discordId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
     match /securityRateLimits/{limitId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
 
     // Device-specific direct-install queues are written only by callable Cloud
@@ -655,7 +744,7 @@ service cloud.firestore {
     // retarget, or remove commands directly.
     match /clientInstallQueues/{userId}/clients/{clientId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow write: if false;
+      allow write: if accountCanWrite() && (false);
     }
 
     match /usernames/{username} {
@@ -663,9 +752,9 @@ service cloud.firestore {
       // Bindet die Reservierung an die eigene Konto-E-Mail (verhindert
       // Squatting mit fremden/erfundenen E-Mails). Registrierung ist nur
       // per E-Mail/Passwort möglich, token.email ist also immer gesetzt.
-      allow create: if isLoggedIn() &&
+      allow create: if accountCanWrite() && (isLoggedIn() &&
           request.resource.data.keys().hasOnly(['email']) &&
-          request.resource.data.email == request.auth.token.email.lower();
+          request.resource.data.email == request.auth.token.email.lower());
     }
     
     // Per-creation followers (creationFollowers/{creationId}/followers/{uid}) —
@@ -673,31 +762,39 @@ service cloud.firestore {
     // own follow doc; server fan-out reads these with admin (bypasses rules).
     match /creationFollowers/{creationId}/followers/{followerId} {
         allow read: if true;
-        allow create, delete: if isLoggedIn() && isOwner(followerId);
+        allow create, delete: if accountCanWrite() && (isLoggedIn() && isOwner(followerId));
     }
 
     match /dlcs/{gameId} {
         allow read: if isLoggedIn();
-        allow write: if isAdmin();
+        allow write: if accountCanWrite() && (isAdmin());
     }
     match /categories/{gameId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if accountCanWrite() && (isAdmin());
     }
     match /tags/{tagId} {
       allow read: if true;
-      allow write: if isModerator();
+      allow write: if accountCanWrite() && (isModerator());
     }
     match /mods/{modId} {
       allow read: if true;
-      allow write: if isModerator();
+      allow write: if accountCanWrite() && (isModerator());
     }
     match /meta/{docId} {
         allow read: if true;
-        allow write: if isModerator();
+        allow write: if accountCanWrite() && (docId != 'blacklist' && isModerator());
+    }
+    match /contentReviews/{caseId} {
+      allow read: if isModerator();
+      allow write: if accountCanWrite() && (false);
+    }
+    match /users/{userId}/moderationNotices/{caseId} {
+      allow read: if isOwner(userId) || isModerator();
+      allow write: if accountCanWrite() && (false);
     }
     match /reports/{reportId} {
-      allow create: if isLoggedIn() &&
+      allow create: if accountCanWrite() && (isLoggedIn() &&
           request.resource.data.keys().hasOnly([
             'markerId', 'reason', 'reporterId', 'targetId', 'targetPath',
             'targetTitle', 'targetType', 'timestamp'
@@ -718,13 +815,14 @@ service cloud.firestore {
           request.resource.data.timestamp == request.time &&
           request.resource.data.reason is string &&
           request.resource.data.reason.size() > 0 &&
-          request.resource.data.reason.size() <= 2000;
+          request.resource.data.reason.size() <= 2000);
       allow list, get: if isModerator();
-      allow update, delete: if isModerator();
+      allow update, delete: if accountCanWrite() && (isModerator());
     }
     match /applications/{userId} {
-      allow read, delete: if isAdmin();
-      allow create: if isLoggedIn() && isOwner(userId);
+      allow read: if isAdmin();
+      allow delete: if accountCanWrite() && isAdmin();
+      allow create: if accountCanWrite() && (isLoggedIn() && isOwner(userId));
     }
 
     // --- Collaborations ---
@@ -766,12 +864,12 @@ service cloud.firestore {
       );
       // Nur über die createCollaboration Cloud Function (Admin-SDK umgeht Rules):
       // verhindert gefälschte ownerId/memberIds und ungeprüfte Docs.
-      allow create: if false;
+      allow create: if accountCanWrite() && (false);
       // Settings, build locks, invite-code rotation, membership indexes and
       // version pointers are all written by callable Functions.
-      allow update: if false;
+      allow update: if accountCanWrite() && (false);
       // Deletion is server-only so R2 objects are removed before metadata.
-      allow delete: if false;
+      allow delete: if accountCanWrite() && (false);
 
       match /members/{userId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
@@ -779,8 +877,8 @@ service cloud.firestore {
         // joinCollaborationByInviteCode, respondToCollaborationInvitation). Direkter
         // Client-Create ist verboten — sonst könnte sich jeder Eingeloggte selbst
         // mit role:'owner' in eine beliebige Collaboration schreiben.
-        allow create: if false;
-        allow update, delete: if false;
+        allow create: if accountCanWrite() && (false);
+        allow update, delete: if accountCanWrite() && (false);
       }
 
       match /applications/{applicantId} {
@@ -789,95 +887,98 @@ service cloud.firestore {
           (isLoggedIn() && applicantId == request.auth.uid);
         // Bewerbungen entstehen/ändern sich NUR über Cloud Functions
         // (applyToCollaboration, respondToCollaborationApplication).
-        allow create, update: if false;
+        allow create, update: if accountCanWrite() && (false);
         // Owner/Mods dürfen aufräumen (z. B. beim Löschen der Collaboration).
-        allow delete: if isCollaborationOwnerOrMod(collaborationId) || isModerator();
+        allow delete: if accountCanWrite() && (isCollaborationOwnerOrMod(collaborationId) || isModerator());
       }
 
       match /files/{fileId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
         // File/version metadata contains private R2 object keys and is written only
         // by finalizeCollaborationVersion after validating the signed package.
-        allow create, update: if false;
-        allow delete: if false;
+        allow create, update: if accountCanWrite() && (false);
+        allow delete: if accountCanWrite() && (false);
 
         match /versions/{versionId} {
           allow read: if isCollaborationMember(collaborationId) || isModerator();
-          allow create, update: if false;
-          allow delete: if false;
+          allow create, update: if accountCanWrite() && (false);
+          allow delete: if accountCanWrite() && (false);
         }
       }
 
       match /comments/{commentId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationActive(collaborationId) &&
+        allow create: if accountCanWrite() && (acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
           request.resource.data.authorId == request.auth.uid &&
           request.resource.data.keys().hasOnly(['authorId', 'authorUsername', 'authorAvatarUrl', 'content', 'fileId', 'parentId', 'createdAt', 'updatedAt']) &&
           request.resource.data.content is string && request.resource.data.content.size() > 0 && request.resource.data.content.size() <= 5000 &&
-          (isCollaborationMember(collaborationId) || isModerator());
-        allow update: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator()));
+        allow update: if accountCanWrite() && (acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'updatedAt']) &&
           request.resource.data.content is string && request.resource.data.content.size() > 0 && request.resource.data.content.size() <= 5000 &&
-          isLoggedIn() && (resource.data.get('authorId', resource.data.get('userId', '')) == request.auth.uid || isModerator());
+          isLoggedIn() && (resource.data.get('authorId', resource.data.get('userId', '')) == request.auth.uid || isModerator()));
         // Completed/published workspaces remain readable but are immutable.
-        allow delete: if isCollaborationActive(collaborationId) && (
+        allow delete: if accountCanWrite() && (isCollaborationActive(collaborationId) && (
           isCollaborationOwnerOrMod(collaborationId) ||
           (isLoggedIn() && resource.data.get('authorId', resource.data.get('userId', '')) == request.auth.uid) ||
           isModerator()
-        );
+        ));
       }
 
       match /invitations/{inviteId} {
         // Deprecated invite copies are no longer part of the client contract.
-        allow read, write: if false;
+        allow read: if false;
+        allow write: if accountCanWrite() && (false);
       }
 
       // Todo items
       match /todos/{todoId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationActive(collaborationId) &&
-          (isCollaborationMember(collaborationId) || isModerator());
-        allow update: if isCollaborationActive(collaborationId) &&
-          (isCollaborationMember(collaborationId) || isModerator());
-        allow delete: if isCollaborationActive(collaborationId) && (
+        allow create: if accountCanWrite() && (request.resource.data.createdBy == request.auth.uid && acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator()));
+        allow update: if accountCanWrite() && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy','createdByUsername','createdAt']) && acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator()));
+        allow delete: if accountCanWrite() && (isCollaborationActive(collaborationId) && (
           isCollaborationOwnerOrMod(collaborationId) ||
           (isLoggedIn() && resource.data.createdBy == request.auth.uid) ||
           isModerator()
-        );
+        ));
       }
 
       // Work sessions (build history)
       match /workSessions/{sessionId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if isCollaborationActive(collaborationId) &&
+        allow create: if accountCanWrite() && (acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
           request.resource.data.userId == request.auth.uid &&
           request.resource.data.keys().hasOnly(['fileId', 'fileName', 'userId', 'username', 'note', 'startedAt', 'endedAt', 'durationMinutes']) &&
           request.resource.data.get('note', '') is string && request.resource.data.get('note', '').size() <= 5000 &&
-          (isCollaborationMember(collaborationId) || isModerator());
-        allow update: if isCollaborationActive(collaborationId) &&
+          (isCollaborationMember(collaborationId) || isModerator()));
+        allow update: if accountCanWrite() && (acceptableContent(request.resource.data) && isCollaborationActive(collaborationId) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['endedAt', 'durationMinutes', 'note']) &&
-          isLoggedIn() && resource.data.userId == request.auth.uid;
-        allow delete: if isCollaborationActive(collaborationId) &&
-          (isCollaborationOwnerOrMod(collaborationId) || isModerator());
+          isLoggedIn() && resource.data.userId == request.auth.uid);
+        allow delete: if accountCanWrite() && (isCollaborationActive(collaborationId) &&
+          (isCollaborationOwnerOrMod(collaborationId) || isModerator()));
       }
 
       // Upload entries (changelog history)
       match /uploads/{uploadId} {
         allow read: if isCollaborationMember(collaborationId) || isModerator();
-        allow create: if false;
-        allow delete: if isCollaborationActive(collaborationId) &&
-          (isCollaborationOwnerOrMod(collaborationId) || isModerator());
+        allow create: if accountCanWrite() && (false);
+        allow delete: if accountCanWrite() && (isCollaborationActive(collaborationId) &&
+          (isCollaborationOwnerOrMod(collaborationId) || isModerator()));
       }
     }
 
     // Deprecated per-user invite copies are replaced by the standard inbox and
     // server-only collaborationInvitationGrants.
     match /users/{userId}/collaborationInvites/{inviteId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
 
     match /collaborationInvitationGrants/{grantId} {
-      allow read, write: if false;
+      allow read: if false;
+        allow write: if accountCanWrite() && (false);
     }
   }
 }

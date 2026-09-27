@@ -1,3 +1,7 @@
+import ContentReportButton from '../ui/ContentReportButton';
+import {useUserBlocks} from '../../contexts/BlockingContext';
+import UserBlockButton from '../ui/UserBlockButton';
+import {submitContentReport} from '../../firebase/contentReporting';
 import {getViewSessionToken} from '../../utils/viewSession';
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
@@ -24,23 +28,23 @@ import { removeCreationFromCaches } from '../../utils/creationCache';
 import { buildCommunityPath } from '../../utils/communityRoutes';
 
 const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
+    const {isBlocked} = useUserBlocks();
     const { id: idFromUrl } = useParams();
     const id = creationIdOverride || idFromUrl;
     const location = useLocation();
     const indexGameHint = location.state?.indexGame;
     const queryClient = useQueryClient();
 
-    // Versuche Creation aus Cache zu laden für sofortige Anzeige
-    const cachedCreation = queryClient.getQueryData(['creation', id]);
-
-    const [creation, setCreation] = useState(cachedCreation || null);
-    const [loadingCreation, setLoadingCreation] = useState(!cachedCreation);
+    // Confirm current server visibility before displaying a cached direct link.
+    const [creation, setCreation] = useState(null);
+    const [loadingCreation, setLoadingCreation] = useState(true);
+    const [unavailable,setUnavailable]=useState(false);
+    const isSiteStaff = userProfile && ['admin', 'moderator'].includes(userProfile.role);
     const [isVoting, setIsVoting] = useState(false);
     const [isFollowing, setIsFollowing] = useState(false);
     const [isFollowingCreation, setIsFollowingCreation] = useState(false);
     const [isTogglingCreationFollow, setIsTogglingCreationFollow] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
-    const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
     const [isStartingInstall, setIsStartingInstall] = useState(false);
     const [selectedClientId, setSelectedClientId] = useState('');
     const [metadataRepairStatus, setMetadataRepairStatus] = useState('idle');
@@ -92,11 +96,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         );
     }, [userProfile?.clients]);
 
-    // Versuche Profil aus Cache zu laden
-    const cachedProfile = cachedCreation?.userId
-        ? queryClient.getQueryData(['profile', cachedCreation.userId])
-        : null;
-    const [creatorProfile, setCreatorProfile] = useState(cachedProfile || null);
+    // Profile cache is consulted after the server confirms creation visibility.
+    const [creatorProfile, setCreatorProfile] = useState(null);
 
     // Sekundäre Daten (laden im Hintergrund)
     const [communityDetails, setCommunityDetails] = useState([]);
@@ -119,6 +120,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             `${id}:${creation.backupObjectKey}:${needsRideAnalysisBackfill ? 'ride-analysis-v1' : 'metadata'}` : '';
         const shouldRepair = Boolean(
             repairKey &&
+            !creation?.moderationWithheld &&
             creation?.backupIsSigned === true &&
             (!verified || needsRideAnalysisBackfill) &&
             creation?.userId === user?.uid &&
@@ -177,10 +179,20 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         }
 
         const docRef = doc(db, 'creations', id);
-        const unsubscribe = onSnapshot(docRef, async (creationDoc) => {
+        setUnavailable(false);setLoadingCreation(true);setCreation(null);
+        const unsubscribe = onSnapshot(docRef, {includeMetadataChanges:true}, async (creationDoc) => {
             if (!isMounted) return;
+            if(creationDoc.metadata?.fromCache&&!isSiteStaff)return;
             if (creationDoc.exists()) {
                 const creationData = { id: creationDoc.id, ...creationDoc.data() };
+                if(creationData.moderationWithheld&&!isSiteStaff&&creationData.userId!==user?.uid){setUnavailable(true);setCreation(null);setLoadingCreation(false);removeCreationFromCaches(queryClient,id);return;}
+                if(creationData.moderationWithheld&&creationData.userId===user?.uid) {
+                    try {
+                        const preview=await httpsCallable(functions,'getOwnerModerationPreview')({creationId:id});
+                        if(!isMounted)return;
+                        Object.assign(creationData,preview.data.displayFields);
+                    } catch { if(!isMounted)return; setModalMessage('The retained content preview could not be loaded.'); }
+                }
                 setCreation(creationData);
 
                 // Parallele Datenabfragen starten
@@ -297,11 +309,15 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 if (!creationIdOverride) navigate('/');
             }
             if (isMounted) setLoadingCreation(false);
+        }, () => {
+            if(!isMounted)return;
+            setUnavailable(true);setCreation(null);setLoadingCreation(false);
+            removeCreationFromCaches(queryClient,id);
         });
 
         return () => { isMounted = false; unsubscribe(); };
     }, [id, navigate, setModalMessage, creationIdOverride, queryClient,
-        functions, indexGameHint]);
+        functions, indexGameHint, isSiteStaff, user?.uid]);
     
     useEffect(() => {
         if (!user || !id || !creation) return;
@@ -319,12 +335,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
             }
         });
 
-        const checkReportStatus = async () => {
-            const reportMarkerRef = doc(db, 'users', user.uid, 'reportedItems', id);
-            const docSnap = await getDoc(reportMarkerRef);
-            if (isMounted) setHasAlreadyReported(docSnap.exists());
-        };
-        checkReportStatus();
 
         // Am I following this creation? (creationFollowers/{id}/followers/{uid})
         getDoc(doc(db, 'creationFollowers', id, 'followers', user.uid))
@@ -442,36 +452,29 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     const handleReport = () => {
         if (!user) { setModalMessage("You must be logged in to report content."); return; }
-        if (hasAlreadyReported) { setModalMessage("You have already reported this creation."); return; }
         setReportModal({
             targetId: id,
             targetType: 'creation',
             targetTitle: creation.title,
-            onConfirm: async (reason) => {
+            onConfirm: async (reason, category, mediaUrl) => {
                 try {
-                    const batch = writeBatch(db);
-                    const reportRef = doc(collection(db, 'reports'));
-                    batch.set(reportRef, { targetId: id, targetType: 'creation', targetTitle: creation.title, reason, reporterId: user.uid, timestamp: serverTimestamp() });
-                    const reportMarkerRef = doc(db, 'users', user.uid, 'reportedItems', id);
-                    batch.set(reportMarkerRef, { reportedAt: serverTimestamp() });
-                    // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
-                    await batch.commit();
-                    setHasAlreadyReported(true);
-                    setModalMessage("Creation reported successfully. Our team will review it.");
+                    const result = await submitContentReport({targetType:'creation',targetId:id,...(mediaUrl?{mediaUrl}:{})}, reason, category);
+                    setModalMessage(result.duplicate ? 'This report is already in the moderation queue.' : 'Creation reported successfully. Our team will review it.');
                 } catch (error) {
-                    setModalMessage(`Error submitting report: ${error.message}`);
+                    throw error;
                 }
             }
         });
     };
 
     // Zeige Spinner nur wenn noch keine gecachte Creation vorhanden ist
+    if(unavailable)return <p role="status" className="p-8 text-center">This creation is currently unavailable.</p>;
     if (loadingCreation && !creation) return <Spinner gameId={creation?.game} />;
     if (!creation) return null;
+    if(isBlocked(creation.userId))return <section className="p-8 text-center"><p>This content is hidden because you blocked its author.</p><UserBlockButton targetUserId={creation.userId}/></section>;
 
     const isOwner = user && user.uid === creation.userId;
-    const canEdit = isOwner;
-    const isSiteStaff = userProfile && ['admin', 'moderator'].includes(userProfile.role);
+    const canEdit = (isOwner || isSiteStaff) && !(isOwner && creation.moderationWithheld);
     const canDelete = isSiteStaff || (isOwner && !creation.sourceCollaborationId);
     const collaborationContributors = (creation.contributors || []).filter(
         (contributor) => (contributor?.uid || contributor?.deleted) && contributor?.username,
@@ -654,6 +657,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
 
     return (
         <div className="container mx-auto mt-8 p-4" style={color.style}>
+            {isOwner&&creation.moderationWithheld&&<p role="status" className="mb-4 rounded-lg border border-amber-400 bg-amber-50 text-gray-900 p-4">This creation is withheld and visible only to you and moderation staff. Editing is locked until moderation releases it. Retained text and images are shown while available.</p>}
             <div className="flex justify-between items-center mb-4">
                 <button onClick={() => navigate(-1)} className={`flex items-center justify-center ${color.bg} ${color.hoverBg} text-white px-4 py-2 rounded-md transition-colors font-semibold`}>
                     <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back
@@ -845,7 +849,8 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             <div className="flex items-center justify-between"><span className="font-bold">Views:</span><span className="flex items-center space-x-1"><Icon path={ICONS.eye} className="w-5 h-5 text-gray-400"/><span className="font-bold">{creation.views || 0}</span></span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Created:</span><span>{formatDate(creation.createdAt)}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Updated:</span><span>{formatDate(creation.updatedAt)}</span></div>
-                            <button onClick={handleReport} disabled={hasAlreadyReported} className="w-full flex items-center justify-center space-x-2 text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors pt-4 border-t mt-4"><Icon path={ICONS.flag} className="w-5 h-5"/><span>{hasAlreadyReported ? 'Already Reported' : 'Report Creation'}</span></button>
+                            {activeMedia && activeMedia.type !== 'live' && <ContentReportButton target={{targetType:'creation',targetId:id,mediaUrl:activeMedia.url,mediaType:activeMedia.type}} label="Report selected media" />}
+                            <button onClick={handleReport}  className="w-full flex items-center justify-center space-x-2 text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors pt-4 border-t mt-4"><Icon path={ICONS.flag} className="w-5 h-5"/><span>Report Creation</span></button>
                         </div>
                         
                         <div className="mt-6 pt-6 border-t space-y-4">
@@ -890,7 +895,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             </div>
                         )}
                         <CreationSharingQrCode creationId={id} creationName={creation.title} />
-                        {isOwner && (
+                        {isOwner && !creation.moderationWithheld && (
                             <div className="mt-6 pt-6 border-t dark:border-gray-700 space-y-4">
                                 <p className="text-sm font-bold text-gray-600 dark:text-gray-300 text-center">Streamer Tools</p>
 

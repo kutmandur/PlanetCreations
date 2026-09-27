@@ -1,3 +1,5 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
+import ContentReportButton from '../ui/ContentReportButton';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -114,10 +116,20 @@ const CollaborationDetailPage = ({
     const [todos, setTodos] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('Project');
+    useEffect(() => {
+        if (location.hash.startsWith('#changelog-')) setActiveTab('Changelog');
+    }, [location.hash]);
+    useEffect(() => {
+        if (activeTab !== 'Changelog' || !location.hash.startsWith('#changelog-')) return;
+        const id = location.hash.slice(1);
+        const frame = requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({block:'center'}));
+        return () => cancelAnimationFrame(frame);
+    }, [location.hash,activeTab,uploads]);
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [showVersionsModal, setShowVersionsModal] = useState(false);
     const [newTodo, setNewTodo] = useState('');
     const [buildDraft, setBuildDraft] = useState(null);
+    const {isBlocked} = useUserBlocks();
     const [changelogModalOpen, setChangelogModalOpen] = useState(false);
     const [changelogEntryToEdit, setChangelogEntryToEdit] = useState(null);
     const [downloadingVersionId, setDownloadingVersionId] = useState(null);
@@ -178,7 +190,7 @@ const CollaborationDetailPage = ({
     const startingGalleryImageUrls = (collaboration?.galleryImageUrls || [])
         .filter(isSafeHttpUrl)
         .slice(0, 10);
-    const galleryItems = buildCollaborationGalleryItems(uploads, {
+    const galleryItems = buildCollaborationGalleryItems(uploads.filter(entry => !isBlocked(entry.userId)), {
         imageUrls: startingGalleryImageUrls,
         username: ownerMember?.username || 'Collaboration owner',
         text: `${collaboration?.title || 'Collaboration'} starting gallery`,
@@ -1155,6 +1167,7 @@ const CollaborationDetailPage = ({
                 return (
                     <article
                         key={entry.id}
+                        id={`changelog-${entry.id}`}
                         className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
                     >
                         <div className="p-5 sm:p-6">
@@ -1188,12 +1201,13 @@ const CollaborationDetailPage = ({
                                                 : `Version ${entry.versionNumber}`}
                                         </span>
                                     </div>
+                                    <ContentReportButton target={{targetType:'changelog',targetId:entry.id,parentId:collaboration.id}} label="Report update" />
                                     <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-200">
-                                        {entry.changelog || (savePending
+                                        {isBlocked(entry.userId) ? 'Content hidden because you blocked this account.' : entry.changelog || (savePending
                                             ? 'No changelog details added yet.'
                                             : 'Uploaded a new save version.')}
                                     </p>
-                                    {(entry.completedTodos || []).length > 0 && (
+                                    {!isBlocked(entry.userId) && (entry.completedTodos || []).length > 0 && (
                                         <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/25">
                                             <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                                                 Completed during this build
@@ -1214,7 +1228,7 @@ const CollaborationDetailPage = ({
                                 </div>
                             </div>
 
-                            {(entry.imageUrls || []).length > 0 && (
+                            {!isBlocked(entry.userId) && (entry.imageUrls || []).length > 0 && (
                                 <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
                                     {entry.imageUrls.map((url, imageIndex) => {
                                         const galleryIndex = galleryItems.findIndex((item) => (

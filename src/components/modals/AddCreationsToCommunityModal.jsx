@@ -29,7 +29,7 @@ const AddCreationsToCommunityModal = ({ user, community, canApplyShowcase = true
             try {
                 const [creationsSnap, linksSnap] = await Promise.all([
                     getDocs(query(
-                        collection(db, 'creations'),
+                        collection(db, 'creations'), where('moderationWithheld', '==', false),
                         where('userId', '==', user.uid),
                         orderBy('createdAt', 'desc')
                     )),

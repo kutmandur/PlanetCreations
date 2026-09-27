@@ -41,5 +41,5 @@ export async function fetchCommunityIndex(communityId) {
         stateCollection: 'communitySearchIndexState',
     });
     const entries = scalableIndex?.entries || {};
-    return Object.entries(entries).map(([id, entry]) => communityEntryToCreation(id, entry, communityId));
+    return Object.entries(entries).filter(([,entry])=>!entry.hidden).map(([id, entry]) => communityEntryToCreation(id, entry, communityId));
 }

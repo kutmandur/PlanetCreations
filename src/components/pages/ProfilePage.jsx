@@ -1,3 +1,6 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
+import {submitContentReport} from '../../firebase/contentReporting';
+import UserBlockButton from '../ui/UserBlockButton';
 import {previewAccountDeletion, communityDeletionWarning} from '../../firebase/accountDeletion';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
@@ -119,7 +122,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     const [collaboratedCreations, setCollaboratedCreations] = useState(null);
     const [loadingCollaboratedCreations, setLoadingCollaboratedCreations] = useState(false);
 
-    const [hasAlreadyReported, setHasAlreadyReported] = useState(false);
+    const {isBlocked} = useUserBlocks();
     const [isFollowing, setIsFollowing] = useState(false);
     const [followerCount, setFollowerCount] = useState(0);
     const [isFollowingBusy, setIsFollowingBusy] = useState(false);
@@ -147,7 +150,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         setLoadingMoreCreations(true);
         try {
             const q = query(
-                collection(db, 'creations'),
+                collection(db, 'creations'), where('moderationWithheld', '==', false),
                 where('userId', '==', userId),
                 orderBy('createdAt', 'desc'),
                 startAfter(lastVisibleCreation),
@@ -200,7 +203,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             setCreations([]);
             try {
                 const q = query(
-                    collection(db, 'creations'),
+                    collection(db, 'creations'), where('moderationWithheld', '==', false),
                     where('userId', '==', userId),
                     orderBy('createdAt', 'desc'),
                     limit(12)
@@ -262,14 +265,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             }
         });
 
-        if (user) {
-            const checkReportStatus = async () => {
-                const reportMarkerRef = doc(db, 'users', user.uid, 'reportedItems', userId);
-                const docSnap = await getDoc(reportMarkerRef);
-                if (isMounted) setHasAlreadyReported(docSnap.exists());
-            };
-            checkReportStatus();
-        }
+
 
         return () => {
             isMounted = false;
@@ -325,7 +321,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
             setLoadingCollaboratedCreations(true);
             try {
                 const snapshot = await getDocs(query(
-                    collection(db, 'creations'),
+                    collection(db, 'creations'), where('moderationWithheld', '==', false),
                     where('contributorIds', 'array-contains', userId),
                     limit(60),
                 ));
@@ -584,22 +580,15 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     const handleReportUser = () => {
         if (!user) { setModalMessage("You must be logged in to report a user."); return; }
-        if (hasAlreadyReported) { setModalMessage("You have already reported this user."); return; }
         setReportModal({
             type: 'user',
             targetId: userId,
             targetType: 'user',
             targetTitle: profile?.username || 'User',
-            onConfirm: async (reason) => {
+            onConfirm: async (reason, category, mediaUrl) => {
                 try {
-                    const batch = writeBatch(db);
-                    const reportRef = doc(collection(db, 'reports'));
-                    batch.set(reportRef, { targetId: userId, targetType: 'user', targetTitle: profile?.username || 'User', reason, reporterId: user.uid, timestamp: serverTimestamp() });
-                    const reportMarkerRef = doc(db, 'users', user.uid, 'reportedItems', userId);
-                    batch.set(reportMarkerRef, { reportedAt: serverTimestamp() });
-                    await batch.commit();
-                    setHasAlreadyReported(true);
-                    setModalMessage("Thank you, the user has been reported.");
+                    const result = await submitContentReport({targetType:'user',targetId:userId}, reason, category);
+                    setModalMessage(result.duplicate ? 'This report is already in the moderation queue.' : 'Thank you, the user has been reported.');
                 } catch (error) {
                     console.error("Error reporting user:", error);
                     setModalMessage(`Error reporting user: ${error.message}`);
@@ -630,6 +619,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
     };
 
     if (loading) return <Spinner gameId={selectedGame} />;
+    if(isBlocked(userId))return <section className="p-8 text-center"><p>This profile is hidden because you blocked this account.</p><UserBlockButton targetUserId={userId}/></section>;
 
     const activeSocials = PROFILE_SOCIALS.filter((social) => {
         if (!profile?.[social.field]) return false;
@@ -795,7 +785,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                     {user && user.uid !== userId && (
                                         <button
                                             onClick={handleFollow}
-                                            disabled={isFollowingBusy}
+                                            disabled={isFollowingBusy || (!isFollowing && isBlocked(userId))}
                                             className={`rounded-xl px-4 py-2 text-sm font-bold text-white transition disabled:opacity-50 ${
                                                 isFollowing
                                                     ? hasProfileBanner
@@ -815,12 +805,13 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                     {user && user.uid !== userId && (
                                         <button
                                             onClick={handleReportUser}
-                                            disabled={hasAlreadyReported}
+
                                             className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
-                                            {hasAlreadyReported ? 'Already Reported' : 'Report User'}
+                                            Report User
                                         </button>
                                     )}
+                                    <UserBlockButton targetUserId={userId} />
                                     {userProfile?.role === 'admin' && user?.uid !== userId && (
                                         <button
                                             onClick={handleDeleteUser}

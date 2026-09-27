@@ -38,6 +38,7 @@ function accountDeletionEndpoints(options, secrets) {
                 // provider keeps failing. Phases are checkpointed independently.
                 const jobs = await options.db.collection("accountDeletionJobs").orderBy("lastAttemptAt").limit(5).get();
                 for (const job of jobs.docs) {
+                    if (job.data().createdAt?.toMillis() < Date.now() - 24 * 3600000) console.error('ACCOUNT_DELETION_OVERDUE', {phase: job.data().phase});
                     await job.ref.update({lastAttemptAt: new Date()});
                     try { await service.run(job.id); }
                     catch { console.error("Account deletion phase will retry."); }

@@ -57,7 +57,7 @@ const EventDetailPage = ({ user, userProfile, setModalMessage, setConfirmation, 
                         communityId ? getDoc(doc(db, 'communitys', communityId)) : null,
                         communityId ? getDocs(query(collection(db, 'communitys', communityId, 'members'))) : null,
                         (user && communityId) ? getDoc(doc(db, 'communitys', communityId, 'members', user.uid)) : null,
-                        getDocs(query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId))),
+                        getDocs(query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('eventIds', 'array-contains', eventId))),
                     ]);
                     if (!isMounted) return;
 

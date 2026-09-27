@@ -1,6 +1,7 @@
 import { getCommunityManagerTabs } from './communityManagerTabs';
 
 const allManagementPermissions = {
+  manageModerationAppeals: true,
   manageCreations: true,
   manageMembers: true,
   manageInvitations: true,
@@ -8,6 +9,11 @@ const allManagementPermissions = {
   manageEvents: true,
   manageShowcases: true,
 };
+
+test('shows moderation only with moderation appeal permission', () => {
+  expect(getCommunityManagerTabs({}, false, {manageModerationAppeals: true}, false)).toEqual(['Moderation']);
+  expect(getCommunityManagerTabs({}, false, {}, false)).not.toContain('Moderation');
+});
 
 test('shows Requests while application joining is enabled', () => {
   expect(getCommunityManagerTabs(

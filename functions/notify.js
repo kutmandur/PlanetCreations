@@ -1,3 +1,4 @@
+const {isInteractionBlocked} = require("./userBlocking");
 const {createHash} = require("node:crypto");
 const {notificationContext} = require("./notificationContext");
 const {FieldValue, getFirestore, Timestamp} = require("firebase-admin/firestore");
@@ -78,6 +79,7 @@ async function deliverNotification(uid, type, { title, message, link, relatedUse
     await db.runTransaction(async (tx) => {
         pushTokens = []; wantPush = false;
         if (!await isAccountActive(db, uid, tx)) return;
+        for (const actor of relatedUserIds) if (await isInteractionBlocked(db, uid, actor, tx)) return;
         const snap = await tx.get(inboxRef);
         const data = snap.exists ? snap.data() : {};
         const prefs = data.prefs || {};
@@ -114,7 +116,7 @@ async function deliverNotification(uid, type, { title, message, link, relatedUse
         }
     });
 
-    if (wantPush && await isAccountActive(db, uid)) {
+    if (wantPush && await isAccountActive(db, uid) && !(await Promise.all(relatedUserIds.map(actor => isInteractionBlocked(db, uid, actor)))).some(Boolean)) {
         await sendPush(uid, pushTokens, { title, body: message, link, type });
     }
 }

@@ -71,7 +71,7 @@ export async function fetchCreationsByIds(ids) {
     for (let i = 0; i < ids.length; i += batchSize) {
         const batchIds = ids.slice(i, i + batchSize);
         const q = query(
-            collection(db, 'creations'),
+            collection(db, 'creations'), where('moderationWithheld', '==', false),
             where(documentId(), 'in', batchIds)
         );
         const snapshot = await getDocs(q);

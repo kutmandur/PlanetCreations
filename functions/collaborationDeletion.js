@@ -1,12 +1,25 @@
 "use strict";
+const {createHash} = require("node:crypto");
 const {isAccountActive} = require("./accountLifecycle");
 
 // Identity fields are removed together with their display fields, including
 // embedded snapshots. Timestamps and other Firestore value types stay intact.
-function anonymizeHistory(value, uid) {
-    if (Array.isArray(value)) return value.filter(item => item !== uid).map(item => anonymizeHistory(item, uid));
+const DELETED_CONTENT = "Content removed after account deletion.";
+const AUTHOR_FIELDS = ["authorId", "userId", "uid", "uploadedBy", "createdBy", "contributorId"];
+const PERSONAL_TEXT = ["content", "text", "note", "description", "changelog", "message"];
+function anonymizeHistory(value, uid, removedMedia = new Set(), removedTodos = new Set()) {
+    if (Array.isArray(value)) return value.filter(item => item !== uid && !removedMedia.has(item)).map(item => anonymizeHistory(item, uid, removedMedia, removedTodos));
+    if (typeof value === "string" && removedMedia.has(value)) return null;
     if (!value || Object.getPrototypeOf(value) !== Object.prototype) return value;
-    const result = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, anonymizeHistory(item, uid)]));
+    const result = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, anonymizeHistory(item, uid, removedMedia, removedTodos)]));
+    if (removedTodos.has(value.id) && typeof value.text === "string") result.text = DELETED_CONTENT;
+    const authored = AUTHOR_FIELDS.some(key => value[key] === uid);
+    if (authored) {
+        for (const key of PERSONAL_TEXT) if (typeof value[key] === "string") result[key] = DELETED_CONTENT;
+        for (const key of ["imageUrls", "media", "attachments"]) if (Array.isArray(value[key])) result[key] = [];
+        for (const key of ["imageUrl", "videoUrl", "thumbnailUrl"]) if (key in value) result[key] = null;
+        result.contentDeleted = true;
+    }
     for (const [key, item] of Object.entries(value)) {
         if (item === uid) {
             result[key] = null;
@@ -27,14 +40,14 @@ function anonymizeHistory(value, uid) {
     return result;
 }
 
-async function scrubTree(db, ref, uid) {
+async function scrubTree(db, ref, uid, removedMedia, removedTodos) {
     for (const collection of await ref.listCollections()) {
-        for (const child of await collection.listDocuments()) await scrubTree(db, child, uid);
+        for (const child of await collection.listDocuments()) await scrubTree(db, child, uid, removedMedia, removedTodos);
     }
     await db.runTransaction(async tx => {
         const current = await tx.get(ref);
         if (!current.exists) return;
-        const next = anonymizeHistory(current.data(), uid);
+        const next = anonymizeHistory(current.data(), uid, removedMedia, removedTodos);
         if (JSON.stringify(next) !== JSON.stringify(current.data())) tx.set(ref, next);
     });
 }
@@ -45,6 +58,16 @@ async function removeAccountFromCollaboration(db, ref, uid, {
     let snapshot = await ref.get();
     if (!snapshot.exists) return;
     let collaboration = snapshot.data();
+    const inventory = db.doc(`accountDeletionLocks/${uid}/collaborationMedia/${ref.id}`);
+    // Capture root gallery provenance before ownership transfer removes the old UID.
+    if(collaboration.galleryOwnerId === uid) {
+        for(const url of (collaboration.galleryImageUrls||[]).filter(value=>typeof value==='string'&&value))
+            await inventory.collection('items').doc(createHash('sha256').update(url).digest('hex')).set({url});
+    }
+    if(collaboration.bannerOwnerId === uid && typeof collaboration.bannerImageUrl === 'string' && collaboration.bannerImageUrl) await inventory.collection('items').doc(createHash('sha256').update(collaboration.bannerImageUrl).digest('hex')).set({url:collaboration.bannerImageUrl});
+    const todos = await ref.collection('todos').where('createdBy','==',uid).get();
+    for(const todo of todos.docs) await inventory.collection('todos').doc(todo.id).set({id:todo.id});
+    const removedTodos = new Set((await inventory.collection('todos').get()).docs.map(doc=>doc.id));
     const invitations = await ref.collection("invitations").get();
     for (const invitation of invitations.docs) if ([invitation.data().targetUserId, invitation.data().senderId].includes(uid)) await db.recursiveDelete(invitation.ref);
     if (collaboration.ownerId === uid) {
@@ -105,9 +128,24 @@ async function removeAccountFromCollaboration(db, ref, uid, {
         if (Object.keys(update).length) tx.update(ref, update);
         tx.delete(ref.collection("members").doc(uid));
     });
-    await scrubTree(db, ref, uid);
+    // Keep a recoverable inventory until the whole scrub completes. A retry must
+    // still remove copies from shared galleries after their author entry is scrubbed.
+    const mediaRef = inventory;
+    const savedMedia = await mediaRef.collection("items").get();
+    const removedMedia = new Set(savedMedia.docs.map(doc => doc.data().url));
+    async function collectMedia(record) {
+        const snap = await record.get();
+        const data = snap.data() || {};
+        if (AUTHOR_FIELDS.some(key => data[key] === uid)) {
+            for (const url of [...(data.imageUrls || []), data.imageUrl, data.videoUrl, data.thumbnailUrl]) if (typeof url === "string") removedMedia.add(url);
+        }
+        for (const collection of await record.listCollections()) for (const child of await collection.listDocuments()) await collectMedia(child);
+    }
+    await collectMedia(ref);
+    for (const url of removedMedia) await mediaRef.collection("items").doc(createHash("sha256").update(url).digest("hex")).set({url});
+    await scrubTree(db, ref, uid, removedMedia, removedTodos);
     const publications = await db.collection("creations").where("sourceCollaborationId", "==", ref.id).get();
-    for (const publication of publications.docs) await scrubTree(db, publication.ref, uid);
+    for (const publication of publications.docs) await scrubTree(db, publication.ref, uid, removedMedia, removedTodos);
 }
 
-module.exports = {anonymizeHistory, scrubTree, removeAccountFromCollaboration};
+module.exports = {anonymizeHistory, scrubTree, removeAccountFromCollaboration, DELETED_CONTENT};

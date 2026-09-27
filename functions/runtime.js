@@ -38,15 +38,16 @@ function callable(handler) {
 }
 
 function callableWith(options, handler) {
-  const {allowDeletingAccount = false, ...runtimeOptions} = options;
+  const {allowDeletingAccount = false, allowRestrictedAccount = false, ...runtimeOptions} = options;
   return functions.https.onCall(
     {
       ...REQUEST_RUNTIME_OPTIONS,
       ...runtimeOptions,
       enforceAppCheck,
     },
-    (request) => {
+    async (request) => {
       if (allowDeletingAccount) return handler(request.data, request);
+      if(!allowRestrictedAccount)await require('./accountModeration').assertAccountUnrestricted(require('firebase-admin/firestore').getFirestore(),request.auth?.uid);
       const targets = [...new Set([request.auth?.uid, request.data?.targetUserId,
         request.data?.newOwnerId, request.data?.memberId].filter(uid => typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid)))];
       const invoke = index => index === targets.length ? handler(request.data, request) :

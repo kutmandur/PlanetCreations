@@ -41,7 +41,7 @@ test('owner receives every community permission', () => {
     };
     assert.equal(
         getEffectiveCommunityPermissionKeys(noPermissions, { roles: ['owner'] }).length,
-        10);
+        11);
 });
 
 test('moderator permissions default on but can be disabled', () => {
@@ -58,6 +58,7 @@ test('moderator permissions default on but can be disabled', () => {
     assert.equal(permissions.includes('manageMembers'), false);
     assert.equal(permissions.includes('manageEvents'), true);
     assert.equal(permissions.includes('createEvents'), true);
+    assert.equal(permissions.includes('manageModerationAppeals'), true);
 });
 
 test('defaults event creation off when a custom rank has no explicit flag', () => {

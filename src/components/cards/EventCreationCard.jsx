@@ -1,3 +1,4 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
 import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
@@ -17,9 +18,11 @@ const EventCreationCard = ({
     voteLimitReached,
     canParticipate = true
 }) => {
+    const {isBlocked} = useUserBlocks();
     const [hoverIndex, setHoverIndex] = useState(0);
     const intervalRef = useRef(null);
 
+    if(creation.moderationWithheld || isBlocked(creation.userId))return null;
     const imageUrls = creation.imageUrls || [];
     const videoUrls = creation.videoUrls || [];
 
@@ -73,7 +76,8 @@ const EventCreationCard = ({
             const g = parseInt(hexColor.substr(3, 2), 16);
             const b = parseInt(hexColor.substr(5, 2), 16);
             const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-            return (yiq >= 128) ? '#000000' : '#ffffff';
+            if (isBlocked(creation.userId)) return null;
+    return (yiq >= 128) ? '#000000' : '#ffffff';
         } catch(e) { return '#000000'; }
     };
 

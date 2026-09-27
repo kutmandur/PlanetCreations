@@ -1,3 +1,4 @@
+const {assertInteractionAllowed} = require("./userBlocking");
 const {
     callable: onCall,
     callableWith: onCallWith,
@@ -333,6 +334,7 @@ const authenticate = async (req, res, next) => {
     try {
         const decodedIdToken = await auth.verifyIdToken(idToken, true);
         await assertNotDeleting(db, decodedIdToken.uid);
+        await require('./accountModeration').assertAccountUnrestricted(db, decodedIdToken.uid);
         req.user = decodedIdToken;
         next();
     } catch {
@@ -401,7 +403,8 @@ app.get("/creation-share/:creationId", async (req, res) => {
     if (!creationId) return res.status(400).type("text/plain").send("Invalid creation ID.");
     try {
         const creationSnap = await db.doc(`creations/${creationId}`).get();
-        if (!creationSnap.exists) {
+        if (!creationSnap.exists || creationSnap.data().moderationWithheld) {
+            res.set("Cache-Control", "no-store");
             return res.status(404).type("text/plain").send("Creation not found.");
         }
         const html = buildCreationSharePreviewHtml({
@@ -1398,6 +1401,7 @@ exports.getBackupDownloadUrl = onCallWith(
         const creationSnap = await db.doc(`creations/${creationId}`).get();
         if (!creationSnap.exists) throw new functions.https.HttpsError("not-found", "Creation not found.");
         const creation = creationSnap.data();
+        if (creation.moderationWithheld) throw new functions.https.HttpsError("not-found", "Creation unavailable.");
         const objectKey = creation.backupObjectKey;
         if (!isOwnedObjectKey(objectKey, creation.userId, "creation-backups") ||
             !objectKey.startsWith(`creation-backups/${creation.userId}/${creationId}/`)) {
@@ -1433,6 +1437,7 @@ exports.getCreationRideAnalysisUrl = onCallWith(
             throw new functions.https.HttpsError("not-found", "Creation not found.");
         }
         const creation = creationSnap.data();
+        if (creation.moderationWithheld) throw new functions.https.HttpsError("not-found", "Creation unavailable.");
         const objectKey = creation.rideAnalysisObjectKey;
         if (!creation.verifiedGameMetadata?.rideAnalysis?.available ||
             !isCreationRideAnalysisObjectKey(
@@ -1484,6 +1489,7 @@ exports.getCreationRideAnalysisChunk = onCallWith(
             throw new functions.https.HttpsError("not-found", "Creation not found.");
         }
         const creation = creationSnap.data();
+        if (creation.moderationWithheld) throw new functions.https.HttpsError("not-found", "Creation unavailable.");
         const objectKey = creation.rideAnalysisObjectKey;
         const summary = creation.verifiedGameMetadata?.rideAnalysis;
         const totalBytes = summary?.compressedBytes;
@@ -2462,6 +2468,8 @@ exports.removeCommunityCreation = onCall(async (data, context) => {
             ? creationSnap.data().title || linkSnap.data().title || ''
             : linkSnap.data().title || '',
         reason: 'Removed from community by a community manager.',
+        status: 'open',
+        dueAt: Timestamp.fromMillis(Date.now()+86400000),
         reporterId: context.auth.uid,
         timestamp: FieldValue.serverTimestamp(),
     });
@@ -2737,6 +2745,7 @@ exports.onCommunityInviteCreated = documentCreated(
         if (!communitySnap.exists) return null;
         const communityData = communitySnap.data();
         await notifyUser(userId, 'communityInvite', {
+            relatedUserIds: [snap.data().invitedBy].filter(Boolean),
             title: 'Community invitation',
             message: `You were invited to join ${communityData.name || 'a community'}.`,
             link: '/communitys?tab=Invitations',
@@ -4096,6 +4105,7 @@ exports.sweepLiveStreams = scheduled(
 // Kurze Feldnamen halten die Index-Shards klein. Muss zu
 // src/firebase/searchIndexService.js (entryToCreation) passen.
 const buildIndexEntry = (data) => ({
+    hidden: data.moderationWithheld === true,
     t: data.title || '',
     d: (data.description || '').slice(0, 200),
     tg: data.tags || [],
@@ -4158,6 +4168,13 @@ exports.syncCreationToSearchIndex = documentWritten(
         const creationId = context.params.creationId;
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
+        if(after && typeof after.moderationWithheld !== 'boolean') {
+            await db.runTransaction(async tx=>{
+                const current=await tx.get(change.after.ref);
+                if(current.exists&&typeof current.data().moderationWithheld!=='boolean')tx.update(change.after.ref,{moderationWithheld:false});
+            });
+            return null;
+        }
         const gameBefore = before?.game;
         const gameAfter = after?.game;
         const indexGames = await getRegistryGameIds();
@@ -4168,6 +4185,10 @@ exports.syncCreationToSearchIndex = documentWritten(
         }
 
         if (!after) return null;
+        if(after.moderationWithheld) {
+            if(gameAfter) await removeMapIndexEntry(db, 'search', gameAfter, creationId);
+            return null;
+        }
         if (!indexGames.includes(gameAfter)) {
             console.warn(`Creation ${creationId} has unknown game "${gameAfter}", not indexed.`);
             return null;
@@ -4231,6 +4252,7 @@ const rebuildCommunityIndex = async (communityId, creationsById = null) => {
             creationData = snap.data();
         }
         const linkData = { ...linkDoc.data(), __communityId: communityId };
+        if(creationData.moderationWithheld)continue;
         entries[linkDoc.id] = buildCommunityIndexEntry(
             creationData, linkData, rolesByUser.get(creationData.userId));
     }
@@ -4263,6 +4285,7 @@ const rebuildShowcaseIndex = async (communityId, showcaseId) => {
         if (!creationSnap.exists) continue; // verwaister Link
         const creationData = creationSnap.data();
         const linkData = { ...link, __communityId: communityId };
+        if(creationData.moderationWithheld)continue;
         entries[linkDoc.id] = buildCommunityIndexEntry(creationData, linkData, rolesByUser.get(creationData.userId));
     }
     if (Object.keys(entries).length === 0) {
@@ -4323,6 +4346,7 @@ exports.syncCommunityLinkToIndex = documentWritten(
             return null;
         }
         const creationData = creationSnap.data();
+        if(creationData.moderationWithheld)return removeMapIndexEntry(db,'community',communityId,creationId);
 
         const memberSnap = await db.doc(`communitys/${communityId}/members/${creationData.userId}`).get();
         const memberRoles = memberSnap.exists ? (memberSnap.data().roles || []) : [];
@@ -4368,8 +4392,14 @@ exports.syncCreationToCommunityIndexes = documentWritten(
         const before = change.before.exists ? change.before.data() : null;
         const after = change.after.exists ? change.after.data() : null;
         const idsBefore = before?.communityIds || [];
-        const idsAfter = after?.communityIds || [];
+        const idsAfter = after?.moderationWithheld ? [] : (after?.communityIds || []);
 
+        if(Boolean(before?.moderationWithheld)!==Boolean(after?.moderationWithheld)) {
+            for(const cid of new Set([...idsBefore,...(after?.communityIds||[])])) {
+                const link=await db.doc(`communitys/${cid}/creations/${creationId}`).get();
+                if(link.data()?.showcaseGroupId)await rebuildShowcaseIndex(cid,link.data().showcaseGroupId);
+            }
+        }
         // Aus Indexen entfernen, wo die Creation nicht mehr verlinkt ist
         const removed = idsBefore.filter(id => !idsAfter.includes(id));
         await Promise.all(removed.map(cid =>
@@ -4478,7 +4508,7 @@ exports.notifyFollowersOnNewCreation = documentCreated(
         const message = creation.title || '';
         const link = `/creation/${context.params.creationId}`;
         await Promise.all([...new Set(followers)].map(f =>
-            notifyUser(f, 'newCreation', { title, message, link })));
+            notifyUser(f, 'newCreation', { title, message, link, relatedUserIds: [authorId] })));
         return null;
     });
 
@@ -4538,7 +4568,7 @@ exports.notifyOnCreationUpdate = documentUpdated(
         // Autor nicht über sein eigenes Update benachrichtigen
         await Promise.all(followersSnap.docs
             .filter(d => d.id !== after.userId)
-            .map(d => notifyUser(d.id, 'creationUpdate', { title, message, link })));
+            .map(d => notifyUser(d.id, 'creationUpdate', { title, message, link, relatedUserIds: [after.userId] })));
         return null;
     });
 
@@ -4556,6 +4586,7 @@ exports.notifyOnNewFollower = documentUpdated(
             const fProfile = await db.doc(`profiles/${followerId}`).get();
             const fName = fProfile.exists ? (fProfile.data().username || 'Someone') : 'Someone';
             await notifyUser(followedUserId, 'newFollower', {
+                relatedUserIds: [followerId],
                 title: `${fName} started following you`,
                 message: '',
                 link: `/profile/${followerId}`,
@@ -4569,7 +4600,8 @@ exports.notifyOnNewFollower = documentUpdated(
 exports.onReportCreated = documentCreated(
     'reports/{reportId}',
     async (snap) => {
-        return countReport(db, snap);
+        await countReport(db, snap);
+        await require('./moderationQueue').reportCreated(db,snap);
     }, {retry: true});
 
 // --- Collaboration-Beitritt per Invite-Code (serverseitig, damit Clients nicht
@@ -4762,6 +4794,7 @@ exports.createCollaboration = onCallWith({
         timeoutSeconds: 300,
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     }, async (data, context) => {
+        if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
         const userId = requireAuthenticated(context);
         await enforceCallableRateLimit({
             action: "create-collaboration",
@@ -5000,6 +5033,8 @@ exports.createCollaboration = onCallWith({
                     visibility,
                     bannerImageUrl,
                     galleryImageUrls,
+                    galleryOwnerId: userId,
+                    bannerOwnerId: userId,
                     ownerId: userId,
                     memberIds: [userId],
                     contributors: [
@@ -5277,6 +5312,7 @@ async function deleteCollaborationData(collaborationSnap) {
             );
         }
 
+        await require('./contentReview').deleteCollaborationReviews(db, collaborationId);
         await db.recursiveDelete(collaborationRef);
         await deleteDocumentRefs(
             [
@@ -5345,6 +5381,7 @@ exports.sendCollaborationInvitation = onCall(async (data, context) => {
     const createdAt = Timestamp.now();
 
     const invitation = await db.runTransaction(async (transaction) => {
+        await assertInteractionAllowed(db, senderId, targetUserId, transaction);
         const [
             collaborationSnapshot,
             targetMemberSnapshot,
@@ -5542,6 +5579,7 @@ exports.respondToCollaborationInvitation = onCall(async (data, context) => {
                 "Invitation not found.",
             );
         }
+        if (accept) await assertInteractionAllowed(db, userId, grantSnapshot.data().senderId, transaction);
         if (grantSnapshot.data().status !== "pending") {
             throw new functions.https.HttpsError(
                 "failed-precondition",
@@ -5836,6 +5874,7 @@ exports.joinCollaborationByPassword = onCall(async (data, context) => {
 
 // --- Beitrittsantrag stellen (nur joinMode === 'application'). ---
 exports.applyToCollaboration = onCall(async (data, context) => {
+    if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -5947,6 +5986,7 @@ exports.respondToCollaborationApplication = onCall(async (data, context) => {
 // --- Owner: Collaboration-Einstellungen bearbeiten (Titel/Beschreibung/Join-Modus/
 //     Passwort). Passwort-Hashing läuft serverseitig; game ist nicht änderbar. ---
 exports.updateCollaborationSettings = onCall(async (data, context) => {
+        if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -5988,6 +6028,7 @@ exports.updateCollaborationSettings = onCall(async (data, context) => {
         update.visibility = normalizeCollaborationVisibility(data.visibility);
     }
     if (data && Object.prototype.hasOwnProperty.call(data, 'bannerImageUrl')) {
+        update.bannerOwnerId = userId;
         update.bannerImageUrl = normalizeCollaborationImageUrl(
             data.bannerImageUrl,
             'Banner image',
@@ -6001,6 +6042,7 @@ exports.updateCollaborationSettings = onCall(async (data, context) => {
                 'The project gallery must be an image URL list.',
             );
         }
+        update.galleryOwnerId = userId;
         update.galleryImageUrls = normalizeCollaborationImageUrls(
             data.galleryImageUrls,
             'The project gallery',
@@ -6421,6 +6463,7 @@ exports.startBuildSession = onCall(async (data, context) => {
 // --- Build-Session beenden (Log-off / Spiel-Schließen / manueller Button).
 //     `force` erlaubt dem Owner, einen fremden hängenden Lock zu lösen. ---
 exports.endBuildSession = onCall(async (data, context) => {
+    if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.');
     }
@@ -6441,8 +6484,8 @@ exports.endBuildSession = onCall(async (data, context) => {
             "A changelog can contain up to 1000 characters.",
         );
     }
-    const completedTodos = normalizeCollaborationCompletedTodos(
-        buildDraft.completedTodos,
+    const completedTodos = await normalizeCollaborationCompletedTodos(
+        buildDraft.completedTodos, collaborationId,
     );
     const requestedBuildSessionId =
         typeof (data && data.buildSessionId) === "string" ?
@@ -6462,6 +6505,7 @@ exports.endBuildSession = onCall(async (data, context) => {
     const ref = db.doc(`collaborations/${collaborationId}`);
     const uploadRef = ref.collection("uploads").doc();
     const result = await db.runTransaction(async (transaction) => {
+            await guardCompletedTodoAuthors(transaction, completedTodos);
         const snap = await transaction.get(ref);
         if (!snap.exists) {
             throw new functions.https.HttpsError(
@@ -6720,6 +6764,7 @@ exports.finalizeCollaborationVersion = onCallWith(
         secrets: [backupSigningKey, r2AccessKeyId, r2SecretAccessKey],
     },
     async (data, context) => {
+        if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
         const uid = requireAuthenticated(context);
         await enforceCallableRateLimit({
             action: "finalize-collaboration-version",
@@ -6735,8 +6780,8 @@ exports.finalizeCollaborationVersion = onCallWith(
         const imageUrls = normalizeCollaborationImageUrls(
             data && data.imageUrls,
         );
-        const completedTodos = normalizeCollaborationCompletedTodos(
-            data && data.completedTodos,
+        const completedTodos = await normalizeCollaborationCompletedTodos(
+            data && data.completedTodos, collaborationId,
         );
         if (typeof uploadId !== "string" || !collaborationId ||
             !changelogEntryId) {
@@ -6811,6 +6856,7 @@ exports.finalizeCollaborationVersion = onCallWith(
         }
         const processingToken = crypto.randomUUID();
         await db.runTransaction(async (transaction) => {
+            await guardCompletedTodoAuthors(transaction, completedTodos);
             const latest = await transaction.get(sessionRef);
             if (!latest.exists || latest.data().uid !== uid || !isClaimableUpload(latest.data())) {
                 throw new functions.https.HttpsError("aborted", "The upload session is already being processed.");
@@ -6868,6 +6914,7 @@ exports.finalizeCollaborationVersion = onCallWith(
                 "Unknown contributor";
             const uploadedAt = Timestamp.now();
             const commitResult = await db.runTransaction(async (transaction) => {
+            await guardCompletedTodoAuthors(transaction, completedTodos);
                 const [
                     latestSession,
                     latestCollab,
@@ -7125,7 +7172,15 @@ function normalizeCollaborationImageUrls(
     )))];
 }
 
-function normalizeCollaborationCompletedTodos(values) {
+async function guardCompletedTodoAuthors(transaction, todos) {
+    for (const todo of todos || []) if (todo.createdBy && !await isAccountActive(db,todo.createdBy,transaction)) {
+        todo.createdBy = null;
+        todo.text = 'Content removed after account deletion.';
+    }
+}
+
+async function normalizeCollaborationCompletedTodos(values, collaborationId) {
+    if (Array.isArray(values) && values.length) requireSafeId(collaborationId, "Collaboration ID");
     if (!Array.isArray(values)) return [];
     if (values.length > 50) {
         throw new functions.https.HttpsError(
@@ -7156,8 +7211,13 @@ function normalizeCollaborationCompletedTodos(values) {
         }
         return {id, text};
     });
-    return normalized.filter((todo, index, todos) =>
-        todos.findIndex((item) => item.id === todo.id) === index);
+    const unique = normalized.filter((todo, index, todos) => todos.findIndex((item) => item.id === todo.id) === index);
+    return Promise.all(unique.map(async todo => {
+        const original = await db.doc(`collaborations/${collaborationId}/todos/${todo.id}`).get();
+        // Attribution comes from the immutable task author, never the caller's snapshot.
+        if (!original.exists || !original.data().createdBy) return {id:todo.id,text:'Task no longer available.',createdBy:null};
+        return {id:todo.id,text:String(original.data().text || '').slice(0,300),createdBy:original.data().createdBy};
+    }));
 }
 
 // --- Changelog-Text/Bilder/erledigte Todos dürfen ausschließlich vom
@@ -7743,6 +7803,7 @@ exports.voteRevokeCollaborationPublish = onCallWith(
 
 exports.updateCollaborationChangelogEntry = onCall(
     async (data, context) => {
+        if (context.auth) await require('./contentPolicy').validateContentText(db, require('./contentPolicy').extractTextFields(data));
         const uid = requireAuthenticated(context);
         const collaborationId =
             ((data && data.collaborationId) || "").trim();
@@ -7771,7 +7832,7 @@ exports.updateCollaborationChangelogEntry = onCall(
             data && data.imageUrls,
         );
         const completedTodos = Array.isArray(data && data.completedTodos) ?
-            normalizeCollaborationCompletedTodos(data.completedTodos) :
+            await normalizeCollaborationCompletedTodos(data.completedTodos, collaborationId) :
             null;
         const collabRef = db.doc(`collaborations/${collaborationId}`);
         const memberRef = collabRef.collection("members").doc(uid);
@@ -7780,6 +7841,7 @@ exports.updateCollaborationChangelogEntry = onCall(
             .doc(changelogEntryId);
         const updatedAt = Timestamp.now();
         await db.runTransaction(async (transaction) => {
+            await guardCompletedTodoAuthors(transaction, completedTodos);
             const [collabSnap, memberSnap, uploadSnap] =
                 await Promise.all([
                     transaction.get(collabRef),
@@ -8396,7 +8458,7 @@ app.get("/rebuildSearchIndex", authenticate, verifyAppCheckWhenEnabled, async (r
         snapshot.docs.forEach(doc => {
             const data = doc.data();
             if (perGame[data.game]) {
-                perGame[data.game][doc.id] = buildIndexEntry(data);
+                if(!data.moderationWithheld)perGame[data.game][doc.id] = buildIndexEntry(data);
             } else {
                 skipped++;
             }
@@ -8824,3 +8886,30 @@ async function trackAccountDiscordDeliveries(uid, field, id) {
     const deliveries = await db.collection('discordDeliveries').where(field, '==', id).get();
     for (const delivery of deliveries.docs) await db.doc(`accountDeletionLocks/${uid}/deliveries/${delivery.id}`).set({pending: true});
 }
+
+exports.setUserBlock = onCallWith({allowRestrictedAccount:true},(data, context) => require("./userBlocking").setUserBlock(db, context.auth?.uid, data));
+
+exports.submitContentReport = onCallWith({allowRestrictedAccount:true},(data, context) => require('./contentReporting').submitContentReport(db, context.auth?.uid, data));
+
+exports.validateContentText = onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Sign in first.');
+    const fields=data?.fields;
+    if (!fields || Array.isArray(fields) || typeof fields!=='object' || Object.keys(fields).length>40 || Object.values(fields).some(value=>typeof value!=='string'||value.length>10000)) throw new functions.https.HttpsError('invalid-argument','Invalid content fields.');
+    return require('./contentPolicy').validateContentText(db, fields);
+});
+exports.updateContentPolicy = onCall((data,context)=>require('./contentPolicy').updateContentPolicy(db,context.auth?.uid,data));
+
+exports.reviewContentReport = onCall((data,context)=>require('./contentReview').reviewContentReport(db,context.auth?.uid,data));
+exports.getOwnerModerationPreview = onCallWith({allowRestrictedAccount:true},(data,context)=>require('./contentReview').getOwnerModerationPreview(db,context.auth?.uid,data));
+exports.getCommunityModeration = onCallWith({allowRestrictedAccount:true},(data,context)=>require('./communityModeration').getCommunityModeration(db,context.auth?.uid,data));
+exports.amendContentReview = onCall((data,context)=>require('./contentReview').amendContentReview(db,context.auth?.uid,data));
+exports.appealContentDecision = onCallWith({allowRestrictedAccount:true},(data,context)=>require('./contentReview').appealContentDecision(db,context.auth?.uid,data));
+exports.moderateAccount = onCall((data,context)=>require('./accountModeration').moderateAccount(db,context.auth?.uid,data));
+exports.listAccountModeration = onCall((data,context)=>require('./accountModeration').listAccountModeration(db,context.auth?.uid));
+exports.onAccountModerationAppeal = documentWritten('users/{userId}/moderation/state',async change=>{
+    if(change.after.data()?.appealPending&&!change.before.data()?.appealPending)await require('./moderationQueue').alertStaff(db,{title:'Account sanction appealed',message:'An account sanction needs another review. Open the Accounts tab.',eventKey:`account-appeal-${change.after.ref.parent.parent.id}-${change.after.data().appealedAt.toMillis()}`});
+},{retry:true});
+exports.appealAccountModeration = onCallWith({allowRestrictedAccount:true},(data,context)=>require('./accountModeration').appealAccountModeration(db,context.auth?.uid,data));
+exports.expireContentReviews = scheduled({schedule:'every 60 minutes'},()=>require('./contentReview').expireContentReviews(db));
+exports.remindOverdueModeration = scheduled({schedule:'every 60 minutes'},()=>require('./moderationQueue').remindOverdue(db));
+exports.syncModerationIndex = documentWritten('reports/{reportId}',change=>require('./moderationIndex').syncReport(db,change),{retry:true});

@@ -19,6 +19,7 @@ import MemberManager from '../management/MemberManager';
 import CreationManager from '../management/CreationManager';
 import CommunitySettingsManager from '../management/CommunitySettingsManager';
 import ShowcaseManager from '../management/ShowcaseManager';
+import ModerationNotices from '../ui/ModerationNotices';
 import EventsManager from '../management/EventsManager';
 import JoinRequestsManager from '../management/JoinRequestsManager';
 import { getCommunityManagerTabs } from '../../utils/communityManagerTabs';
@@ -39,10 +40,12 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
     const managerRoles = managerMemberInfo?.roles || [];
     const isSiteStaff = ['admin', 'moderator'].includes(userProfile?.role);
     const managerPermissions = useMemo(
-        () => isSiteStaff
+        () => community?.ownerId === userProfile?.uid
             ? { ...ALL_COMMUNITY_PERMISSIONS }
+            : isSiteStaff
+            ? { ...ALL_COMMUNITY_PERMISSIONS, manageModerationAppeals: getEffectiveCommunityPermissions(community, managerMemberInfo).manageModerationAppeals }
             : getEffectiveCommunityPermissions(community, managerMemberInfo),
-        [community, isSiteStaff, managerMemberInfo]
+        [community, isSiteStaff, managerMemberInfo, userProfile?.uid]
     );
     const canManageSettings =
         userProfile?.role === 'admin' ||
@@ -267,6 +270,8 @@ const CommunityManagerPage = ({ setPasswordConfirm, setModalMessage, setConfirma
                             setConfirmation={setConfirmation}
                             blacklist={blacklist}
                         />;
+            case 'Moderation':
+                return <ModerationNotices communityId={communityId}/>;
             case 'Settings':
                 return <CommunitySettingsManager
                             community={community}

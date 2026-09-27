@@ -1,8 +1,10 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
 import React from 'react';
 import PreloadLink from '../ui/PreloadLink';
 import { getYoutubeThumbnailUrl as getYoutubeThumbnail } from '../../utils/helpers';
 
 const MiniCreationCard = ({ creation }) => {
+    const {isBlocked} = useUserBlocks();
 
     const initialThumbnail = creation.imageUrls?.length > 0 
         ? creation.imageUrls[0] 
@@ -10,6 +12,7 @@ const MiniCreationCard = ({ creation }) => {
         ? getYoutubeThumbnail(creation.videoUrls[0]) 
         : 'https://placehold.co/400x225/333333/ffffff?text=No+Media';
 
+    if (creation.moderationWithheld || isBlocked(creation.userId)) return null;
     return (
         <PreloadLink to={`/creation/${creation.id}`}>
             <article 

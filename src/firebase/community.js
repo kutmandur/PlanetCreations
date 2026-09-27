@@ -177,19 +177,8 @@ export const kickUser = async (communityId, targetUserId) => {
  * @param {string} staffUserId - The ID of the staff member filing the report.
  */
 export const kickAndReportUser = async (communityId, targetUserId, reason, staffUserId) => {
+    await httpsCallable(getFunctions(),'submitContentReport')({targetType:'user',targetId:targetUserId,reason:`Community removal requested. Reason: ${reason}`,category:'other'});
     await kickUser(communityId, targetUserId);
-
-    const batch = writeBatch(db);
-    const reportRef = doc(collection(db, 'reports'));
-    batch.set(reportRef, {
-        targetId: targetUserId,
-        targetType: 'user',
-        reason: `Kicked from community. Reason: ${reason}`,
-        reporterId: staffUserId,
-        timestamp: serverTimestamp(),
-    });
-    // reportCount wird serverseitig vom onReportCreated-Trigger erhöht.
-    await batch.commit();
 };
 
 
@@ -245,7 +234,7 @@ export const deleteCommunityAsAdmin = async (communityId) => {
 
     await deleteBatch.commit();
 
-    const creationsQuery = query(collection(db, 'creations'), where('communityIds', 'array-contains', communityId));
+    const creationsQuery = query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('communityIds', 'array-contains', communityId));
     const creationsSnapshot = await getDocs(creationsQuery);
 
     if (!creationsSnapshot.empty) {

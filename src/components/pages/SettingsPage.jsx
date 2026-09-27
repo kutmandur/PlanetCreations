@@ -1,4 +1,7 @@
+import ModerationNotices from '../ui/ModerationNotices';
+import BlockedUsersSettings from '../ui/BlockedUsersSettings';
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendEmailVerification } from 'firebase/auth';
@@ -22,6 +25,8 @@ import Icon from '../ui/Icon';
 import {previewAccountDeletion, communityDeletionWarning, requestAccountDeletion} from '../../firebase/accountDeletion';
 
 const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clientOnly = false, onBackToLibrary }) => {
+    const location = useLocation();
+    const reviewCaseId = new URLSearchParams(location.search).get('case');
     const [loading, setLoading] = useState(false);
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -39,6 +44,12 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [activeSettingsId, setActiveSettingsId] = useState(clientOnly ? 'client' : 'account');
     const [mobileSettingsOpen, setMobileSettingsOpen] = useState(clientOnly);
+    useEffect(() => {
+        if (!clientOnly && new URLSearchParams(location.search).get('section') === 'reviews') {
+            setActiveSettingsId('reviews');
+            setMobileSettingsOpen(true);
+        }
+    }, [location.search, clientOnly]);
 
     const isDesktopClient = window.electronAPI?.isElectron === true;
     const canUseStreaming = isDesktopClient && Boolean(window.electronAPI?.getObsStatus);
@@ -48,6 +59,7 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
         ...(!clientOnly && user ? [
             { id: 'discord', label: 'Discord', hint: 'Account & rank sync', icon: discordPlatform?.icon || ICONS.users, solid: true, tint: 'bg-indigo-500', activeText: 'text-white' },
             { id: 'notifications', label: 'Notifications', hint: 'Inbox & push alerts', icon: ICONS.bell, tint: 'bg-sky-500' },
+            { id: 'reviews', label: 'Content reviews', hint: 'Decisions & appeals', icon: ICONS.bell, tint: 'bg-amber-500' },
         ] : []),
         ...(isDesktopClient ? [
             { id: 'client', label: 'Client', hint: 'Overlay, shortcuts & local files', icon: ICONS.desktop, tint: 'bg-emerald-500' },
@@ -258,7 +270,7 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
         try { communities = (await previewAccountDeletion()).communities; }
         catch (error) { setModalMessage(`Unable to prepare account deletion: ${error.message}`); return; }
         setConfirmation({
-            message: `This action is irreversible. Delete your account and personal content? Collaboration history and event votes will be kept anonymously.${communityDeletionWarning(communities)}`,
+            message: `This action is irreversible. Delete your account and personal content? Your authored collaboration text and media references will be removed; shared technical history and event votes will be kept anonymously. Cleanup starts after a minimum 22-minute safety period for in-flight uploads and may take longer when retries are needed. Your saved receipt will show completion.${communityDeletionWarning(communities)}`,
             onConfirm: async () => {
                 setLoading(true);
                 try {
@@ -339,6 +351,7 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
                     </button>
 
                     {!clientOnly && user && <div className={activeSettingsId === 'account' ? 'space-y-8' : 'hidden'}>
+                <BlockedUsersSettings />
 
             {user && !user.emailVerified && (
                  <div className="pc-theme-card bg-white p-6 rounded-lg shadow-md">
@@ -440,6 +453,7 @@ const SettingsPage = ({ user, setModalMessage, setConfirmation, activeTab, clien
 
                     </div>}
 
+                    {!clientOnly && user && <div className={activeSettingsId === 'reviews' ? 'space-y-8' : 'hidden'}><ModerationNotices userId={user.uid} selectedCaseId={reviewCaseId} /></div>}
                     <div className={activeSettingsId === 'notifications' ? 'space-y-8' : 'hidden'}>
                         {!clientOnly && user && <NotificationSettings user={user} setModalMessage={setModalMessage} />}
                     </div>

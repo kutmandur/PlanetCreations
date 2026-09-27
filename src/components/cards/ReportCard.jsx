@@ -1,7 +1,10 @@
+import ReportReviewControls, {ModerationButton} from '../ui/ReportReviewControls';
+import AccountModerationControls from '../ui/AccountModerationControls';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ICONS } from '../../utils/helpers';
 import Icon from '../ui/Icon';
+import {buildModerationEditNavigationState} from '../../utils/creationNavigation';
 
 const ReportCard = ({ item, onAction, setPopoverView }) => {
     const [isPopoverVisible, setIsPopoverVisible] = useState(false);
@@ -10,13 +13,15 @@ const ReportCard = ({ item, onAction, setPopoverView }) => {
     const isUser = item.type === 'user';
     const isGenericContent = !isCreation && !isUser;
     const firstReportDate = item.reports[0]?.timestamp ? new Date(item.reports[0].timestamp.seconds * 1000).toLocaleDateString() : 'N/A';
+    const pending=item.reports.filter(report=>['open','reviewing','appealed'].includes(report.status||'open'));
+    const overdue=pending.some(report=>(report.dueAt?.seconds||(report.timestamp?.seconds||Date.now()/1000)+86400)*1000<Date.now());
 
     const handleTitleClick = () => {
         if (isCreation) {
             setPopoverView({ name: 'detail', id: item.id });
         } else if (isUser) {
             setPopoverView({ name: 'profile', userId: item.id });
-        } else if (typeof item.targetPath === 'string' && item.targetPath.startsWith('/')) {
+        } else if (typeof item.targetPath === 'string' && item.targetPath.startsWith('/') && !item.targetPath.startsWith('//')) {
             navigate(item.targetPath);
         }
     };
@@ -47,7 +52,7 @@ const ReportCard = ({ item, onAction, setPopoverView }) => {
                                 <h4 className="font-bold mb-2">Report Reasons:</h4>
                                 <ul className="list-disc list-inside text-sm text-gray-700 max-h-48 overflow-y-auto">
                                     {item.reports.map((report, index) => (
-                                        <li key={index} className="mb-1">{report.reason}</li>
+                                        <li key={index} className="mb-1">{({images:'Images',text:'Text',other:'Other'})[report.category]||'Unspecified'}: {report.reason}</li>
                                     ))}
                                 </ul>
                             </div>
@@ -55,14 +60,14 @@ const ReportCard = ({ item, onAction, setPopoverView }) => {
                     </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-4">First reported on: {firstReportDate}</p>
+                {pending.length>0&&<p role="status" className={overdue?'text-red-700 font-semibold':'text-gray-600'}>{overdue?'Overdue — internal 24-hour review target exceeded':'Awaiting review — internal target: within 24 hours'}</p>}
             </div>
-            <div className="p-4 bg-gray-50 border-t flex justify-end space-x-2">
-                {!isGenericContent && <button onClick={() => onAction('strike', item.id, item.type)} className="text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-white py-1 px-3 rounded-md">Strike</button>}
-                {!isGenericContent && <button onClick={() => onAction(isCreation ? 'delete' : 'ban', item.id, item.type)} className="text-sm font-semibold bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded-md">
-                    {isCreation ? 'Delete' : 'Ban'}
-                </button>}
-                <button onClick={() => onAction('resolve', item.id, item.type)} className="text-sm font-semibold bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded-md">Resolve</button>
-            </div>
+            <ReportReviewControls reports={item.reports}>
+                {isCreation && !item.reports.every(report=>report.status==='deleted') && <ModerationButton label="Edit" color="yellow" description="Edit the creation’s text, images and videos. Ownership stays unchanged; editing does not automatically close reports." onClick={()=>navigate(`/creation/${item.id}/edit`,{state:buildModerationEditNavigationState(item.id)})}/>}
+                {isCreation && <ModerationButton label="Strike" color="yellow" description="Issue a warning to the author. This does not close reports or change withheld content." onClick={()=>onAction('strike',item.id,item.type)}/>}
+                {isCreation && <ModerationButton label="Delete" color="red" description="Permanently delete the creation after password confirmation. Restore retained content first; this action cannot be undone." onClick={()=>onAction('delete',item.id,item.type)}/>}
+            </ReportReviewControls>
+            {isUser&&<AccountModerationControls targetUserId={item.id}/>}
         </article>
     );
 };

@@ -34,13 +34,15 @@ async function removeCommunityContributions(db, community, uid) {
 }
 
 async function removeReferences(db, uid, {deleteObjects = async () => {}} = {}) {
+    const decisions=await db.collectionGroup('moderationHistory').where('actorUid','==',uid).get();
+    for(const decision of decisions.docs)await decision.ref.update({actorUid:null,actorDeleted:true});
     const scan = collection => documents(collection, {checkpointRef: db.doc(`accountDeletionJobs/${uid}`), checkpointKey: collection.id});
     const removed = await db.collection(`accountDeletionLocks/${uid}/creations`).get();
     const removedIds = new Set(removed.docs.map(doc => doc.id));
-    for (const collection of ["bugReports", "reports", "collaborationInvitationGrants", "backupUploadSessions", "liveChannelClaims", "oauthStates"]) {
+    for (const collection of ["bugReports", "reports", "contentReviews", "collaborationInvitationGrants", "backupUploadSessions", "liveChannelClaims", "oauthStates"]) {
         for await (const doc of scan(db.collection(collection))) {
             const data = doc.data();
-            if ([data.uid, data.userId, data.reporterId, data.targetUserId, data.senderId, data.ownerId].includes(uid) ||
+            if ([data.uid, data.userId, data.authorId, data.reporterId, data.targetUserId, data.senderId, data.ownerId].includes(uid) ||
                 (data.targetType === "user" && data.targetId === uid) || removedIds.has(data.targetId)) {
                 if (collection === "backupUploadSessions") {
                     const keys = [data.objectKey, data.destinationKey, data.collaborationId ? null : data.previousObjectKey, data.rideAnalysisObjectKey].filter(Boolean);
@@ -50,6 +52,15 @@ async function removeReferences(db, uid, {deleteObjects = async () => {}} = {}) 
                     await deleteObjects(keys);
                 }
                 await db.recursiveDelete(doc.ref);
+            } else if(collection==='contentReviews'&&(data.reviewedBy===uid||data.amendedBy===uid||(data.history||[]).some(entry=>entry.actorUid===uid))) {
+                await db.runTransaction(async tx=>{
+                    const current=await tx.get(doc.ref);if(!current.exists)return;
+                    const review=current.data(),update={};
+                    if(review.reviewedBy===uid){update.reviewedBy=null;update.reviewedByDeleted=true;}
+                    if(review.amendedBy===uid){update.amendedBy=null;update.amendedByDeleted=true;}
+                    if((review.history||[]).some(entry=>entry.actorUid===uid))update.history=review.history.map(entry=>entry.actorUid===uid?{...entry,actorUid:null,actorDeleted:true}:entry);
+                    if(Object.keys(update).length){update.revision=(review.revision||0)+1;tx.update(doc.ref,update);}
+                });
             }
         }
     }
@@ -85,6 +96,7 @@ async function removeReferences(db, uid, {deleteObjects = async () => {}} = {}) 
         for (const name of ["voters", "submissionClaims"]) await db.recursiveDelete(event.ref.collection(name).doc(uid));
     }
     for await (const user of scan(db.collection("users"))) {
+        await user.ref.collection("blocks").doc(uid).delete();
         const inbox = user.ref.collection("meta").doc("inbox");
         await db.runTransaction(async tx => {
             const current = await tx.get(inbox);

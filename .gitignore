@@ -105,3 +105,9 @@ nul
 /docs/releases/*
 !/docs/releases/v[0-9]*.md
 /docs/releases/*-*.md
+
+# Local moderation sandbox, deployment evidence and emulator exports
+/firebase-export-*/
+/rollout-artifacts/
+/test-results/
+/playwright-report/

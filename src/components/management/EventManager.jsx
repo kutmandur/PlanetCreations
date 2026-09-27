@@ -169,7 +169,7 @@ const EventManager = ({ user, userProfile, setModalMessage, setPopoverView }) =>
         if (!eventId) return;
         let mounted = true;
         (async () => {
-            const submissionsSnap = await getDocs(query(collection(db, 'creations'), where('eventIds', 'array-contains', eventId)));
+            const submissionsSnap = await getDocs(query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('eventIds', 'array-contains', eventId)));
             if (mounted) setSubmissions(submissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         })();
         return () => { mounted = false; };

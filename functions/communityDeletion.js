@@ -36,6 +36,13 @@ async function deleteCommunityData(db, communityId, {deleteIndex = async () => {
     for (const member of members.docs) await db.doc(`profiles/${member.id}/communityMemberships/${communityId}`).delete();
     const showcases = await db.collection("showcaseIndexState").where("m.communityId", "==", communityId).get();
     for (const showcase of showcases.docs) await deleteIndex("showcase", showcase.id);
+    for(const collection of ['showcaseModeration','contentReviews','reports']) {
+        const records=await db.collection(collection).where('communityId','==',communityId).get();
+        for(const record of records.docs) {
+            if(collection==='contentReviews'&&record.data().authorId)await db.doc(`users/${record.data().authorId}/moderationNotices/${record.id}`).delete();
+            await db.recursiveDelete(record.ref);
+        }
+    }
     await deleteIndex("community", communityId);
     await db.recursiveDelete(ref);
     await finishCommunity(ref);

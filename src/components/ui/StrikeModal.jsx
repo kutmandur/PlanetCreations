@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
+import {ModerationButton} from './ReportReviewControls';
 
 const StrikeModal = ({ onConfirm, onCancel }) => {
     const [reason, setReason] = useState('');
+    const [busy,setBusy]=useState(false),[error,setError]=useState('');
 
-    const handleConfirm = () => {
-        if (reason.trim()) {
-            onConfirm(reason);
-        }
+    const handleConfirm = async () => {
+        if(!reason.trim()||busy)return;
+        setBusy(true);setError('');
+        try{await onConfirm(reason);}catch(error){setError(error.message||'The warning could not be saved.');}finally{setBusy(false);}
     };
 
     return (
@@ -18,6 +20,8 @@ const StrikeModal = ({ onConfirm, onCancel }) => {
                     <label htmlFor="strike-reason" className="block text-sm font-medium text-gray-700 mb-1">Reason for Strike</label>
                     <textarea
                         id="strike-reason"
+                        maxLength={1000}
+                        disabled={busy}
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}
                         rows="4"
@@ -25,18 +29,11 @@ const StrikeModal = ({ onConfirm, onCancel }) => {
                         placeholder="e.g., Violation of community guidelines regarding spam."
                     />
                 </div>
-                <div className="flex justify-end space-x-4 mt-6">
-                    <button onClick={onCancel} className="bg-gray-300 hover:bg-gray-400 text-black font-bold py-2 px-6 rounded-lg">
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleConfirm} 
-                        disabled={!reason.trim()}
-                        className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
-                    >
-                        Issue Strike
-                    </button>
+                <div className="flex flex-wrap justify-end gap-2 mt-6 p-3 bg-gray-50 border-t">
+                    <ModerationButton label="Cancel" color="gray" description="Close without issuing a strike." disabled={busy} onClick={onCancel}/>
+                    <ModerationButton label="Issue Strike" color="yellow" description="Warn the author and record the reason. A strike does not resolve the content report." onClick={handleConfirm} disabled={busy||!reason.trim()}/>
                 </div>
+                {error&&<p role="alert">{error}</p>}
             </div>
         </div>
     );

@@ -704,6 +704,7 @@ describe("scalable map-index Firestore rules", { concurrency: false }, () => {
       await Promise.all(publicCollections.map(([collectionName, documentId]) =>
         setDoc(doc(context.firestore(), collectionName, documentId), {
           e: {},
+          ...(collectionName === 'showcaseIndexShards' ? {i: 'showcase-id'} : {}),
           shardIds: [],
         })));
     });
@@ -806,4 +807,56 @@ describe("content report Firestore rules", { concurrency: false }, () => {
       moderatorDecision: "forged",
     }));
   });
+});
+
+test("personal blocks deny direct contact but preserve shared project access", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    const db=context.firestore();
+    await setDoc(doc(db, `users/${OWNER_ID}/blocks/${MEMBER_ID}`), {targetUserId: MEMBER_ID});
+    await setDoc(doc(db, `profiles/${OWNER_ID}`), {followers: []});
+    await setDoc(doc(db, `profiles/${MEMBER_ID}`), {followers: []});
+  });
+  const owner=authenticatedFirestore(OWNER_ID), member=authenticatedFirestore(MEMBER_ID);
+  await assertFails(updateDoc(doc(member, `profiles/${OWNER_ID}`), {followers: [MEMBER_ID]}));
+  await assertFails(updateDoc(doc(owner, `profiles/${MEMBER_ID}`), {followers: [OWNER_ID]}));
+  await assertSucceeds(getDoc(doc(owner, collaborationPath())));
+  await assertSucceeds(getDoc(doc(member, collaborationPath("files", "save"))));
+  await assertSucceeds(getDoc(doc(owner, `users/${OWNER_ID}/blocks/${MEMBER_ID}`)));
+  await assertFails(getDoc(doc(member, `users/${OWNER_ID}/blocks/${MEMBER_ID}`)));
+  await assertFails(deleteDoc(doc(owner, `users/${OWNER_ID}/blocks/${MEMBER_ID}`)));
+});
+
+test("published text policy rejects direct comment bypass but permits ordinary project work", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'meta/blacklist'), {pattern:'(^|.*[^a-z0-9_])(policyforbidden)([^a-z0-9_].*|$)',words:['policyforbidden']});
+  });
+  const db=authenticatedFirestore(MEMBER_ID);
+  const comment={authorId:MEMBER_ID,content:'A normal zoo update',createdAt:serverTimestamp(),updatedAt:serverTimestamp()};
+  await assertSucceeds(setDoc(doc(db,collaborationPath('comments','normal-policy')),comment));
+  await assertFails(setDoc(doc(db,collaborationPath('comments','bad-policy')),{...comment,content:'POLICYFORBIDDEN'}));
+  await assertFails(setDoc(doc(db,collaborationPath('comments','hidden-policy')),{...comment,content:'policy\u200bforbidden'}));
+  await assertFails(setDoc(doc(db,'meta/blacklist'),{words:[],pattern:'^a^'}));
+  await assertSucceeds(getDoc(doc(db,collaborationPath('files','save'))));
+});
+
+test('review evidence and author notices cannot be forged or read by strangers',async()=>{
+  await testEnvironment.withSecurityRulesDisabled(async context=>{
+    await setDoc(doc(context.firestore(),'contentReviews/private-review'),{authorId:MEMBER_ID,original:{content:'private evidence'}});
+    await setDoc(doc(context.firestore(),`users/${MEMBER_ID}/moderationNotices/private-review`),{status:'withhold'});
+  });
+  const member=authenticatedFirestore(MEMBER_ID),stranger=authenticatedFirestore(OUTSIDER_ID);
+  await assertFails(getDoc(doc(member,'contentReviews/private-review')));
+  await assertSucceeds(getDoc(doc(member,`users/${MEMBER_ID}/moderationNotices/private-review`)));
+  await assertFails(getDoc(doc(stranger,`users/${MEMBER_ID}/moderationNotices/private-review`)));
+  await assertFails(updateDoc(doc(member,`users/${MEMBER_ID}/moderationNotices/private-review`),{status:'restore'}));
+});
+
+test('todo authorship cannot be forged or changed while collaborators can complete tasks',async()=>{
+ const db=authenticatedFirestore(MEMBER_ID);
+ const ref=doc(db,collaborationPath('todos','attribution'));
+ await assertFails(setDoc(ref,{createdBy:OWNER_ID,text:'Forged author'}));
+ await assertSucceeds(setDoc(ref,{createdBy:MEMBER_ID,text:'Build a station',completed:false}));
+ await assertFails(updateDoc(ref,{createdBy:OWNER_ID}));
+ const ownerDb=authenticatedFirestore(OWNER_ID);
+ await assertSucceeds(updateDoc(doc(ownerDb,collaborationPath('todos','attribution')),{completed:true,completedBy:OWNER_ID}));
 });

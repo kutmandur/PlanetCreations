@@ -1,20 +1,23 @@
+import {getFunctions,httpsCallable} from 'firebase/functions';
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { db, auth } from '../../firebase/config';
 import { collection, query, onSnapshot, doc, writeBatch, getDocs, where, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import ReportCard from '../cards/ReportCard';
+import ModerationIndexPanel from '../management/ModerationIndexPanel';
 import Spinner from '../ui/Spinner';
 import BlacklistManager from '../management/BlacklistManager';
 import TagManager from '../management/TagManager';
 import CollaborationManager from '../management/CollaborationManager';
 import PillTabs from '../ui/PillTabs';
+import AccountModerationManager from '../management/AccountModerationManager';
 
-const MODERATION_TABS = ['Reports', 'Collaborations', 'Content Settings'];
+const MODERATION_TABS = ['Reports', 'Accounts', 'Collaborations', 'Content Settings'];
 const REPORT_TABS = ['Creations', 'Users', 'Content'];
 const CONTENT_SETTINGS_TABS = ['Blacklist', 'Tag Library'];
 
 const MODERATION_ROUTE_TARGETS = Object.freeze({
+    accounts: { tab: 'Accounts' },
     reports: { tab: 'Reports', section: 'Creations' },
     'reported-creations': { tab: 'Reports', section: 'Creations' },
     'reported-users': { tab: 'Reports', section: 'Users' },
@@ -60,51 +63,14 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
         if (target.tab === 'Content Settings' && section) setContentSettingsSubTab(section);
     }, [location.search]);
     
-    const [reports, setReports] = useState([]);
-    const [loadingReports, setLoadingReports] = useState(true);
+    const [reportCounts,setReportCounts]=useState({Creations:0,Users:0,Content:0});
+    const [tags,setTags]=useState([]),[loadingTags,setLoadingTags]=useState(true);
+    const totalReportCount=Object.values(reportCounts).reduce((sum,count)=>sum+count,0);
+    useEffect(()=>{
+        if(activeTab!=='Reports')return;
+        return onSnapshot(collection(db,'moderationIndexState'),snapshot=>setReportCounts(Object.fromEntries(['Creations','Users','Content'].map(category=>[category,snapshot.docs.find(doc=>doc.id===category)?.data().reportCount||0]))),()=>setModalMessage('Moderation index counts could not be loaded.'));
+    },[activeTab,setModalMessage]);
 
-    const [tags, setTags] = useState([]);
-    const [loadingTags, setLoadingTags] = useState(true);
-
-    const countReports = predicate => reports.reduce((total, reportGroup) => (
-        predicate(reportGroup) ? total + (reportGroup.reports?.length || 0) : total
-    ), 0);
-    const reportCounts = {
-        Creations: countReports(report => report.type === 'creation'),
-        Users: countReports(report => report.type === 'user'),
-        Content: countReports(report => !['creation', 'user'].includes(report.type)),
-    };
-    const totalReportCount = reportCounts.Creations + reportCounts.Users + reportCounts.Content;
-
-    useEffect(() => {
-        let isMounted = true;
-        setLoadingReports(true);
-        const q = query(collection(db, 'reports'));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const allReports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const grouped = allReports.reduce((acc, report) => {
-                const { targetId, targetType, targetTitle, targetPath, markerId, reason, timestamp, reporterId } = report;
-                const groupKey = `${targetType}:${targetId}`;
-                if (!acc[groupKey]) {
-                    acc[groupKey] = { id: targetId, type: targetType, title: targetTitle, targetPath, reports: [] };
-                }
-                acc[groupKey].reports.push({ reason, timestamp, reporterId, markerId });
-                return acc;
-            }, {});
-            if (isMounted) {
-                setReports(Object.values(grouped));
-                setLoadingReports(false);
-            }
-        }, (error) => {
-            console.error("Error fetching reports:", error);
-            if(isMounted) {
-                setModalMessage("Failed to load reports.");
-                setLoadingReports(false);
-            }
-        });
-        return () => { isMounted = false; unsubscribe(); };
-    }, [setModalMessage]);
-    
     useEffect(() => {
         if (activeTab !== 'Content Settings' || contentSettingsSubTab !== 'Tag Library') return;
         let isMounted = true;
@@ -127,33 +93,7 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     }, [activeTab, contentSettingsSubTab, setModalMessage]);
     
     const handleAction = async (action, targetId, targetType) => {
-        const clearReportsAndMarkers = async (batch) => {
-            const reportsQuery = query(collection(db, 'reports'), where('targetId', '==', targetId));
-            const reportsSnapshot = await getDocs(reportsQuery);
-            reportsSnapshot.forEach(reportDoc => {
-                const report = reportDoc.data();
-                if (report.targetType !== targetType) return;
-                const reporterId = report.reporterId;
-                if (reporterId) {
-                    const reportMarkerRef = doc(db, 'users', reporterId, 'reportedItems', report.markerId || targetId);
-                    batch.delete(reportMarkerRef);
-                }
-                batch.delete(reportDoc.ref);
-            });
-        };
-
-        if (action === 'resolve') {
-            try {
-                const batch = writeBatch(db);
-                await clearReportsAndMarkers(batch);
-                await batch.commit();
-                setModalMessage("Report resolved and all user flags have been cleared.");
-            } catch (error) {
-                setModalMessage(`Error resolving report: ${error.message}`);
-            }
-        }
-
-        if (action === 'delete' || action === 'ban') {
+        if (action === 'delete') {
             setPasswordConfirm({
                 message: `To ${action} this item, please confirm with your password. This action is permanent.`,
                 onConfirm: async (password) => {
@@ -163,20 +103,23 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
                         await reauthenticateWithCredential(user, credential);
                         
                         const batch = writeBatch(db);
-                        await clearReportsAndMarkers(batch);
+
 
                         if (targetType === 'creation' && action === 'delete') {
+                            const cases = await getDocs(query(collection(db, 'contentReviews'), where('targetId', '==', targetId)));
+                            if (cases.docs.some(entry => entry.data().targetType === 'creation' && Object.keys(entry.data().original || {}).length)) {
+                                throw new Error('Restore withheld content before permanently deleting this creation.');
+                            }
+                            const targetReports = await getDocs(query(collection(db, 'reports'), where('targetId', '==', targetId)));
+                            targetReports.docs.forEach(entry => {
+                                if (entry.data().targetType === 'creation') batch.update(entry.ref, {status: 'deleted'});
+                            });
                             const creationRef = doc(db, 'creations', targetId);
                             batch.delete(creationRef);
-                        } else if (targetType === 'user' && action === 'ban') {
-                            const userRef = doc(db, 'users', targetId);
-                            batch.update(userRef, { role: 'banned' });
-                            const profileRef = doc(db, 'profiles', targetId);
-                            batch.update(profileRef, { role: 'banned' });
                         }
 
                         await batch.commit();
-                        setModalMessage(`Item successfully ${action}d and reports cleared.`);
+                        setModalMessage(`Item successfully ${action}d. Review history was retained.`);
                     } catch (error) {
                          setModalMessage(`Error: ${error.message}`);
                     }
@@ -204,16 +147,12 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
                             throw new Error("Could not find user associated with this item.");
                         }
                         
-                        const userRef = doc(db, 'users', userToStrikeId);
-                        await updateDoc(userRef, { strikes: increment(1) });
+                        await httpsCallable(getFunctions(),'moderateAccount')({targetUserId:userToStrikeId,action:'warn',reason});
                         
-                        const batch = writeBatch(db);
-                        await clearReportsAndMarkers(batch);
-                        await batch.commit();
-
-                        setModalMessage(`Strike issued successfully and reports cleared.`);
+                        setModalMessage('Strike issued successfully. Reports and review history remain unchanged.');
                     } catch (error) {
                         setModalMessage(`Error issuing strike: ${error.message}`);
+                        throw error;
                     }
                 }
             });
@@ -221,24 +160,8 @@ const ModerationPage = ({ setPopoverView, setModalMessage, setStrikeModal, setPa
     };
 
     const renderContent = () => {
-        if (activeTab === 'Reports') {
-            if (loadingReports) return <Spinner />;
-            const filterType = reportSubTab === 'Creations' ? 'creation' :
-                (reportSubTab === 'Users' ? 'user' : 'content');
-            const filteredReports = reports.filter(item => filterType === 'content' ?
-                !['creation', 'user'].includes(item.type) : item.type === filterType);
-            if (filteredReports.length === 0) {
-                const emptyLabel = reportSubTab === 'Content' ? 'content' : reportSubTab.toLowerCase();
-                return <p className="text-center text-gray-500 mt-10">No reported {emptyLabel} found.</p>;
-            }
-            return (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredReports.map(item => (
-                        <ReportCard key={item.id} item={item} onAction={handleAction} setPopoverView={setPopoverView} />
-                    ))}
-                </div>
-            );
-        }
+        if(activeTab==='Accounts')return <AccountModerationManager/>;
+        if(activeTab==='Reports')return <ModerationIndexPanel key={reportSubTab} category={reportSubTab} onAction={handleAction} setPopoverView={setPopoverView}/>;
 
         if (activeTab === 'Collaborations') {
             return <CollaborationManager setModalMessage={setModalMessage} setConfirmation={setConfirmation} />;

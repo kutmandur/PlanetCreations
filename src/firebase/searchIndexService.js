@@ -14,6 +14,7 @@ import { cacheFrontierDlcCatalog } from '../utils/frontierDlcCatalogCache';
 export function entryToCreation(id, e, game = '') {
     return {
         id,
+        moderationWithheld: e.hidden === true,
         game,
         title: e.t || '',
         description: e.d || '',
@@ -51,6 +52,6 @@ export async function fetchSearchIndex(game) {
     });
     cacheFrontierDlcCatalog(game, scalableIndex?.metadata?.dlcCatalog);
     const entries = scalableIndex?.entries || {};
-    return Object.entries(entries).map(([id, entry]) =>
+    return Object.entries(entries).filter(([,entry])=>!entry.hidden).map(([id, entry]) =>
         entryToCreation(id, entry, game));
 }

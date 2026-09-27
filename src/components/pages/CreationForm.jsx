@@ -1,3 +1,4 @@
+import {getFunctions as getPolicyFunctions, httpsCallable as policyCallable} from 'firebase/functions';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -29,7 +30,7 @@ import {
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
-import { wasOpenedFromCreationDetail } from '../../utils/creationNavigation';
+import { wasOpenedFromCreationDetail, wasOpenedFromModeration } from '../../utils/creationNavigation';
 import {
     DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
     supportsDesktopBackupUpload,
@@ -288,6 +289,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     const data = docSnap.data();
+                    if(data.moderationWithheld&&data.userId===user?.uid) {
+                        setModalMessage('This creation is withheld. You can view it, but editing is locked until moderation releases it.');
+                        navigate(`/creation/${creationToEditId}`);
+                        return;
+                    }
                     if (data.userId !== user?.uid && userProfile?.role !== 'admin' && userProfile?.role !== 'moderator') {
                          setModalMessage("You do not have permission to edit this creation.");
                          navigate('/');
@@ -731,16 +737,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         }
 
         setLoading(true);
-        const stripBlacklisted = (text) => {
-            if (!text || !blacklist.length) return text;
-            const escapedBlacklist = blacklist.map(word => word.replace(/[-/^$*+?.()|[\]{}]/g, '\\$&'));
-            const regex = new RegExp(`\\b(${escapedBlacklist.join('|')})\\b`, 'gi');
-            return text.replace(regex, '').replace(/\s\s+/g, ' ').trim();
-        };
         try {
+            await policyCallable(getPolicyFunctions(), 'validateContentText')({fields:{title,description,shareCode,tags,mods,changelogEntry}});
             const finalImageUrls = imageItems.map(item => item.url);
             const finalVideoUrls = videoItems.map(item => item.url);
-            const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag && !containsBlacklistedWord(tag, blacklist)).slice(0, TAG_LIMIT);
+            const finalTags = tags.split(',').map(tag => tag.trim().toLowerCase()).filter(Boolean).slice(0, TAG_LIMIT);
             const finalMods = (usesMods && getGame(game)?.modsSupported) ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
             const communityAssignments = userCommunities.filter(c => selectedCommunities.includes(c.id)).map(c => ({ communityId: c.id, communityName: c.name }));
             
@@ -756,8 +757,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             }
 
             const creationData = { 
-                game, title: stripBlacklisted(title), description: stripBlacklisted(description), 
-                shareCode: stripBlacklisted(shareCode), imageUrls: finalImageUrls, videoUrls: finalVideoUrls, 
+                game, title: title.trim(), description: description.trim(),
+                shareCode: shareCode.trim(), imageUrls: finalImageUrls, videoUrls: finalVideoUrls,
                 customMediaLink, tags: finalTags, mods: finalMods, 
                 modStatus: usesMods ? 'UsingMods' : 'noMods', updatedAt: serverTimestamp(), 
                 category, status, platform,
@@ -774,6 +775,13 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 const originalData = originalDoc.data();
                 
                 const mainUpdateData = { ...creationData };
+                // Staff may not belong to the author's communities. Preserve
+                // their assignment metadata when those links remain selected.
+                mainUpdateData.communityAssignments = selectedCommunities.map(communityId =>
+                    communityAssignments.find(entry => entry.communityId === communityId) ||
+                    (originalData.communityAssignments || []).find(entry => entry.communityId === communityId) ||
+                    {communityId}
+                );
                 if (changelogEntry.trim()) {
                     mainUpdateData.changelog = arrayUnion({ text: changelogEntry.trim(), timestamp: Timestamp.now() });
                 }
@@ -790,7 +798,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     batch.set(linkRef, {
                         creationId: creationToEditId,
                         linkedAt: serverTimestamp(),
-                        userId: user.uid
+                        userId: originalData.userId
                     });
                 });
 
@@ -814,7 +822,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
                 setModalMessage(backupUploadId ? null : "Creation updated successfully!");
                 scheduleDataRefresh();
-                if (wasOpenedFromCreationDetail(location.state, creationToEditId)) {
+                if (wasOpenedFromModeration(location.state, creationToEditId)) {
+                    navigate('/moderation?tab=reported-creations', {replace:true});
+                } else if (wasOpenedFromCreationDetail(location.state, creationToEditId)) {
                     navigate(-1);
                 } else {
                     navigate(`/creation/${creationToEditId}`, { replace: true });
@@ -824,6 +834,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 const profileDoc = await getDoc(doc(db, 'profiles', user.uid));
                 const newCreationData = {
                     ...creationData,
+                    moderationWithheld: false,
                     userId: user.uid,
                     username: profileDoc.data().username,
                     userProfilePictureUrl: profileDoc.data().profilePictureUrl || null,
@@ -1031,6 +1042,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             />
 
             <h1 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'Create New Creation'}</h1>
+            {wasOpenedFromModeration(location.state, creationToEditId) && <p className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 p-3 text-sm text-gray-800">Moderation edit: remove image or video links and update text here. Saving returns to the moderation panel without closing the report. Withheld creations stay hidden until you choose Approve edits in their review. Restore instead brings back the retained original content and never overwrites newer edits.</p>}
             <form onSubmit={handleSubmit}>
                 <div className="lg:flex lg:gap-6 lg:items-start">
                     <nav className={`${mobileOpen ? 'hidden' : 'block'} lg:block lg:w-64 lg:flex-shrink-0`}>
@@ -1369,7 +1381,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </>)}
 
                 <div className="flex justify-between items-center gap-4 pt-6 border-t dark:border-gray-700">
-                    <button type="button" onClick={() => navigate(-1)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2.5 px-5 rounded-xl">Cancel</button>
+                    <button type="button" onClick={() => wasOpenedFromModeration(location.state, creationToEditId) ? navigate('/moderation?tab=reported-creations', {replace:true}) : navigate(-1)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2.5 px-5 rounded-xl">Cancel</button>
                     {isLastStep ? (
                         <button type="submit" disabled={loading || isUploading || isChangingStep} style={{ backgroundColor: color.hex }} className="text-white font-bold py-2.5 px-6 rounded-xl disabled:opacity-50 hover:brightness-95">
                             {loading ? 'Saving...' : (creationToEditId ? 'Save Changes' : 'Create Creation')}

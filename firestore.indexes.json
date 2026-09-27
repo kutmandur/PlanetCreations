@@ -193,6 +193,202 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "category",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "category",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "platform",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "likes",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "likes",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "game",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "platform",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "creations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "moderationWithheld",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "moderationIndexBlocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "category",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "number",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "moderationArchiveBlocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "category",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "number",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -450,6 +646,70 @@
         {
           "order": "ASCENDING",
           "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "moderation",
+      "fieldPath": "appealPending",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "moderation",
+      "fieldPath": "banned",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "moderation",
+      "fieldPath": "suspendedUntil",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "moderationHistory",
+      "fieldPath": "actorUid",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
         }
       ]
     }

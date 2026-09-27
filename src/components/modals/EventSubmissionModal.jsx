@@ -123,9 +123,9 @@ const EventSubmissionModal = ({ user, event, community, onClose, setModalMessage
 
     useEffect(() => {
         const fetchCreations = async () => {
-            const creationsQuery = query(collection(db, 'creations'), where('userId', '==', user.uid));
+            const creationsQuery = query(collection(db, 'creations'), where('moderationWithheld', '==', false), where('userId', '==', user.uid));
             const submissionCountQuery = query(
-                collection(db, 'creations'),
+                collection(db, 'creations'), where('moderationWithheld', '==', false),
                 where('userId', '==', user.uid),
                 where('eventIds', 'array-contains', event.id)
             );

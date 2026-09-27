@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { fetchShowcaseIndex } from '../../firebase/showcaseIndexService';
 import { SOCIAL_PLATFORMS, ICONS, getYoutubeId } from '../../utils/helpers';
@@ -24,24 +24,28 @@ const ShowcasePage = () => {
 
     useEffect(() => {
         let mounted = true;
+        let generation = 0;
         setLoading(true);
         setNotFound(false);
-        (async () => {
+        const load = async () => {
+            const currentGeneration = ++generation;
             try {
                 const sc = await fetchShowcaseIndex(showcaseId);
-                if (!mounted) return;
+                if (!mounted || currentGeneration !== generation) return;
                 if (!sc || !sc.creations?.length) { setNotFound(true); setLoading(false); return; }
                 setShowcase(sc);
+                setNotFound(false);
                 const commSnap = await getDoc(doc(db, 'communitys', sc.communityId));
-                if (!mounted) return;
+                if (!mounted || currentGeneration !== generation) return;
                 setCommunity(commSnap.exists() ? { id: commSnap.id, ...commSnap.data() } : null);
             } catch (err) {
-                if (mounted) setNotFound(true);
+                if (mounted && currentGeneration === generation) setNotFound(true);
             } finally {
-                if (mounted) setLoading(false);
+                if (mounted && currentGeneration === generation) setLoading(false);
             }
-        })();
-        return () => { mounted = false; };
+        };
+        const unsubscribe=onSnapshot(doc(db,'showcaseModeration',showcaseId),snapshot=>{if(!snapshot.metadata.fromCache)load();},()=>{generation++;if(mounted){setShowcase(null);setNotFound(true);setLoading(false);}});
+        return () => { mounted = false; unsubscribe(); };
     }, [showcaseId]);
 
     // Resolve creator roles → colored rank pills using the live community ranks.
@@ -72,6 +76,7 @@ const ShowcasePage = () => {
 
     return (
         <div className="container mx-auto p-4 sm:p-8" style={{ '--theme-color': themeColor }}>
+            {showcase.moderationWithheld&&<p role="status" className="mb-4 rounded-lg border border-amber-400 bg-amber-50 text-gray-900 p-4">This showcase is withheld. Only the community owner, members with moderation appeal permission and platform moderation staff can view it. Its featured creations remain available independently.</p>}
             {/* Header — reused from the community page */}
             <div className="mb-8">
                 {community && (

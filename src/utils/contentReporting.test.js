@@ -11,3 +11,5 @@ test('maps supported UGC detail routes to safe report targets', () => {
     expect(getReportableContent('/collaboration/create')).toBeNull();
     expect(getReportableContent('/privacy')).toBeNull();
 });
+
+test('canonical and legacy community routes resolve the same slug',()=>{expect(getReportableContent('/park-builders')).toEqual(getReportableContent('/community/park-builders'));expect(getReportableContent('/settings')).toBeNull();});

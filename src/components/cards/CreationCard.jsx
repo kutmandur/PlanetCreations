@@ -1,3 +1,4 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
 import React, { useCallback, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -19,6 +20,7 @@ const CreationCard = memo(({
     accentBorderColor = null,
 }) => {
     const queryClient = useQueryClient();
+    const {isBlocked} = useUserBlocks();
     const navigate = useNavigate();
     const { imgSrc, onMouseEnter: startHover, onMouseLeave: stopHover } = useHoverSlideshow(creation);
 
@@ -67,6 +69,7 @@ const CreationCard = memo(({
         }
     }, [onTagClick]);
 
+    if (creation.moderationWithheld || isBlocked(creation.userId)) return null;
     const isLive = isLiveStreamActive(creation.liveStream);
 
     const CardContent = () => (

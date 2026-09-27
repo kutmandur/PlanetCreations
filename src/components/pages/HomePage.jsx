@@ -1,3 +1,4 @@
+import {useUserBlocks} from '../../contexts/BlockingContext';
 import React, { useRef, useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -213,7 +214,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
     // Build optimized Firestore query using available indexes
     const buildFirestoreQuery = useCallback((isLoadMore = false, lastTs = null) => {
         const constraints = [
-            collection(db, 'creations'),
+            collection(db, 'creations'), where('moderationWithheld', '==', false),
             where('game', '==', activeTab)
         ];
 
@@ -513,16 +514,17 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         return () => window.removeEventListener('scroll', handleScroll);
     }, [fetchMoreCreations, showMoreIndexResults, shouldUseIndexSearch]);
 
+    const {isBlocked} = useUserBlocks();
     const filteredCreations = useMemo(() => {
         // Suchmodus: Ergebnisse kommen fertig gefiltert/sortiert aus dem Index,
         // hier nur noch die client-seitige Pagination anwenden
         if (shouldUseIndexSearch) {
-            return indexSearchResults.slice(0, visibleCount);
+            return indexSearchResults.filter(c => !isBlocked(c.userId)).slice(0, visibleCount);
         }
 
         // Standard Firestore mode - some filters still client-side
         // Note: game, category, platform, and single tag are now server-side
-        let filtered = [...creations];
+        let filtered = creations.filter(c => !isBlocked(c.userId));
 
         // DLC filter - still client-side
         if (dlcFilterMode === 'owned') {
@@ -559,7 +561,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         return filtered;
-    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseIndexSearch, indexSearchResults, visibleCount]);
+    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseIndexSearch, indexSearchResults, visibleCount, isBlocked]);
 
 
 

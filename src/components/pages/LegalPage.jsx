@@ -46,14 +46,17 @@ const LegalPage = ({ userProfile, docId, title, setModalMessage, fallbackContent
         }
     };
 
+    const contact = docId === 'impressum' ? <p className="my-6">Contact for support, safety reports and privacy requests: <a className="underline" href="mailto:info@planetcreations.net">info@planetcreations.net</a></p> : null;
+
     if (loading) {
-        return <Spinner />;
+        return <div className="max-w-4xl mx-auto p-8">{contact}<Spinner /></div>;
     }
 
     return (
         <div className="max-w-4xl mx-auto mt-10 p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg">
             <h1 className="text-4xl font-bold text-center text-gray-900 dark:text-white mb-8">{title}</h1>
 
+            {contact}
             {requiredNotice && (
                 <div className="mb-8 rounded-lg border border-blue-300 bg-blue-50 p-4 text-gray-900 dark:border-blue-700 dark:bg-blue-950 dark:text-gray-100">
                     {requiredNotice}

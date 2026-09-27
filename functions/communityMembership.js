@@ -11,6 +11,7 @@ const COMMUNITY_PERMISSION_DEFINITIONS = [
     ['manageCreations', 'canManageCreations', false, true],
     ['manageShowcases', 'canManageShowcases', false, true],
     ['manageEvents', 'canManageEvents', false, true],
+    ['manageModerationAppeals', 'canManageModerationAppeals', false, true],
 ];
 
 const ALL_COMMUNITY_PERMISSION_KEYS =
