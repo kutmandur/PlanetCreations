@@ -1,5 +1,6 @@
-import React from 'react';
-import { WEIGHT_KEYS, normalizeWeights, DEFAULT_WEIGHTS } from '../../utils/feedRanking';
+import React, {useId} from 'react';
+import { WEIGHT_KEYS } from '../../utils/feedRanking';
+import {feedPercentages, changeFeedPercentage} from '../../utils/feedMix';
 
 const LABELS = {
     live: 'Live creations',
@@ -10,11 +11,9 @@ const LABELS = {
     discovery: 'Discovery / variety',
 };
 
-// Gemeinsame Slider-Gruppe für die Feed-Gewichte (Settings + Admin-Panel).
-// Werte sind relative Anteile 0–100; daneben wird der normierte Anteil in %
-// angezeigt (so sieht man direkt, "wie viel von was" der Feed enthält).
 const FeedWeightSliders = ({ weights, onChange, disabledKeys = [], labelOverrides = {} }) => {
-    const normalized = normalizeWeights(weights);
+    const id = useId();
+    const percentages = feedPercentages(weights, disabledKeys);
     return (
         <div className="space-y-3">
             {WEIGHT_KEYS.map((key) => {
@@ -22,16 +21,19 @@ const FeedWeightSliders = ({ weights, onChange, disabledKeys = [], labelOverride
                 return (
                     <div key={key} className={disabled ? 'opacity-50' : ''}>
                         <div className="flex justify-between text-sm mb-1">
-                            <span className="font-semibold text-gray-700">{labelOverrides[key] || LABELS[key]}</span>
-                            <span className="text-gray-500">{Math.round(normalized[key] * 100)}%</span>
+                            <label htmlFor={`${id}-${key}`} className="font-semibold text-gray-700">{labelOverrides[key] || LABELS[key]}</label>
+                            <span className="text-gray-500">{percentages[key]}%</span>
                         </div>
                         <input
+                            id={`${id}-${key}`}
                             type="range"
+                            step="1"
+                            aria-valuetext={`${percentages[key]}%`}
                             min="0"
                             max="100"
-                            value={Number.isFinite(Number(weights[key])) ? Number(weights[key]) : DEFAULT_WEIGHTS[key]}
+                            value={percentages[key]}
                             disabled={disabled}
-                            onChange={(e) => onChange({ ...weights, [key]: Number(e.target.value) })}
+                            onChange={(e) => onChange(changeFeedPercentage(weights, key, Number(e.target.value), disabledKeys))}
                             className="w-full accent-blue-500"
                         />
                     </div>
