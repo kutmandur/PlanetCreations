@@ -134,6 +134,34 @@ test('restore preserves the original on full-disk and rename failures, and retai
     } finally { fs.promises.open = open; fs.promises.rename = rename; }
 });
 
+test('restore resolves a local profile without a stored path and recreates a known missing Saves folder', async () => {
+    const root = fs.mkdtempSync(path.join(electronTestRoot, 'auto-restore-'));
+    const frontierPath = path.join(root, 'Frontier');
+    const profile = path.join(frontierPath, 'Planet Zoo', '12345678901234567');
+    fs.mkdirSync(profile, {recursive: true});
+    const archive = path.join(root, 'restore.PlanetCreations');
+    const zip = new AdmZip();
+    zip.addFile('metadata.json', Buffer.from(JSON.stringify({originalFileName: 'zoo.zoo'})));
+    zip.addFile('zoo.zoo', Buffer.from('restored zoo'));
+    zip.writeZip(archive);
+    const app = {getPath: () => root};
+    const target = path.join(profile, 'Saves', 'zoo.zoo');
+    const restored = await BackupManager.restoreBackup(app, archive, 'Z:\\Old PC\\zoo.zoo', {frontierPath});
+    assert.equal(restored.success, true, restored.message);
+    assert.equal(restored.targetPath, target);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'restored zoo');
+
+    const otherProfile = path.join(frontierPath, 'Planet Zoo', '98765432109876543');
+    fs.mkdirSync(otherProfile, {recursive: true});
+    const knownTarget = path.join(otherProfile, 'Saves', 'zoo.zoo');
+    const known = await BackupManager.restoreBackup(app, archive, knownTarget, {frontierPath});
+    assert.equal(known.success, true, known.message);
+    assert.equal(known.targetPath, knownTarget);
+    const ambiguous = await BackupManager.restoreBackup(app, archive, null, {frontierPath});
+    assert.equal(ambiguous.success, false);
+    assert.equal(ambiguous.status, 'needs-target');
+});
+
 test('signed Direct Install validates the signature, reuses its registered target and rejects a moved save junction', async () => {
     const crypto = require('node:crypto');
     const {buildSignedMetadata, sha256} = require('../../functions/backupFormat');

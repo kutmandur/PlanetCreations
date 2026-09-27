@@ -10,6 +10,8 @@ vi.mock('../../hooks/useGames', () => ({ default: () => [
 vi.mock('../../firebase/appCheck', () => ({ getAppCheckTokenIfAvailable: vi.fn() }));
 vi.mock('../../firebase/config', () => ({ db: null }));
 vi.mock('../../utils/frontierDlcCatalogCache', () => ({ getCachedFrontierDlcCatalogs: () => ({}) }));
+vi.mock('../ui/ToggleSwitch', () => ({default: ({isToggled, onToggle}) =>
+    <button role="switch" aria-label="Install media" aria-checked={isToggled} onClick={onToggle} />}));
 
 const savePath = name => `C:\\Frontier Developments\\Planet Zoo\\12345678901234567\\Saves\\${name}`;
 const file = (name, overrides = {}) => ({ name, path: savePath(name), size: 1024, modifiedAt: '2026-09-16T10:00:00Z', modifiedAtMs: 1000, metadataStatus: 'ready', ...overrides });
@@ -28,7 +30,7 @@ beforeEach(() => {
         onFrontierSaveFilesChanged: vi.fn(callback => { notifyFilesChanged = callback; return vi.fn(); }),
     };
 });
-afterEach(() => { cleanup(); delete window.electronAPI; });
+afterEach(() => { cleanup(); delete window.electronAPI; vi.restoreAllMocks(); });
 
 async function openZooFiles(category = 'Parks') {
     render(<ClientDashboard />);
@@ -91,5 +93,74 @@ describe('Planet Zoo in the Offline Manager', () => {
         expect(screen.getByText('Zoo blueprint')).toBeInTheDocument();
         expect(screen.queryByRole('tab', { name: 'Matchmaker' })).not.toBeInTheDocument();
         expect(window.electronAPI.readPlanetZooAnalysis).not.toHaveBeenCalled();
+    });
+});
+
+describe('Offline media installation and restore', () => {
+    beforeEach(() => {
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        indexed['Planet Zoo'].parks = [file('Test.zoo')];
+        Object.assign(window.electronAPI, {
+            getMediaStatus: vi.fn().mockResolvedValue('installed'),
+            hasMediaSnapshot: vi.fn().mockResolvedValue(true),
+            getMediaSnapshot: vi.fn().mockResolvedValue({assets: [{logicalName: 'habitat.ogg'}]}),
+            syncAutomaticMediaSnapshot: vi.fn().mockResolvedValue({success: true, assetCount: 0}),
+            uninstallMedia: vi.fn(async () => {
+                window.electronAPI.getMediaStatus.mockResolvedValue('uninstalled');
+                return {success: true};
+            }),
+            installMedia: vi.fn(async () => {
+                window.electronAPI.getMediaStatus.mockResolvedValue('installed');
+                return {success: true};
+            }),
+            restoreBackup: vi.fn().mockResolvedValue({success: true, status: 'unsigned'}),
+        });
+    });
+
+    it('reinstalls a stored snapshot after uninstall without overwriting it through discovery', async () => {
+        await openZooFiles();
+        fireEvent.click(screen.getByRole('button', {name: 'Media Manager', exact: true}));
+        const toggle = await screen.findByRole('switch', {name: 'Install media'});
+        await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+        fireEvent.click(toggle);
+        await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+        fireEvent.click(toggle);
+        await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+        expect(window.electronAPI.installMedia).toHaveBeenCalledWith(savePath('Test.zoo'));
+        expect(window.electronAPI.syncAutomaticMediaSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('lets native installation recover a backup when discovery has no live files', async () => {
+        window.electronAPI.getMediaStatus.mockResolvedValue('uninstalled');
+        window.electronAPI.getMediaSnapshot.mockResolvedValue({assets: []});
+        window.electronAPI.hasMediaSnapshot.mockResolvedValue(false);
+        await openZooFiles();
+        fireEvent.click(screen.getByRole('button', {name: 'Media Manager', exact: true}));
+        fireEvent.click(await screen.findByRole('switch', {name: 'Install media'}));
+        await waitFor(() => expect(window.electronAPI.installMedia).toHaveBeenCalledWith(savePath('Test.zoo')));
+        expect(window.alert).toHaveBeenCalledWith('Media installed!');
+    });
+
+    it('shows only media backups in Custom Media and confirms unsigned restore before writing', async () => {
+        const shared = {originalFileName: 'Test.zoo', originalFilePath: savePath('Test.zoo'), gameId: 'planet-zoo', isSigned: false};
+        const media = {...shared, backupType: 'media', category: 'Custom Media', filePath: 'media.PlanetCreations', backupDate: '2026-09-27T10:00:00Z'};
+        window.electronAPI.listAllBackups.mockResolvedValue({Test: [
+            {...shared, backupType: 'creation', category: 'Parks', filePath: 'save.PlanetCreations', backupDate: '2026-09-28T10:00:00Z'},
+            media,
+        ]});
+        await openZooFiles();
+        fireEvent.click(screen.getByRole('button', {name: 'Restore', exact: true}));
+        fireEvent.click(screen.getByRole('button', {name: 'Custom Media', exact: true}));
+        fireEvent.click(await screen.findByRole('checkbox'));
+        window.confirm.mockReturnValueOnce(false);
+        fireEvent.click(screen.getByRole('button', {name: /Restore Selected/}));
+        await waitFor(() => expect(window.confirm).toHaveBeenCalledTimes(1));
+        expect(window.electronAPI.restoreBackup).not.toHaveBeenCalled();
+        await waitFor(() => expect(screen.getByRole('checkbox')).not.toBeChecked());
+        fireEvent.click(screen.getByRole('checkbox'));
+        fireEvent.click(screen.getByRole('button', {name: /Restore Selected/}));
+        await waitFor(() => expect(window.electronAPI.restoreBackup).toHaveBeenCalledWith(media.filePath, shared.originalFilePath));
+        expect(screen.getAllByRole('checkbox')).toHaveLength(1);
     });
 });

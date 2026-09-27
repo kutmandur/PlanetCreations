@@ -9,6 +9,8 @@ const {
     getObjectPath,
     storeAssetBuffer,
     findManifestPathsByMediaSetId,
+    getSnapshot,
+    installMedia,
 } = require('./MediaManager');
 const {
     FORMAT_NAME,
@@ -466,6 +468,7 @@ async function backupCreationMedia(
         const destinationPath = path.join(destinationDirectory, `CustomMedia-${packageId}.PlanetCreations`);
         await runBackupJob('archive', {destination: destinationPath, metadata, manifest: manifestBuffer.toString('utf8'), assets: portableManifest.assets.map(asset => ({...asset, path: getObjectPath(asset), name: `assets/${asset.sha256}${path.extname(asset.logicalName).toLowerCase()}`}))});
         const missingSuffix = mediaSync.missing?.length ? ` ${mediaSync.missing.length} referenced file(s) are missing locally.` : '';
+        registerLocalTarget(app, packageId, sourceFilePath);
         return { success: true, message: `Checked media package created for '${path.basename(sourceFilePath)}'.${missingSuffix}` };
     } catch (error) {
         console.error('Failed to create media package:', error);
@@ -548,14 +551,83 @@ async function writeVerifiedCreation(app, backupZipPath, verification, originalF
     return { success: true, status: verification.status, targetPath: originalFilePath };
 }
 
-async function restoreBackup(app, backupZipPath, originalFilePath) {
+function resolveRestoreTarget(app, metadata, originalFilePath, frontierPath) {
+    const fileName = metadata.originalFileName || '';
+    const extension = path.extname(fileName).toLowerCase();
+    const gameId = gameByExtension[extension];
+    if (!gameId || (metadata.gameId && metadata.gameId !== gameId) || path.basename(fileName) !== fileName) {
+        throw new Error('The backup game and file type do not match.');
+    }
+    const registered = readJson(getTargetRegistryPath(app), {})[metadata.packageId]?.targetPath;
+    const linked = metadata.mediaSetId ? findManifestPathsByMediaSetId(metadata.mediaSetId)
+        .map(manifestPath => readJson(manifestPath, {}).localSavePath) : [];
+    const candidates = [registered, originalFilePath, ...linked, metadata.originalFilePath].filter(Boolean);
+    // Explicit local targets remain usable even when their parent must be recreated.
+    if (!frontierPath) return originalFilePath || candidates[0] || null;
+    const gameRoot = path.join(frontierPath, gameFolderById[gameId]);
+    for (const candidate of candidates) {
+        if (path.isAbsolute(candidate) && isPathInside(gameRoot, candidate) &&
+            path.extname(candidate).toLowerCase() === extension) return assertLibraryTarget(candidate, frontierPath);
+    }
+    if (!fs.existsSync(gameRoot)) return null;
+    const profiles = fs.readdirSync(gameRoot, {withFileTypes: true})
+        .filter(entry => entry.isDirectory() && /^\d{17}$/.test(entry.name));
+    const existing = profiles.map(entry => path.join(gameRoot, entry.name, 'Saves', fileName))
+        .filter(candidate => fs.existsSync(candidate));
+    if (existing.length === 1) return assertLibraryTarget(existing[0], frontierPath);
+    // With multiple possible profiles, require a choice instead of overwriting
+    // a different player's save just because it was used more recently.
+    if (profiles.length !== 1) return null;
+    return assertLibraryTarget(path.join(gameRoot, profiles[0].name, 'Saves', fileName), frontierPath);
+}
+
+function restoreVerifiedMedia(app, verification, targetPath, options = {}) {
+    for (const {asset, buffer} of verification.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+    savePortableManifestForCreation(targetPath, verification.inspection.mediaManifest);
+    registerLocalTarget(app, verification.metadata.packageId, targetPath);
+    const result = installMedia(targetPath, options);
+    return {...result, targetPath, message: result.status === 'conflict' ?
+        'Media restored to the library. Different files already occupy the game folder; activate this set in Media Manager to resolve the conflict.' : result.message};
+}
+
+async function installMediaWithBackupRecovery(app, savePath, options = {}) {
+    const installed = installMedia(savePath, options);
+    if (installed.status !== 'missing') return installed;
+    const snapshot = getSnapshot(savePath);
+    if (!snapshot?.mediaSetId) return installed;
+    const backups = Object.values(await listAllBackups(app)).flat()
+        .filter(backup => backup.backupType === 'media' && backup.mediaSetId === snapshot.mediaSetId &&
+            backup.gameId === snapshot.gameId)
+        .sort((a, b) => new Date(b.backupDate) - new Date(a.backupDate));
+    for (const backup of backups) {
+        const verification = await verifyBackup(backup.filePath);
+        if (!['verified', 'unsigned'].includes(verification.status) || verification.inspection?.legacy ||
+            verification.metadata?.packageType !== 'media' || verification.metadata.mediaSetId !== snapshot.mediaSetId ||
+            verification.metadata.gameId !== snapshot.gameId) continue;
+        const assets = verification.inspection.mediaManifest.assets;
+        // An existing snapshot selects exact versions, even if a newer backup exists.
+        if (snapshot.assets.some(asset => !assets.some(candidate => candidate.logicalName === asset.logicalName &&
+            candidate.sha256 === asset.sha256 && candidate.size === asset.size))) continue;
+        for (const {asset, buffer} of verification.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+        if (!snapshot.assets.length) savePortableManifestForCreation(savePath, verification.inspection.mediaManifest);
+        return installMedia(savePath, options);
+    }
+    return installed;
+}
+
+async function restoreBackup(app, backupZipPath, originalFilePath, options = {}) {
     try {
         if (!fs.existsSync(backupZipPath)) return { success: false, status: 'error', message: 'Backup file not found.' };
         const verification = await verifyBackup(backupZipPath);
         if (verification.status === 'invalid' || verification.status === 'unverified') {
             return { success: false, status: verification.status, message: verification.error || 'Package verification failed.' };
         }
-        return await writeVerifiedCreation(app, backupZipPath, verification, originalFilePath);
+        const targetPath = resolveRestoreTarget(app, verification.metadata, originalFilePath, options.frontierPath);
+        if (!targetPath) return {success: false, status: 'needs-target', originalFileName: verification.metadata.originalFileName};
+        if (!verification.inspection?.legacy && verification.metadata.packageType === 'media') {
+            return restoreVerifiedMedia(app, verification, targetPath, options);
+        }
+        return await writeVerifiedCreation(app, backupZipPath, verification, targetPath);
     } catch (error) {
         return { success: false, status: 'error', message: error.message };
     }
@@ -647,6 +719,7 @@ module.exports = {
     createBackup,
     listAllBackups,
     restoreBackup,
+    installMediaWithBackupRecovery,
     installCreationPackage,
     archiveWorkshopPackage,
     installWorkshopPackage,

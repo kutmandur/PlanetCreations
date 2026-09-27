@@ -8,7 +8,7 @@ import { db, auth } from '../../firebase/config';
 import { getAppCheckTokenIfAvailable } from '../../firebase/appCheck';
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getGameColor, containsBlacklistedWord, ICONS, isSafeHttpUrl } from '../../utils/helpers';
-import { scheduleDataRefresh } from '../../utils/appRefresh';
+import { scheduleCreationDataRefresh, scheduleDataRefresh } from '../../utils/appRefresh';
 import { getDefaultGameId, getGame, getShareCodeLabel } from '../../utils/gamesRegistry';
 import useGames from '../../hooks/useGames';
 import Spinner from '../ui/Spinner';
@@ -745,17 +745,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             const finalMods = (usesMods && getGame(game)?.modsSupported) ? mods.split(',').map(mod => mod.trim().toLowerCase()).filter(Boolean) : [];
             const communityAssignments = userCommunities.filter(c => selectedCommunities.includes(c.id)).map(c => ({ communityId: c.id, communityName: c.name }));
             
-            const existingTagIds = allTags.map(t => t.id);
-            const newTagsToCreate = finalTags.filter(t => !existingTagIds.includes(t) && !containsBlacklistedWord(t, blacklist));
-            if (newTagsToCreate.length > 0) {
-                const tagBatch = writeBatch(db);
-                newTagsToCreate.forEach(tag => {
-                    const tagRef = doc(db, 'tags', tag);
-                    tagBatch.set(tagRef, { count: 1 });
-                });
-                await tagBatch.commit();
-            }
-
+            // Custom tags belong to the creation. The global suggestion catalog
+            // is moderator-managed and must not be written during user uploads.
             const creationData = { 
                 game, title: title.trim(), description: description.trim(),
                 shareCode: shareCode.trim(), imageUrls: finalImageUrls, videoUrls: finalVideoUrls,
@@ -865,7 +856,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
                 }
                 setModalMessage(backupUploadId ? null : "Creation submitted successfully!");
-                scheduleDataRefresh();
+                scheduleCreationDataRefresh({ game, creationId: savedCreationId });
                 navigate('/');
             }
         } catch (error) {

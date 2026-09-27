@@ -413,8 +413,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         if (!allBackups) return [];
         const allBackupEntries = Object.entries(allBackups).map(([saveName, backups]) => ({saveName, backups}));
 
-        const filteredItems = allBackupEntries.filter(({saveName, backups}) => {
-            const firstBackup = backups[0];
+        const filteredItems = allBackupEntries.map(item => ({...item, backups: item.backups.filter(firstBackup => {
             if (!firstBackup) return false;
 
             // 1. Filter by Main View (Workshop vs. Restore)
@@ -447,7 +446,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 default:
                     return false;
             }
-        });
+        })})).filter(item => item.backups.length > 0);
         
         const filteredByName = filteredItems.filter(item => item.saveName.toLowerCase().includes(searchTerm.toLowerCase()));
         
@@ -481,40 +480,36 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         const selectedToRestore = Object.values(selectedBackups);
         if (selectedToRestore.length === 0) return;
 
-        setGlobalLoader({ isLoading: true, message: `Verifying ${selectedToRestore.length} backup(s)...` });
+        setGlobalLoader({ isLoading: true, message: `Restoring ${selectedToRestore.length} backup(s)...` });
 
         let restoredCount = 0;
 
-        for (const backup of selectedToRestore) {
-            // Erste Verifizierung - prüft nur den Status
-            const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
+        try {
+            for (const backup of selectedToRestore) {
+                if (!backup.isSigned && !window.confirm(`The backup for "${backup.originalFileName}" is unsigned. Restore it only if you created it or trust its source.\n\nContinue restoring?`)) continue;
+                const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
 
-            if (verifyResult.status === 'canceled') continue;
+                if (verifyResult.status === 'canceled') continue;
 
-            if (verifyResult.status === 'invalid') {
-                alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
-                continue;
-            }
-
-            if (verifyResult.status === 'unsigned') {
-                const confirmed = window.confirm(`WARNING: The backup for "${backup.originalFileName}" is not signed. Only restore this file if you created it yourself or trust the source.\n\nDo you want to continue restoring this file?`);
-                if (!confirmed) {
+                if (verifyResult.status === 'invalid') {
+                    alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
                     continue;
                 }
-            }
 
-            // Die Wiederherstellung wurde bereits durch restoreBackup durchgeführt
-            if (verifyResult.success) {
-                restoredCount++;
-            } else {
-                alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
+                if (verifyResult.success) {
+                    restoredCount++;
+                } else {
+                    alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
+                }
             }
+            alert(`${restoredCount} of ${selectedToRestore.length} backups were restored successfully.`);
+            setSelectedBackups({});
+        } catch (error) {
+            alert(`Restore failed: ${error.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+            fetchBackups();
         }
-
-        setGlobalLoader({ isLoading: false, message: '' });
-        alert(`${restoredCount} of ${selectedToRestore.length} backups were restored successfully.`);
-        setSelectedBackups({});
-        fetchBackups();
     };
 
     const handleDeleteClick = (backup) => {
@@ -814,7 +809,34 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         return result;
     };
     const handleSaveSnapshot = async (savePath, mediaPaths) => { const fileToInstall = snapshotModalState.file; if (!fileToInstall) { alert('Error: Could not identify the target file.'); return; } const snapshotSuccess = await window.electronAPI.createMediaSnapshot(savePath, mediaPaths); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if (snapshotSuccess) { const installResult = await activateMediaWithConflictHandling(fileToInstall.path); alert(installResult?.success ? 'Snapshot saved and media activated!' : `Snapshot saved, but activation failed: ${installResult?.message || installResult?.status || 'unknown error'}`); if (currentFiles) { checkStatuses(currentFiles); } } else { alert('Failed to save snapshot. Only supported image/video files and MP3/OGG audio may be selected.'); } setSnapshotModalState({ isOpen: false, file: null, gameName: null }); };
-    const handleInstall = async (file) => { const discovery = await synchronizeMedia(file); if (!discovery.success || discovery.assetCount === 0) { alert(discovery.message || 'No available referenced media was found for this creation.'); return; } const result = await activateMediaWithConflictHandling(file.path); if(result?.success) alert('Media installed!'); else if (result?.status !== 'conflict') alert(`Failed to install media: ${result?.message || result?.status || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
+    const handleInstall = async (file) => {
+        setGlobalLoader({ isLoading: true, message: `Installing media for ${file.name}...` });
+        try {
+            // Use the stored package first. Released clients may erase automatic
+            // snapshots if discovery runs while the game-folder copies are absent.
+            const snapshot = await window.electronAPI.getMediaSnapshot(file.path);
+            if (!snapshot?.assets?.length && !snapshot?.files?.length) {
+                const discovery = await synchronizeMedia(file);
+                if (!discovery.success) {
+                    alert(discovery.message || 'No available referenced media was found for this creation.');
+                    return;
+                }
+            }
+            const result = await activateMediaWithConflictHandling(file.path);
+            if (result?.success) {
+                const status = await window.electronAPI.getMediaStatus(file.path);
+                alert(status === 'installed' ? 'Media installed!' :
+                    'No media was installed. Restore the matching Custom Media backup or update the desktop client to recover it automatically.');
+            }
+            else if (result?.status !== 'conflict') alert(`Failed to install media: ${result?.message || result?.status || 'unknown error'}`);
+        } catch (error) {
+            alert(`Failed to install media: ${error.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+            const currentFiles = scanResults?.[activeGame]?.[activeTab];
+            if (currentFiles) await checkStatuses(currentFiles);
+        }
+    };
     const handleUninstall = async (file) => { const result = await window.electronAPI.uninstallMedia(file.path); if(result?.success) alert('Media uninstalled!'); else alert(`Failed to uninstall media: ${result?.message || 'unknown error'}`); const currentFiles = scanResults?.[activeGame]?.[activeTab]; if(currentFiles) checkStatuses(currentFiles); };
     const handleDeleteMediaClick = (file) => { setDeleteMediaModalState({ isOpen: true, file: file }); };
     const handleDeletionModeSelected = (mode) => { setFinalDeleteState({ isOpen: true, file: deleteMediaModalState.file, mode: mode }); setDeleteMediaModalState({ isOpen: false, file: null }); };

@@ -1,6 +1,9 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { addDoc, writeBatch } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { scheduleCreationDataRefresh } from '../../utils/appRefresh';
 import CreationForm from './CreationForm';
 
 vi.mock('firebase/firestore', () => ({
@@ -12,6 +15,7 @@ vi.mock('firebase/firestore', () => ({
     getDoc: vi.fn(async reference => {
         if (reference.path.startsWith('categories/')) return { exists: () => true, data: () => ({ names: ['Park', 'Coaster', 'Flatride', 'Scenery'] }) };
         if (reference.path.startsWith('dlcs/')) return { exists: () => true, data: () => ({ names: ['Vintage Funfair Ride Pack'] }) };
+        if (reference.path.startsWith('profiles/')) return { exists: () => true, data: () => ({ username: 'Creator' }) };
         return { exists: () => false, data: () => ({}) };
     }),
     getDocs: vi.fn(async () => ({ empty: true, docs: [] })),
@@ -33,9 +37,11 @@ vi.mock('../../firebase/config', () => ({
 }));
 
 vi.mock('../../firebase/appCheck', () => ({ getAppCheckTokenIfAvailable: vi.fn() }));
+vi.mock('../../utils/appRefresh', () => ({ scheduleDataRefresh: vi.fn(), scheduleCreationDataRefresh: vi.fn() }));
 
 describe('CreationForm desktop savegame start', () => {
     beforeEach(() => {
+        vi.clearAllMocks();
         window.scrollTo = vi.fn();
         window.electronAPI = {
             isElectron: true,
@@ -133,5 +139,93 @@ describe('CreationForm desktop savegame start', () => {
         expect(screen.getByRole('option', { name: 'Restaurant' })).toBeInTheDocument();
         expect(screen.getByRole('option', { name: 'Shop' })).toBeInTheDocument();
         expect(screen.getByRole('option', { name: 'Show' })).toBeInTheDocument();
+    });
+
+    test.each([true, false])('normal users can save a new tag with attached savegame=%s', async attachSavegame => {
+        const setModalMessage = vi.fn();
+        const validateContentText = vi.fn().mockResolvedValue({ data: {} });
+        const finalizeBackupUpload = vi.fn().mockResolvedValue({ data: { success: true } });
+        httpsCallable.mockImplementation((functions, name) => ({
+            validateContentText,
+            finalizeBackupUpload,
+        })[name]);
+        addDoc.mockResolvedValue({ id: 'new-creation' });
+        // Mirror the moderator-only tag catalog rule. A denied catalog write
+        // must never prevent saving a user's creation or finalizing its upload.
+        const catalogWrites = [];
+        writeBatch.mockImplementation(() => ({
+            set: vi.fn(reference => catalogWrites.push(reference.path)),
+            commit: vi.fn(async () => {
+                if (catalogWrites.some(path => path.startsWith('tags/'))) {
+                    throw new Error('Missing or insufficient permissions.');
+                }
+            }),
+        }));
+        window.electronAPI.prepareBackupForUpload = vi.fn().mockResolvedValue({
+            success: true,
+            fileName: 'Arctic Launch.PlanetCreations',
+            uploadHandle: 'prepared-backup',
+            isSigned: true,
+        });
+        window.electronAPI.uploadPreparedBackup = vi.fn().mockResolvedValue({
+            success: true,
+            uploadId: 'uploaded-backup',
+        });
+
+        render(
+            <MemoryRouter>
+                <CreationForm
+                    user={{ uid: 'creator-1' }}
+                    userProfile={{ role: 'user', ownedDlcs: {} }}
+                    setModalMessage={setModalMessage}
+                    initialGame="planet-coaster-2"
+                    blacklist={[]}
+                />
+            </MemoryRouter>,
+        );
+
+        if (attachSavegame) {
+            fireEvent.click(screen.getByRole('button', { name: /Yes, select a savegame/i }));
+            fireEvent.click(await screen.findByRole('button', { name: /Arctic Launch\.blpr2/i }));
+            fireEvent.click(screen.getByRole('button', { name: 'Confirm Selection' }));
+            fireEvent.click(screen.getByRole('checkbox', { name: /I confirm that this is my own creation/i }));
+            fireEvent.click(screen.getByRole('checkbox', { name: /I agree that this file may be uploaded/i }));
+            fireEvent.click(screen.getByRole('button', { name: 'Attach & Continue' }));
+            await screen.findByDisplayValue('Arctic Launch');
+        } else {
+            fireEvent.click(screen.getByRole('button', { name: /Continue without/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+            fireEvent.click(await screen.findByRole('button', { name: 'Coaster' }));
+            const [title, description] = screen.getAllByRole('textbox');
+            fireEvent.change(title, { target: { value: 'Arctic Launch' } });
+            fireEvent.change(description, { target: { value: 'A frozen launch coaster.' } });
+        }
+        const tagInput = screen.getByPlaceholderText('Add tags with spacebar...');
+        fireEvent.change(tagInput, { target: { value: 'winter' } });
+        fireEvent.keyDown(tagInput, { key: ' ' });
+        fireEvent.click(screen.getByRole('button', { name: /Sharing/i }));
+        fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'ABC-123' } });
+        fireEvent.click(screen.getByRole('button', { name: /Communitys/i }));
+        const submit = screen.getByRole('button', { name: 'Create Creation' });
+        await waitFor(() => expect(submit).toBeEnabled());
+        fireEvent.click(submit);
+
+        await waitFor(() => expect(addDoc).toHaveBeenCalledWith(
+            { path: 'creations' },
+            expect.objectContaining({ userId: 'creator-1', tags: ['winter'], title: 'Arctic Launch' }),
+        ));
+        expect(catalogWrites).toEqual([]);
+        if (attachSavegame) {
+            await waitFor(() => expect(finalizeBackupUpload).toHaveBeenCalledWith({
+                uploadId: 'uploaded-backup', creationId: 'new-creation',
+            }));
+        } else {
+            await waitFor(() => expect(setModalMessage).toHaveBeenCalledWith('Creation submitted successfully!'));
+            expect(finalizeBackupUpload).not.toHaveBeenCalled();
+        }
+        expect(setModalMessage).not.toHaveBeenCalledWith(expect.stringContaining('permissions'));
+        await waitFor(() => expect(scheduleCreationDataRefresh).toHaveBeenCalledWith({
+            game: 'planet-coaster-2', creationId: 'new-creation',
+        }));
     });
 });

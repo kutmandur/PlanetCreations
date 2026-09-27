@@ -191,6 +191,92 @@ after(async () => {
   await testEnvironment.cleanup();
 });
 
+test("ordinary creators can use new tags without writing the moderator tag catalog", async () => {
+  const ownerDb = authenticatedFirestore(OWNER_ID);
+  const tagRef = doc(ownerDb, "tags/new-savegame-tag");
+  const creationRef = doc(ownerDb, "creations/new-savegame");
+  assert.equal((await assertSucceeds(getDoc(tagRef))).exists(), false);
+  await assertFails(setDoc(tagRef, {count: 1}));
+  await assertSucceeds(setDoc(creationRef, {
+    title: "New savegame",
+    description: "A creation with a custom tag.",
+    game: "planet-coaster-2",
+    category: "Park",
+    userId: OWNER_ID,
+    tags: ["new-savegame-tag"],
+  }));
+  // The finalization callable attaches the verified file using the Admin SDK.
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), creationRef.path), {
+      backupObjectKey: `creation-backups/${OWNER_ID}/new-savegame/backup.PlanetCreations`,
+      backupStorageProvider: "cloudflare-r2",
+      backupIsSigned: true,
+    });
+  });
+  await assertSucceeds(updateDoc(creationRef, {tags: ["another-new-tag"]}));
+  assert.equal((await getDoc(creationRef)).data().backupIsSigned, true);
+  assert.equal((await getDoc(tagRef)).exists(), false);
+});
+
+test("full creation form saves with a published text policy and registered account", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, `users/${OWNER_ID}`), {role: "user"});
+    await setDoc(doc(db, `users/${OWNER_ID}/moderation/state`), {banned: false, suspendedUntil: null});
+    await setDoc(doc(db, "meta/games"), {gameIds: ["planet-coaster-2"]});
+    await setDoc(doc(db, "meta/blacklist"), {
+      words: ["policyforbidden"],
+      pattern: "(^|.*[^a-z0-9_])(policyforbidden)([^a-z0-9_].*|$)",
+    });
+  });
+  const db = authenticatedFirestore(OWNER_ID, {role: "user"});
+  const creation = {
+    game: "planet-coaster-2", title: "New park", description: "A park from a local savegame.",
+    shareCode: "ABC-123", imageUrls: [], videoUrls: [], customMediaLink: "",
+    tags: ["coaster"], mods: [], modStatus: "noMods", updatedAt: serverTimestamp(),
+    category: "Park", status: "wip", platform: "pc", requiredDlcs: [],
+    communityIds: [], communityAssignments: [], communitySpecificData: {},
+    parkRidePresentation: {
+      version: 1, areas: [], customRides: [], hiddenRideKeys: [],
+      rideAreaAssignments: {}, rideEfnOverrides: {}, rideDisplayNames: {},
+    },
+    moderationWithheld: false, userId: OWNER_ID, username: "RulesOwner",
+    userProfilePictureUrl: null, createdAt: serverTimestamp(),
+    likes: 0, dislikes: 0, reportCount: 0, eventIds: [], changelog: [],
+  };
+  const creationRef = doc(db, "creations/full-form");
+  await assertSucceeds(setDoc(creationRef, creation));
+  await assertSucceeds(setDoc(doc(db, "creations/full-form-blueprint"), {
+    ...creation, category: "Coaster", parkRidePresentation: null,
+  }));
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), creationRef.path), {
+      backupObjectKey: `creation-backups/${OWNER_ID}/full-form/backup.PlanetCreations`,
+      backupIsSigned: true,
+    });
+  });
+  await assertSucceeds(updateDoc(creationRef, {
+    ...creation, title: "Updated park", tags: ["new-tag"],
+    changelog: [{text: "Added a new ride", timestamp: 1}],
+  }));
+  // Reusing the policy must preserve every text check, including fields that
+  // the standard form does not normally send and server-backed edit flows.
+  for (const field of ["title", "description", "name", "bio", "message", "content", "text", "note", "tags"]) {
+    const rejected = field === "tags" ? ["policyforbidden"] : "POLICY\u200bFORBIDDEN";
+    await assertFails(setDoc(doc(db, `creations/rejected-${field}`), {...creation, [field]: rejected}));
+    await assertFails(updateDoc(creationRef, {[field]: rejected}));
+  }
+  await assertFails(updateDoc(creationRef, {
+    changelog: [{text: "Added a new ride", timestamp: 1}, {text: "policyforbidden", timestamp: 2}],
+  }));
+  await assertFails(updateDoc(creationRef, {
+    changelog: [{text: "Rewritten history", timestamp: 1}, {text: "Second entry", timestamp: 2}],
+  }));
+  await assertSucceeds(updateDoc(creationRef, {
+    changelog: [{text: "Added a new ride", timestamp: 1}, {text: "Second entry", timestamp: 2}],
+  }));
+});
+
 describe("collaboration Firestore rules", { concurrency: false }, () => {
   test("members can read while outsiders and signed-out users cannot", async () => {
     const memberDb = authenticatedFirestore(MEMBER_ID);

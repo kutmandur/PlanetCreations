@@ -43,8 +43,8 @@ const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { normalizeOverlayShortcuts, applyOverlayShortcuts } = require('./modules/OverlayShortcuts');
 const { shouldShowOverlay } = require('./modules/OverlayVisibility');
-const { createBackup, listAllBackups, restoreBackup, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
-const { createOrUpdateSnapshot, getSnapshot, installMedia, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
+const { createBackup, listAllBackups, restoreBackup, installMediaWithBackupRecovery, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
+const { createOrUpdateSnapshot, getSnapshot, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
 const distributionInfo = getDistributionInfo();
 const isStoreBuild = distributionInfo.isStore;
@@ -2589,24 +2589,22 @@ ipcMain.handle('list-all-backups', (event) => {
 });
 ipcMain.handle('restore-backup', async (event, backupFilePath, originalFilePath) => {
     requireTrustedIpcSender(event, true);
-    let targetPath = originalFilePath;
-    if (!targetPath || !fs.existsSync(path.dirname(targetPath))) {
+    const restored = await restoreBackup(app, backupFilePath, originalFilePath, {frontierPath: getFrontierPathForInstall()});
+    if (restored.status === 'needs-target') {
         try {
-            const zip = new AdmZip(backupFilePath);
-            const metadata = JSON.parse(zip.getEntry('metadata.json').getData().toString('utf8'));
-            const suggestedName = path.basename(metadata.originalFileName || 'creation.park2');
+            const suggestedName = path.basename(restored.originalFileName || 'creation.park2');
             const result = await dialog.showSaveDialog({
                 title: 'Choose where to restore the game file',
                 defaultPath: path.join(app.getPath('documents'), suggestedName),
                 filters: [{ name: 'Supported game file', extensions: [path.extname(suggestedName).slice(1)] }],
             });
             if (result.canceled || !result.filePath) return { success: false, status: 'canceled' };
-            targetPath = result.filePath;
+            return restoreBackup(app, backupFilePath, result.filePath);
         } catch (error) {
             return { success: false, status: 'error', message: `Could not read package metadata: ${error.message}` };
         }
     }
-    return restoreBackup(app, backupFilePath, targetPath);
+    return restored;
 });
 ipcMain.handle('delete-backup', (event, filePath) => {
     requireTrustedIpcSender(event, true);
@@ -2634,7 +2632,7 @@ ipcMain.handle('get-media-snapshot', (event, savePath) => {
 });
 ipcMain.handle('install-media', (event, savePath, options) => {
     requireTrustedIpcSender(event, true);
-    return installMedia(savePath, options);
+    return installMediaWithBackupRecovery(app, savePath, options);
 });
 ipcMain.handle('uninstall-media', (event, savePath) => {
     requireTrustedIpcSender(event, true);

@@ -77,18 +77,26 @@ service cloud.firestore {
 
     // A server-published, escaped expression is shared with callable validation.
     // A missing or empty policy uses the same conservative baseline as the server.
-    function acceptableText(value) {
+    function textPolicyPattern() {
       let policy = /databases/$(database)/documents/meta/blacklist;
       let baseline = '(^|.*[^a-z0-9_])(child pornography|child porn|rape you|kill yourself|kinderpornografie|kinderpornographie|bring dich um)([^a-z0-9_].*|$)';
-      let pattern = exists(policy) && get(policy).data.get('words', []).size() > 0 &&
+      return exists(policy) && get(policy).data.get('words', []).size() > 0 &&
         get(policy).data.get('pattern', '^a^') != '^a^'
         ? get(policy).data.pattern : baseline;
+    }
+    function textMatchesPolicy(value, pattern) {
       return value is string && !value.lower().replace('[​‌‍﻿]', '').matches('(?s)' + pattern);
     }
+    function acceptableText(value) {
+      return textMatchesPolicy(value, textPolicyPattern());
+    }
     function acceptableContent(data) {
-      return acceptableText(data.get('title', '')) && acceptableText(data.get('description', '')) &&
-        acceptableText(data.get('name', '')) && acceptableText(data.get('bio', '')) &&
-        acceptableText(data.get('message', '')) && acceptableText(data.get('content', '')) && acceptableText(data.get('text', '')) && acceptableText(data.get('note', ''));
+      // Resolve the policy once for all fields. Repeating its document checks
+      // for each field exceeds the Rules expression budget on full creations.
+      let pattern = textPolicyPattern();
+      return textMatchesPolicy(data.get('title', ''), pattern) && textMatchesPolicy(data.get('description', ''), pattern) &&
+        textMatchesPolicy(data.get('name', ''), pattern) && textMatchesPolicy(data.get('bio', ''), pattern) &&
+        textMatchesPolicy(data.get('message', ''), pattern) && textMatchesPolicy(data.get('content', ''), pattern) && textMatchesPolicy(data.get('text', ''), pattern) && textMatchesPolicy(data.get('note', ''), pattern);
     }
     // --- Data Validation Functions ---
 
@@ -174,7 +182,8 @@ service cloud.firestore {
       let old = existing.get('changelog', []);
       let next = data.get('changelog', []);
       return next == old || (next is list && next.size() == old.size() + 1 &&
-        next[0:old.size()] == old && acceptableText(next[old.size()].get('text', '')));
+        // Rules cannot slice an empty prefix when adding the first entry.
+        (old.size() == 0 || next[0:old.size()] == old) && acceptableText(next[old.size()].get('text', '')));
     }
     function isValidCreationCreate(data) {
       return data.get('moderationWithheld', false) == false && data.get('moderationHolds', {}) == {} && acceptableContent(data) && validChangelogChange(data, {}) && data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&

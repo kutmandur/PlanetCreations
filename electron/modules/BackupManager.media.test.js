@@ -30,6 +30,7 @@ test('creation backup automatically links media and can create the matching sepa
         return originalLoad.call(this, request, parent, isMain);
     };
     const BackupManager = require('./BackupManager');
+    const MediaManager = require('./MediaManager');
     Module._load = originalLoad;
 
     const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Coaster 2');
@@ -66,6 +67,49 @@ test('creation backup automatically links media and can create the matching sepa
         const manifest = JSON.parse(creationArchive.getEntry('media_manifest.json').getData().toString('utf8'));
         assert.equal(manifest.assets.length, 1);
         assert.equal(manifest.assets[0].logicalName, 'screen.png');
+
+        const mediaBackupPath = path.join(fakePaths.documents, 'PlanetCreations', 'Custom Media', mediaPackages[0]);
+        const expectedImage = fs.readFileSync(imagePath);
+        const mediaCatalog = Object.values(await BackupManager.listAllBackups(fakeApp)).flat()
+            .find(backup => backup.backupType === 'media');
+        assert.equal(mediaCatalog.originalFilePath, savePath);
+        assert.equal(MediaManager.installMedia(savePath).success, true);
+        assert.equal(MediaManager.uninstallMedia(savePath).success, true);
+        assert.equal(fs.existsSync(imagePath), false);
+
+        // Reproduce the old discovery bug and a damaged local library object.
+        assert.equal(MediaManager.createOrUpdateSnapshot(savePath, [], {associationMode: 'automatic'}), true);
+        fs.writeFileSync(MediaManager.getObjectPath(manifest.assets[0]), 'damaged');
+        const recovered = await BackupManager.installMediaWithBackupRecovery(fakeApp, savePath);
+        assert.equal(recovered.success, true, recovered.message);
+        assert.deepEqual(fs.readFileSync(imagePath), expectedImage);
+        assert.equal(MediaManager.getMediaSetStatus(savePath), 'installed');
+        assert.equal(MediaManager.getSnapshot(savePath).assets.length, 1);
+
+        assert.equal(MediaManager.uninstallMedia(savePath).success, true);
+        const saveBeforeRestore = fs.readFileSync(savePath);
+        const restored = await BackupManager.restoreBackup(fakeApp, mediaBackupPath, null, {
+            frontierPath: path.dirname(gameDirectory),
+        });
+        assert.equal(restored.success, true, restored.message);
+        assert.deepEqual(fs.readFileSync(imagePath), expectedImage);
+        assert.deepEqual(fs.readFileSync(savePath), saveBeforeRestore);
+        assert.equal(MediaManager.getMediaSetStatus(savePath), 'installed');
+
+        assert.equal(MediaManager.uninstallMedia(savePath).success, true);
+        const conflicting = Buffer.concat([expectedImage, Buffer.from('different image')]);
+        fs.writeFileSync(imagePath, conflicting);
+        const conflict = await BackupManager.restoreBackup(fakeApp, mediaBackupPath, null, {frontierPath: path.dirname(gameDirectory)});
+        assert.equal(conflict.status, 'conflict');
+        assert.deepEqual(fs.readFileSync(imagePath), conflicting);
+
+        const damagedArchive = new AdmZip(mediaBackupPath);
+        damagedArchive.updateFile(`assets/${manifest.assets[0].sha256}.png`, Buffer.from('bad'));
+        damagedArchive.writeZip(mediaBackupPath);
+        const invalid = await BackupManager.restoreBackup(fakeApp, mediaBackupPath, savePath);
+        assert.equal(invalid.success, false);
+        assert.equal(invalid.status, 'invalid');
+        assert.deepEqual(fs.readFileSync(imagePath), conflicting);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

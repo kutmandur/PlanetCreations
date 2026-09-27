@@ -113,7 +113,7 @@ function storeAssetBuffer(asset, buffer) {
     }
     initializeDirectories();
     const objectPath = getObjectPath(asset);
-    if (!fs.existsSync(objectPath)) {
+    if (!fs.existsSync(objectPath) || fs.statSync(objectPath).size !== asset.size || sha256File(objectPath) !== asset.sha256) {
         const temporaryPath = `${objectPath}.${crypto.randomUUID()}.tmp`;
         fs.writeFileSync(temporaryPath, buffer);
         fs.renameSync(temporaryPath, objectPath);
@@ -180,6 +180,7 @@ function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {
         const seen = new Set();
         if (options.preserveExistingAssets) {
             for (const asset of current?.assets || []) {
+                if (options.preserveAssetNames && !options.preserveAssetNames.has(asset.logicalName.toLowerCase())) continue;
                 assets.push({
                     logicalName: asset.logicalName,
                     sha256: asset.sha256,
@@ -354,13 +355,16 @@ function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = nu
             } : inspectionOverride;
         const discovery = discoverCreationMedia(saveOrBlueprintPath, reusableInspection);
         const preserveExistingAssets = existing && existing.associationMode !== 'automatic';
+        const referencedNames = new Set(discovery.references.map(name => name.toLowerCase()));
+        const foundNames = new Set(discovery.found.map(item => item.logicalName.toLowerCase()));
+        // Uninstall removes only the game-folder copies. Keep the stored assets
+        // for references that are still in the save but absent from those folders.
+        const preservedAssets = (existing?.assets || []).filter(asset =>
+            preserveExistingAssets || (referencedNames.has(asset.logicalName.toLowerCase()) &&
+                !foundNames.has(asset.logicalName.toLowerCase())));
+        const preserveAssetNames = new Set(preservedAssets.map(asset => asset.logicalName.toLowerCase()));
         const mediaFilePaths = [];
-        const selectedNames = new Set();
-        if (preserveExistingAssets) {
-            for (const asset of existing.assets || []) {
-                selectedNames.add(asset.logicalName.toLowerCase());
-            }
-        }
+        const selectedNames = new Set(preserveAssetNames);
         let supplementedAssetCount = 0;
         for (const item of discovery.found) {
             const logicalName = item.logicalName.toLowerCase();
@@ -387,7 +391,8 @@ function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = nu
                 associationMode: preserveExistingAssets ? existing.associationMode : 'automatic',
                 discovery: discoveryRecord,
                 gameId: discovery.gameId,
-                preserveExistingAssets,
+                preserveExistingAssets: preservedAssets.length > 0,
+                preserveAssetNames,
             },
         )) {
             return { success: false, status: 'error', message: 'Referenced media failed its integrity checks.' };
@@ -418,7 +423,7 @@ function installMedia(saveOrBlueprintPath, options = {}) {
     try {
         const snapshot = getSnapshot(saveOrBlueprintPath);
         if (!snapshot) return { success: false, status: 'missing', message: 'No media manifest exists for this creation.' };
-        if (snapshot.assets.length === 0) return { success: true, status: 'installed', conflicts: [] };
+        if (snapshot.assets.length === 0) return { success: false, status: 'missing', message: 'No stored media is associated with this creation.' };
         const gameName = getGameName(snapshot.gameId, saveOrBlueprintPath);
         const mediaPaths = getGameMediaPaths(gameName);
         const conflicts = [];
@@ -440,7 +445,10 @@ function installMedia(saveOrBlueprintPath, options = {}) {
             return { success: false, status: 'conflict', conflicts };
         }
 
-        const parked = [];
+        const active = readActiveManifest();
+        const previouslyParked = active.activeSets[getManifestKey(saveOrBlueprintPath)]?.parked || [];
+        const parked = previouslyParked.filter(previous => snapshot.assets.some(asset =>
+            asset.target === previous.target && asset.logicalName.toLowerCase() === previous.logicalName.toLowerCase()));
         for (const asset of snapshot.assets) {
             const sourcePath = getObjectPath(asset);
             const destinationPath = targetPathForAsset(mediaPaths, asset);
@@ -472,7 +480,6 @@ function installMedia(saveOrBlueprintPath, options = {}) {
             staged.splice(staged.indexOf(stagePath), 1);
             installedPaths.push(destinationPath);
         }
-        const active = readActiveManifest();
         active.activeSets[getManifestKey(saveOrBlueprintPath)] = {
             savePath: saveOrBlueprintPath,
             mediaSetId: snapshot.mediaSetId,

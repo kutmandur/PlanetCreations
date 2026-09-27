@@ -59,6 +59,7 @@ test('same-name different media stops first, then parks and restores the previou
     assert.equal(activated.success, true);
     assert.deepEqual(fs.readFileSync(liveAudioPath), newAudio);
     assert.equal(MediaManager.getMediaSetStatus(savePath), 'installed');
+    assert.equal(MediaManager.installMedia(savePath).success, true);
 
     const uninstalled = MediaManager.uninstallMedia(savePath);
     assert.equal(uninstalled.success, true);
@@ -93,6 +94,35 @@ test('automatically discovers referenced media and records missing files', () =>
     assert.equal(snapshot.associationMode, 'automatic');
     assert.equal(snapshot.assets[0].logicalName, 'screen.png');
     assert.equal(MediaManager.syncAutomaticMediaSnapshot(savePath).status, 'unchanged');
+});
+
+test('automatic media remains reinstallable after uninstall and a fresh discovery scan', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Coaster 2');
+    const savePath = path.join(gameDirectory, 'Saves', 'reinstall.park2');
+    const livePath = path.join(gameDirectory, 'UserAudio', 'reinstall.ogg');
+    const content = Buffer.concat([Buffer.from('OggS'), Buffer.from('reinstall-media')]);
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(livePath), { recursive: true });
+    fs.writeFileSync(savePath, 'reinstall-save');
+    fs.writeFileSync(livePath, content);
+    const stats = fs.statSync(savePath);
+    MediaManager.syncAutomaticMediaSnapshot(savePath, {
+        metadata: { gameId: 'planet-coaster-2' }, mediaReferences: ['reinstall.ogg'],
+        source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+    });
+    const original = MediaManager.getSnapshot(savePath);
+    assert.equal(MediaManager.installMedia(savePath).success, true);
+    assert.equal(MediaManager.uninstallMedia(savePath).success, true);
+    assert.equal(fs.existsSync(livePath), false);
+    assert.equal(fs.existsSync(MediaManager.getObjectPath(original.assets[0])), true);
+
+    const discovered = MediaManager.syncAutomaticMediaSnapshot(savePath);
+    assert.equal(discovered.assetCount, 1);
+    assert.deepEqual(discovered.missing, []);
+    assert.deepEqual(MediaManager.getSnapshot(savePath).assets, original.assets);
+    assert.equal(MediaManager.installMedia(savePath).success, true);
+    assert.deepEqual(fs.readFileSync(livePath), content);
+    assert.equal(MediaManager.getMediaSetStatus(savePath), 'installed');
 });
 
 test('automatically associates Planet Zoo media from the sequential scan result', () => {

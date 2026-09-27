@@ -35,6 +35,16 @@ export const scheduleDataRefresh = (delayMs = 2500) => {
     }, delayMs);
 };
 
+export const scheduleCreationDataRefresh = ({ game, creationId }) => {
+    scheduleDataRefresh();
+    if (!registeredClient || !game || !creationId) return;
+    const queryClient = registeredClient;
+    void import('../firebase/creationIndexRefresh')
+        .then(({ refreshCreatedCreationIndex }) =>
+            refreshCreatedCreationIndex(queryClient, { game, creationId }))
+        .catch(error => console.error('Could not refresh the creation index:', error));
+};
+
 export const hardReloadApp = () => {
     if (window.electronAPI?.reloadWindow) {
         window.electronAPI.reloadWindow().catch(() => window.location.reload());
