@@ -1,12 +1,13 @@
 import {DEFAULT_WEIGHTS, WEIGHT_KEYS, normalizeWeights} from './feedRanking';
 
 // Largest remainders keep displayed integer percentages exactly at the total.
-function distribute(weights, keys, total) {
+function distribute(weights, keys, total, rounded = true, fallback = DEFAULT_WEIGHTS) {
     if (!keys.length) return {};
     let sum = keys.reduce((value, key) => value + weights[key], 0);
-    const source = sum > 0 ? weights : DEFAULT_WEIGHTS;
+    const source = sum > 0 ? weights : fallback;
     if (!sum) sum = keys.reduce((value, key) => value + source[key], 0);
     const shares = keys.map(key => ({key, exact: source[key] / sum * total}));
+    if (!rounded) return Object.fromEntries(shares.map(({key, exact}) => [key, exact]));
     const result = Object.fromEntries(shares.map(({key, exact}) => [key, Math.floor(exact)]));
     const remainder = total - Object.values(result).reduce((a, b) => a + b, 0);
     shares.sort((a, b) => (b.exact - Math.floor(b.exact)) - (a.exact - Math.floor(a.exact)));
@@ -19,10 +20,11 @@ export function feedPercentages(weights, disabledKeys = []) {
     return {...Object.fromEntries(WEIGHT_KEYS.map(key => [key, 0])), ...distribute(normalizeWeights(weights), enabled, 100)};
 }
 
-export function changeFeedPercentage(weights, key, value, disabledKeys = []) {
-    const current = feedPercentages(weights, disabledKeys);
+export function changeFeedPercentage(weights, key, value, disabledKeys = [], fallback = DEFAULT_WEIGHTS) {
+    const enabled = WEIGHT_KEYS.filter(other => !disabledKeys.includes(other));
+    const current = {...Object.fromEntries(WEIGHT_KEYS.map(other => [other, 0])), ...distribute(normalizeWeights(weights), enabled, 100, false)};
     if (!WEIGHT_KEYS.includes(key) || disabledKeys.includes(key) || !Number.isFinite(value)) return current;
     const others = WEIGHT_KEYS.filter(other => other !== key && !disabledKeys.includes(other));
     const selected = others.length ? Math.max(0, Math.min(100, Math.round(value))) : 100;
-    return {...current, ...distribute(current, others, 100 - selected), [key]: selected};
+    return {...current, ...distribute(current, others, 100 - selected, false, fallback), [key]: selected};
 }

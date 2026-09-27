@@ -1,4 +1,4 @@
-import React, {useId} from 'react';
+import React, {useId, useRef} from 'react';
 import { WEIGHT_KEYS } from '../../utils/feedRanking';
 import {feedPercentages, changeFeedPercentage} from '../../utils/feedMix';
 
@@ -14,6 +14,14 @@ const LABELS = {
 const FeedWeightSliders = ({ weights, onChange, disabledKeys = [], labelOverrides = {} }) => {
     const id = useId();
     const percentages = feedPercentages(weights, disabledKeys);
+    const previousMix = useRef({});
+    const change = (key, value) => {
+        // Keep the last nonzero mix when a slider briefly consumes all 100%.
+        if (WEIGHT_KEYS.some(other => other !== key && !disabledKeys.includes(other) && Number(weights?.[other]) > 0)) {
+            previousMix.current[key] = weights;
+        }
+        onChange(changeFeedPercentage(weights, key, value, disabledKeys, previousMix.current[key]));
+    };
     return (
         <div className="space-y-3">
             {WEIGHT_KEYS.map((key) => {
@@ -33,7 +41,7 @@ const FeedWeightSliders = ({ weights, onChange, disabledKeys = [], labelOverride
                             max="100"
                             value={percentages[key]}
                             disabled={disabled}
-                            onChange={(e) => onChange(changeFeedPercentage(weights, key, Number(e.target.value), disabledKeys))}
+                            onChange={(e) => change(key, Number(e.target.value))}
                             className="w-full accent-blue-500"
                         />
                     </div>
