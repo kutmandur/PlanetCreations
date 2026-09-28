@@ -174,6 +174,17 @@ function inspectMediaPackage(source, allowedExtensions, publicKey = null) {
     return { zip, metadata, mediaManifest: manifest, assetBuffers, signatureStatus };
 }
 
+// Custom Media backups use the streamed *.PlanetCreationsMedia container; older
+// media backups are ZIP files. The container is detected by its leading bytes.
+function inspectMediaPackageFile(source, allowedExtensions, publicKey = null) {
+    const { hasMediaPackageMagic, inspectStreamedMediaPackage } = require('./MediaPackageFormat');
+    if (typeof source === 'string' && hasMediaPackageMagic(source)) {
+        return inspectStreamedMediaPackage(source, allowedExtensions, publicKey,
+            { validateCommonMetadata, verifyMetadataSignature, sha256 });
+    }
+    return inspectMediaPackage(source, allowedExtensions, publicKey);
+}
+
 module.exports = {
     FORMAT_NAME,
     FORMAT_VERSION,
@@ -182,4 +193,5 @@ module.exports = {
     sha256,
     inspectCreationPackage,
     inspectMediaPackage,
+    inspectMediaPackageFile,
 };

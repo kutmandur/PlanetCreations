@@ -465,7 +465,7 @@ const ClientInfoPage = () => {
                         <h2 className="text-2xl font-bold text-center mb-8">Immediate backup workflow</h2>
                         <WorkflowStep number="1" title="Select your game folder" description="Configure the location once. Files appear immediately, then metadata is analyzed sequentially and retained until a file changes or you refresh all stats." />
                         <WorkflowStep number="2" title="Back up now" description="Select one savegame or several files. Each backup also creates its Custom Media document and offers a separate matching media package." />
-                        <WorkflowStep number="3" title="Keep or share the packages" description="Creation and optional media backups use the .PlanetCreations format and can be archived, restored or attached to an online Creation." />
+                        <WorkflowStep number="3" title="Keep or share the packages" description="Creation backups use the .PlanetCreations format and can be archived, restored or attached to an online Creation. Optional Custom Media backups are saved as .PlanetCreationsMedia files named after their creation, have no size limit and stay on your PC." />
                         <WorkflowStep number="4" title="Restore safely" description="Open the backup in the client or use the Restore tab. Signed packages are verified before any game file is replaced." last />
                     </div>
                 </section>

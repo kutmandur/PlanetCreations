@@ -181,6 +181,8 @@ html:not(.dark) .offline-manager :where(.hover\:text-white):hover { color: #1118
 html:not(.dark) .offline-manager input:not([type='checkbox']):not([type='radio']),
 html:not(.dark) .offline-manager select,
 html:not(.dark) .offline-manager textarea { background-color: #fff; border-color: #d1d5db; color: #111827; }
+/* Such-Pille im Startseiten-Stil (Offline Manager): grau ohne Rahmen wie auf der Startseite. */
+html:not(.dark) .offline-manager input.pc-home-search:not([type='checkbox']):not([type='radio']) { background-color: #e5e7eb; border-color: transparent; }
 html:not(.dark) .offline-manager .offline-active-tab,
 html:not(.dark) .offline-manager :where(.bg-blue-500, .bg-blue-600, .bg-green-600, .bg-red-500, .bg-red-600, .bg-yellow-500, .bg-yellow-600, .bg-purple-600) { color: #fff; }
 
@@ -199,6 +201,9 @@ html[data-pc-card-theme] .offline-manager .pc-offline-card :where(.bg-gray-800, 
   color: var(--pc-card-fg);
 }
 html[data-pc-accent-theme] .offline-manager .pc-offline-card { border-top: 3px solid var(--pc-card-accent); }
+/* Farbige Statustexte haben auf beliebigen Kartenfarben keinen verlässlichen Kontrast.
+   Der Text nutzt dann die kontrastsichere Kartenfarbe; die Farbe bleibt als Punkt. */
+html[data-pc-card-theme] .offline-manager .pc-offline-card .pc-status-text { color: var(--pc-card-fg); }
 
 /* PlanetCreations in-game companion overlay. */
 html.game-overlay-window,

@@ -16,6 +16,7 @@ vi.mock('./config', () => ({
 }));
 
 import {
+    getAppCheckTokenIfAvailable,
     isFirebaseAppCheckAuthError,
     isHostedElectronAppCheckContext,
     runFirebaseAuthWithAppCheckRecovery,
@@ -152,4 +153,16 @@ test('never retries the second Auth rejection', async () => {
     const operation = vi.fn().mockRejectedValue(rejected);
     await expect(runFirebaseAuthWithAppCheckRecovery(operation, hostedElectronContext)).rejects.toBe(rejected);
     expect(operation).toHaveBeenCalledTimes(2);
+});
+
+test('returns no App Check token instead of failing when attestation is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mocks.getToken.mockRejectedValue(Object.assign(new Error('403'), {
+        code: 'appCheck/fetch-status-error',
+        customData: { httpStatus: 403 },
+    }));
+
+    await expect(getAppCheckTokenIfAvailable()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
 });

@@ -37,6 +37,25 @@ const sanitizeFilename = (name) =>
         .replace(/-+/g, '-')
         .slice(0, 60) || 'planetcreations';
 
+// Fallback für Kontexte ohne nutzbare Clipboard-API (kein HTTPS oder, wie im
+// Electron-Client, verweigerte Berechtigung). Funktioniert innerhalb eines Klicks.
+const copyWithTextarea = (text) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        return document.execCommand('copy');
+    } catch (e) {
+        return false;
+    } finally {
+        ta.remove();
+    }
+};
+
 const wrapLines = (ctx, text, maxWidth, fontSize) => {
     ctx.font = `700 ${fontSize}px ${FONT_STACK}`;
     const words = String(text).trim().split(/\s+/);
@@ -194,26 +213,24 @@ const SharingQrCode = ({
 
     const handleCopyLink = async () => {
         if (!url) return;
+        let success = false;
         try {
             if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(url);
-            } else {
-                // Fallback für Kontexte ohne Clipboard-API (z. B. kein HTTPS)
-                const ta = document.createElement('textarea');
-                ta.value = url;
-                ta.style.position = 'fixed';
-                ta.style.opacity = '0';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
+                success = true;
             }
-            setCopied(true);
-            if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-            copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
         } catch (e) {
-            console.error('Copy link failed:', e);
+            // Desktop-Clients bis 1.0.44 verweigern die Clipboard-Berechtigung → Fallback unten.
         }
+        if (!success) success = copyWithTextarea(url);
+        if (!success) {
+            console.error('Copy link failed.');
+            window.prompt('Copy this link:', url);
+            return;
+        }
+        setCopied(true);
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
     };
 
     if (status === 'error') {

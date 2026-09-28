@@ -67,7 +67,7 @@ const offlineManagerApi = {
   loadExternalBackup: () => ipcRenderer.invoke('load-external-backup'),
   importMediaBackup: () => ipcRenderer.invoke('import-media-backup'),
   hasMediaSnapshot: (filePath) => ipcRenderer.invoke('has-media-snapshot', filePath),
-  backupCreationMedia: (filePath, note, isSigned, idToken, appCheckToken) => ipcRenderer.invoke('backup-creation-media', filePath, note, isSigned, idToken, appCheckToken),
+  backupCreationMedia: (filePath, note, isSigned, idToken, appCheckToken, options) => ipcRenderer.invoke('backup-creation-media', filePath, note, isSigned, idToken, appCheckToken, options),
   deleteCreationMedia: (filePath, mode) => ipcRenderer.invoke('delete-creation-media', filePath, mode),
   scanGames: (basePath, options) => ipcRenderer.invoke('scan-games', basePath, options),
   onFrontierMetadataUpdated: (callback) => listen('frontier-metadata-updated', callback, (_event, payload) => [payload]),
@@ -88,6 +88,8 @@ const offlineManagerApi = {
   installMedia: (savePath, options) => ipcRenderer.invoke('install-media', savePath, options),
   uninstallMedia: (savePath) => ipcRenderer.invoke('uninstall-media', savePath),
   getMediaStatus: (savePath) => ipcRenderer.invoke('get-media-status', savePath),
+  // Optional: older bridges lack it; the UI then estimates from the snapshot.
+  getMediaAvailability: (savePath) => ipcRenderer.invoke('get-media-availability', savePath),
 };
 
 // Shared bridge for the trusted hosted website. Normal browsers never receive this

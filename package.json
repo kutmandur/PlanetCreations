@@ -1,6 +1,6 @@
 {
   "name": "planet-creation-net",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "PlanetCreations Desktop Client",
   "author": "PlanetCreations",
   "private": true,
@@ -125,6 +125,11 @@
         "ext": "planetcreations",
         "name": "PlanetCreations Backup",
         "description": "Backup file for PlanetCreations Client"
+      },
+      {
+        "ext": "planetcreationsmedia",
+        "name": "PlanetCreations Media Backup",
+        "description": "Custom Media backup for PlanetCreations Client"
       }
     ],
     "protocols": [

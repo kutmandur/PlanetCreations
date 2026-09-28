@@ -38,8 +38,18 @@ async function prepareAuthToken(context) {
 
 export const getAppCheckTokenIfAvailable = async () => {
     if (!appCheck) return null;
-    const result = await tokens.read();
-    return result.token || null;
+    try {
+        const result = await tokens.read();
+        return result.token || null;
+    } catch (error) {
+        // Same rule as prepareAuthToken: enforcement is a server decision. Without
+        // enforcement the request succeeds; with it, the server names the reason.
+        console.warn('App Check token unavailable; continuing without it.', {
+            code: error?.code || 'unknown',
+            httpStatus: error?.customData?.httpStatus,
+        });
+        return null;
+    }
 };
 
 export const waitForElectronAppCheck = async (context = undefined) => {

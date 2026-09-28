@@ -188,3 +188,69 @@ test('supplements a manual media package without replacing manual same-name asse
     assert.deepEqual(snapshot.discovery.references, ['habitat.ogg', 'education.png']);
     assert.deepEqual(snapshot.discovery.missing, []);
 });
+
+test('accepts a PNG saved with a .jpg extension, as Planet Coaster 2 does', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Coaster 2');
+    const savePath = path.join(gameDirectory, 'Saves', 'mislabelled.park2');
+    const imagePath = path.join(gameDirectory, 'UserMedia', 'queue-times.jpg');
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(imagePath), { recursive: true });
+    fs.writeFileSync(savePath, 'mislabelled-save');
+    fs.writeFileSync(imagePath, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('png-body')]));
+    const stats = fs.statSync(savePath);
+
+    const synchronized = MediaManager.syncAutomaticMediaSnapshot(savePath, {
+        metadata: { gameId: 'planet-coaster-2' }, mediaReferences: ['queue-times.jpg'],
+        source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+    });
+
+    assert.equal(synchronized.success, true);
+    assert.equal(synchronized.assetCount, 1);
+    assert.deepEqual(synchronized.rejected, []);
+    assert.equal(MediaManager.createOrUpdateSnapshot(path.join(gameDirectory, 'Saves', 'manual-jpg.park2'), [imagePath]), true);
+});
+
+test('skips media whose content belongs to a different media family instead of failing the whole set', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Coaster 2');
+    const savePath = path.join(gameDirectory, 'Saves', 'rejected.park2');
+    const validPath = path.join(gameDirectory, 'UserMedia', 'valid.png');
+    const invalidPath = path.join(gameDirectory, 'UserMedia', 'broken.jpg');
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(validPath), { recursive: true });
+    fs.writeFileSync(savePath, 'rejected-save');
+    fs.writeFileSync(validPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    fs.writeFileSync(invalidPath, Buffer.concat([Buffer.from('OggS'), Buffer.from('audio-not-image')]));
+    const stats = fs.statSync(savePath);
+
+    const synchronized = MediaManager.syncAutomaticMediaSnapshot(savePath, {
+        metadata: { gameId: 'planet-coaster-2' }, mediaReferences: ['valid.png', 'broken.jpg', 'gone.png'],
+        source: { size: stats.size, modifiedAtMs: stats.mtimeMs },
+    });
+
+    assert.equal(synchronized.success, true);
+    assert.equal(synchronized.assetCount, 1);
+    assert.deepEqual(synchronized.missing, ['gone.png']);
+    assert.deepEqual(synchronized.rejected.map(item => item.logicalName), ['broken.jpg']);
+    assert.deepEqual(MediaManager.getSnapshot(savePath).files, ['valid.png']);
+    assert.equal(MediaManager.syncAutomaticMediaSnapshot(savePath).status, 'unchanged');
+    assert.equal(MediaManager.createOrUpdateSnapshot(savePath, [invalidPath]), false);
+});
+test('reports which stored media can be installed again while uninstalled', () => {
+    const gameDirectory = path.join(fakePaths.documents, 'Frontier Developments', 'Planet Coaster 2');
+    const savePath = path.join(gameDirectory, 'Saves', 'availability.park2');
+    const selectedPath = path.join(testRoot, 'availability', 'poster.png');
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.mkdirSync(path.dirname(selectedPath), { recursive: true });
+    fs.writeFileSync(savePath, 'availability-save');
+    fs.writeFileSync(selectedPath, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('availability')]));
+
+    assert.deepEqual(MediaManager.getMediaAvailability(savePath), { assetCount: 0, storedCount: 0, mediaSetId: null, gameId: null });
+    assert.equal(MediaManager.createOrUpdateSnapshot(savePath, [selectedPath]), true);
+    const available = MediaManager.getMediaAvailability(savePath);
+    assert.equal(available.assetCount, 1);
+    assert.equal(available.storedCount, 1);
+    assert.equal(available.gameId, 'planet-coaster-2');
+
+    fs.unlinkSync(MediaManager.getObjectPath(MediaManager.getSnapshot(savePath).assets[0]));
+    assert.equal(MediaManager.getMediaAvailability(savePath).storedCount, 0);
+});

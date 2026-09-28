@@ -5,6 +5,10 @@ import { readOverlayQr, subscribeOverlayQr } from '../../utils/overlayQr';
 import { composeSharingQrCanvas } from './SharingQrCode';
 import CollaborationOverlayControls from '../collaboration/CollaborationOverlayControls';
 
+// Nicht relativ ("logo.png"): Nach der Navigation zu /overlay/showcase würde das
+// sonst zu /overlay/logo.png aufgelöst und nur ein leerer Kreis angezeigt.
+export const OVERLAY_LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
+
 export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, onOpen = null }) => {
     const [dragging, setDragging] = useState(false);
     const [overlayQr, setOverlayQrState] = useState(() => readOverlayQr());
@@ -136,7 +140,7 @@ export const GameOverlayWidget = ({ unreadCount = 0, activeGameId = null, onOpen
                 {qrDataUrl && overlayQr ? (
                     <img src={qrDataUrl} alt="" draggable="false" className="game-overlay-qr" />
                 ) : (
-                    <img src="logo.png" alt="" draggable="false" />
+                    <img src={OVERLAY_LOGO_SRC} alt="" draggable="false" />
                 )}
                 {unreadCount > 0 && (
                     <span className="game-overlay-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
@@ -156,7 +160,7 @@ export const GameOverlayChrome = ({
     return (
         <div className="game-overlay-chrome">
             <span className="flex items-center gap-2 font-semibold text-sm">
-                <img src="logo.png" alt="" className="w-6 h-6 rounded-full" draggable="false" />
+                <img src={OVERLAY_LOGO_SRC} alt="" className="w-6 h-6 rounded-full" draggable="false" />
                 In-Game Overlay
             </span>
             <CollaborationOverlayControls

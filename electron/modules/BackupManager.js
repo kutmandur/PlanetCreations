@@ -19,6 +19,7 @@ const {
     sha256,
 } = require('./BackupFormat');
 const { responseToBuffer } = require('./ResponseBuffer');
+const { mediaPackageFileName } = require('./MediaPackageFormat');
 
 const API_BASE_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
 const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto', '.zoo_auto'];
@@ -424,6 +425,25 @@ async function createBackup(
 function listAllBackups(app) {
     return runBackupJob('list', {paths: {documents: app.getPath('documents'), userData: app.getPath('userData')}});
 }
+
+// ZIP media packages carry verified buffers; streamed packages are copied into
+// the library by the worker, which verifies every asset on the way.
+async function storeInspectedMediaAssets(app, inspection) {
+    if (inspection.assetBuffers) {
+        for (const { asset, buffer } of inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+        return;
+    }
+    try {
+        await runBackupJob('storeMediaAssets', {
+            packagePath: inspection.packagePath,
+            entries: inspection.assetEntries,
+            paths: { userData: app.getPath('userData'), documents: app.getPath('documents') },
+        });
+    } catch (error) {
+        // A damaged or altered asset is a package-integrity failure, like a bad ZIP entry.
+        throw Object.assign(new Error(error.message), { status: 'invalid' });
+    }
+}
 async function backupCreationMedia(
     app,
     sourceFilePath,
@@ -431,17 +451,42 @@ async function backupCreationMedia(
     isSigned = false,
     idToken = null,
     appCheckToken = null,
+    // "Backup All" keeps its previous behavior; the Backup Media dialog asks explicitly.
+    { ignoreMissingMedia = true } = {},
 ) {
     try {
         const preparedMedia = await runBackupJob('mediaSnapshot', {sourcePath: sourceFilePath, paths: {userData: app.getPath('userData'), documents: app.getPath('documents')}});
         const mediaSync = preparedMedia.sync;
         const snapshot = preparedMedia.snapshot;
-        if (!snapshot?.assets?.length) {
+        // Only files that are really in the media library can be packaged.
+        const isStored = asset => {
+            try {
+                const objectPath = getObjectPath(asset);
+                return fs.existsSync(objectPath) && fs.statSync(objectPath).size === asset.size;
+            } catch {
+                return false;
+            }
+        };
+        const storedAssets = (preparedMedia.manifest?.assets || []).filter(isStored);
+        const unavailable = [...new Set([
+            ...(mediaSync.missing || []),
+            ...(mediaSync.rejected || []).map(item => item.logicalName),
+            ...(preparedMedia.manifest?.assets || []).filter(asset => !isStored(asset)).map(asset => asset.logicalName),
+        ])];
+        if (!snapshot?.assets?.length || storedAssets.length === 0) {
             const suffix = mediaSync.referenceCount > 0 ?
                 ` ${mediaSync.referenceCount} reference(s) were found, but the files are not available locally.` : '';
             return { success: false, message: `No available media is associated with this creation.${suffix}` };
         }
-        const portableManifest = preparedMedia.manifest;
+        if (unavailable.length > 0 && !ignoreMissingMedia) {
+            return {
+                success: false,
+                status: 'missing-media',
+                missing: unavailable,
+                message: `${unavailable.length} referenced media file(s) are missing. Turn on "Ignore missing media" to back up the ${storedAssets.length} available file(s).`,
+            };
+        }
+        const portableManifest = { ...preparedMedia.manifest, assets: storedAssets };
         const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
         const packageId = crypto.randomUUID();
         let metadata = {
@@ -465,11 +510,19 @@ async function backupCreationMedia(
         }
         const destinationDirectory = path.join(getBackupBaseDir(app), 'Custom Media');
         fs.mkdirSync(destinationDirectory, { recursive: true });
-        const destinationPath = path.join(destinationDirectory, `CustomMedia-${packageId}.PlanetCreations`);
-        await runBackupJob('archive', {destination: destinationPath, metadata, manifest: manifestBuffer.toString('utf8'), assets: portableManifest.assets.map(asset => ({...asset, path: getObjectPath(asset), name: `assets/${asset.sha256}${path.extname(asset.logicalName).toLowerCase()}`}))});
-        const missingSuffix = mediaSync.missing?.length ? ` ${mediaSync.missing.length} referenced file(s) are missing locally.` : '';
+        const destinationPath = path.join(destinationDirectory, mediaPackageFileName(sourceFilePath, packageId));
+        await runBackupJob('mediaArchive', {
+            destination: destinationPath,
+            metadata,
+            manifestText: manifestBuffer.toString('utf8'),
+            assets: portableManifest.assets.map(asset => ({ path: getObjectPath(asset), size: asset.size, sha256: asset.sha256 })),
+        });
+        const skippedSuffix = unavailable.length ? ` ${unavailable.length} missing file(s) were left out.` : '';
         registerLocalTarget(app, packageId, sourceFilePath);
-        return { success: true, message: `Checked media package created for '${path.basename(sourceFilePath)}'.${missingSuffix}` };
+        return {
+            success: true,
+            message: `Custom Media backup created for '${path.basename(sourceFilePath)}' with ${storedAssets.length} file(s).${skippedSuffix}`,
+        };
     } catch (error) {
         console.error('Failed to create media package:', error);
         return { success: false, message: error.message };
@@ -480,15 +533,12 @@ async function importMediaBackup(app, dialog) {
     const { canceled, filePaths } = await dialog.showOpenDialog({
         title: 'Select checked media package',
         defaultPath: app.getPath('downloads'),
-        filters: [{ name: 'PlanetCreations Media Package', extensions: ['PlanetCreations'] }],
+        filters: [{ name: 'PlanetCreations Media Package', extensions: ['PlanetCreationsMedia', 'PlanetCreations'] }],
         properties: ['openFile'],
     });
     if (canceled || filePaths.length === 0) return { success: false, status: 'canceled', message: 'No file selected.' };
     try {
-        const packageSize = fs.statSync(filePaths[0]).size;
-        if (packageSize <= 0 || packageSize > 2 * 1024 * 1024 * 1024) {
-            throw new Error('The media package must be between 1 byte and 2 GB.');
-        }
+        if (fs.statSync(filePaths[0]).size <= 0) throw new Error('The media package is empty.');
         const result = await verifyBackup(filePaths[0]);
         if (result.status !== 'verified' || result.metadata?.packageType !== 'media') {
             return {
@@ -497,7 +547,7 @@ async function importMediaBackup(app, dialog) {
                 message: result.error || 'Only signed and verified version-2 media packages can be imported.',
             };
         }
-        for (const { asset, buffer } of result.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+        await storeInspectedMediaAssets(app, result.inspection);
         const linkedCount = findManifestPathsByMediaSetId(result.metadata.mediaSetId).length;
         return {
             success: true,
@@ -581,8 +631,8 @@ function resolveRestoreTarget(app, metadata, originalFilePath, frontierPath) {
     return assertLibraryTarget(path.join(gameRoot, profiles[0].name, 'Saves', fileName), frontierPath);
 }
 
-function restoreVerifiedMedia(app, verification, targetPath, options = {}) {
-    for (const {asset, buffer} of verification.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+async function restoreVerifiedMedia(app, verification, targetPath, options = {}) {
+    await storeInspectedMediaAssets(app, verification.inspection);
     savePortableManifestForCreation(targetPath, verification.inspection.mediaManifest);
     registerLocalTarget(app, verification.metadata.packageId, targetPath);
     const result = installMedia(targetPath, options);
@@ -608,7 +658,12 @@ async function installMediaWithBackupRecovery(app, savePath, options = {}) {
         // An existing snapshot selects exact versions, even if a newer backup exists.
         if (snapshot.assets.some(asset => !assets.some(candidate => candidate.logicalName === asset.logicalName &&
             candidate.sha256 === asset.sha256 && candidate.size === asset.size))) continue;
-        for (const {asset, buffer} of verification.inspection.assetBuffers) storeAssetBuffer(asset, buffer);
+        try {
+            await storeInspectedMediaAssets(app, verification.inspection);
+        } catch (error) {
+            console.warn(`[BackupManager] Skipping damaged media backup ${backup.filePath}: ${error.message}`);
+            continue;
+        }
         if (!snapshot.assets.length) savePortableManifestForCreation(savePath, verification.inspection.mediaManifest);
         return installMedia(savePath, options);
     }
@@ -625,11 +680,11 @@ async function restoreBackup(app, backupZipPath, originalFilePath, options = {})
         const targetPath = resolveRestoreTarget(app, verification.metadata, originalFilePath, options.frontierPath);
         if (!targetPath) return {success: false, status: 'needs-target', originalFileName: verification.metadata.originalFileName};
         if (!verification.inspection?.legacy && verification.metadata.packageType === 'media') {
-            return restoreVerifiedMedia(app, verification, targetPath, options);
+            return await restoreVerifiedMedia(app, verification, targetPath, options);
         }
         return await writeVerifiedCreation(app, backupZipPath, verification, targetPath);
     } catch (error) {
-        return { success: false, status: 'error', message: error.message };
+        return { success: false, status: error.status || 'error', message: error.message };
     }
 }
 

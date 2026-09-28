@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 const {sha256} = require('./BackupFormat');
+const {hasMediaPackageMagic, readMediaPackageHeader} = require('./MediaPackageFormat');
 const gameByExtension = {
     '.park2': 'planet-coaster-2', '.blpr2': 'planet-coaster-2', '.prkauto2': 'planet-coaster-2',
     '.zoo': 'planet-zoo', '.pzblueprint': 'planet-zoo', '.zooauto': 'planet-zoo', '.zoo_auto': 'planet-zoo',
@@ -39,7 +40,11 @@ function getWorkshopRegistryPath(app) {
     return path.join(app.getPath('userData'), 'workshop_packages.json');
 }
 
+const isBackupPackageName = fileName => /\.planetcreations(media)?$/i.test(fileName);
+
 function readBasicMetadata(packagePath) {
+    // Media packages expose their metadata in a small header; never load their data.
+    if (hasMediaPackageMagic(packagePath)) return readMediaPackageHeader(packagePath).metadata;
     const zip = new AdmZip(packagePath);
     const entry = zip.getEntry('metadata.json');
     if (!entry || entry.header.size > 64 * 1024) throw new Error('metadata.json is missing or too large.');
@@ -58,7 +63,7 @@ function listAllBackupsSync(app) {
     for (const category of ['Parks', 'Blueprints', 'Auto Save', 'Custom Media', 'Workshop', 'Misc']) {
         const categoryDir = path.join(baseDir, category);
         if (!fs.existsSync(categoryDir)) continue;
-        for (const fileName of fs.readdirSync(categoryDir).filter(file => file.toLowerCase().endsWith('.planetcreations'))) {
+        for (const fileName of fs.readdirSync(categoryDir).filter(isBackupPackageName)) {
             try {
                 const archivePath = path.join(categoryDir, fileName);
                 const stat = fs.statSync(archivePath);

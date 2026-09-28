@@ -68,7 +68,10 @@ test('creation backup automatically links media and can create the matching sepa
         assert.equal(manifest.assets.length, 1);
         assert.equal(manifest.assets[0].logicalName, 'screen.png');
 
+        // Custom Media uses its own streamed container, named after the creation.
+        assert.match(mediaPackages[0], /^Media Park - Media \d{4}-\d{2}-\d{2} \d{4} \([0-9a-f]{8}\)\.PlanetCreationsMedia$/);
         const mediaBackupPath = path.join(fakePaths.documents, 'PlanetCreations', 'Custom Media', mediaPackages[0]);
+        assert.equal(fs.readFileSync(mediaBackupPath).subarray(0, 8).toString('ascii'), 'PCMEDIA1');
         const expectedImage = fs.readFileSync(imagePath);
         const mediaCatalog = Object.values(await BackupManager.listAllBackups(fakeApp)).flat()
             .find(backup => backup.backupType === 'media');
@@ -103,9 +106,29 @@ test('creation backup automatically links media and can create the matching sepa
         assert.equal(conflict.status, 'conflict');
         assert.deepEqual(fs.readFileSync(imagePath), conflicting);
 
-        const damagedArchive = new AdmZip(mediaBackupPath);
-        damagedArchive.updateFile(`assets/${manifest.assets[0].sha256}.png`, Buffer.from('bad'));
-        damagedArchive.writeZip(mediaBackupPath);
+        // Media backups created by earlier clients are ZIP files and must still restore.
+        const { readMediaPackageHeader } = require('./MediaPackageFormat');
+        const { metadata: mediaMetadata, manifestText, dataOffset } = readMediaPackageHeader(mediaBackupPath);
+        const legacyZip = new AdmZip();
+        legacyZip.addFile('metadata.json', Buffer.from(JSON.stringify(mediaMetadata, null, 2)));
+        legacyZip.addFile('media_manifest.json', Buffer.from(manifestText));
+        legacyZip.addFile(`assets/${manifest.assets[0].sha256}.png`, expectedImage);
+        const legacyPath = path.join(fakePaths.documents, 'PlanetCreations', 'Custom Media', 'CustomMedia-legacy.PlanetCreations');
+        legacyZip.writeZip(legacyPath);
+        fs.unlinkSync(imagePath);
+        fs.unlinkSync(MediaManager.getObjectPath(manifest.assets[0]));
+        const legacyRestore = await BackupManager.restoreBackup(fakeApp, legacyPath, null, {frontierPath: path.dirname(gameDirectory)});
+        assert.equal(legacyRestore.success, true, legacyRestore.message);
+        assert.deepEqual(fs.readFileSync(imagePath), expectedImage);
+        assert.equal(MediaManager.uninstallMedia(savePath).success, true);
+        fs.unlinkSync(legacyPath);
+        fs.writeFileSync(imagePath, conflicting);
+
+        // Tamper with the asset bytes without changing the package structure.
+        const damaged = fs.readFileSync(mediaBackupPath);
+        damaged.write('bad', dataOffset + 2, 'ascii');
+        fs.writeFileSync(mediaBackupPath, damaged);
+        fs.unlinkSync(MediaManager.getObjectPath(manifest.assets[0]));
         const invalid = await BackupManager.restoreBackup(fakeApp, mediaBackupPath, savePath);
         assert.equal(invalid.success, false);
         assert.equal(invalid.status, 'invalid');

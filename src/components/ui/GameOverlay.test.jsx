@@ -61,6 +61,25 @@ test('coalesces compact overlay movement and resizing to animation frames', () =
     expect(window.electronAPI.endOverlayDrag).toHaveBeenCalledTimes(1);
 });
 
+test('restores the logo from the site root after the QR code is removed on a nested route', async () => {
+    window.history.pushState({}, '', '/overlay/showcase');
+    localStorage.setItem('pc.overlayQr', JSON.stringify({
+        creationId: 'park-1', title: 'Showcase Park', url: 'https://www.planetcreations.net/share/creation/park-1',
+    }));
+    const { container } = render(<GameOverlayWidget />);
+
+    localStorage.removeItem('pc.overlayQr');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'pc.overlayQr' }));
+
+    const logo = await vi.waitFor(() => {
+        const image = container.querySelector('img');
+        expect(image).not.toHaveClass('game-overlay-qr');
+        return image;
+    });
+    expect(logo.src).toBe(`${window.location.origin}/logo.png`);
+    window.history.pushState({}, '', '/');
+});
+
 test('opens the active showcase page when the compact overlay is clicked', () => {
     const onOpen = vi.fn();
     localStorage.setItem('pc.overlayQr', JSON.stringify({

@@ -14,6 +14,7 @@ import DeleteConfirmationModal from '../modals/DeleteConfirmationModal';
 import DeleteMediaModal from '../modals/DeleteMediaModal';
 import MediaSnapshotModal from '../modals/MediaSnapshotModal';
 import CreationMetadataPanel from '../ui/CreationMetadataPanel';
+import { getMediaFilterState, getMediaInstallAvailability, MEDIA_AVAILABILITY_STYLES, MEDIA_STATUS_FILTER_OPTIONS } from '../../utils/mediaAvailability';
 
 // --- HILFSFUNKTIONEN ---
 function formatBytes(bytes, decimals = 2) {
@@ -88,18 +89,89 @@ const SubHeader = ({ gameTabs, activeGame, setActiveGame, gameTabRefs, gameGlide
     );
 };
 
-const FilterControls = ({ searchTerm, setSearchTerm, sortOption, setSortOption, sortOptions, showBackupAll, onBackupAll, showBackupSelected, onBackupSelected, selectedCount = 0, showRestoreSelected, onRestoreSelected }) => (
-    <div className="px-6 py-4 flex items-center justify-between flex-shrink-0 bg-gray-800">
-        <div className="flex-1 flex items-center space-x-2">{showBackupAll && (<button onClick={onBackupAll} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Backup All</button>)}{showBackupSelected && (<button onClick={onBackupSelected} disabled={selectedCount === 0} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed">Backup Selected ({selectedCount})</button>)}{showRestoreSelected && (<button onClick={onRestoreSelected} disabled={selectedCount === 0} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed">Restore Selected ({selectedCount})</button>)}</div>
-        <div className="relative w-1/3 flex-1 mx-4"><span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><Icon path={ICONS.search} className="w-5 h-5 text-gray-400" /></span><input type="text" placeholder="Search by name..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-gray-700 text-white rounded-md pl-10 pr-8 py-1.5 w-full outline-none focus:ring-2 focus:ring-blue-500" />{searchTerm && (<button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white"><Icon path={ICONS.xMark} className="w-5 h-5" /></button>)}</div>
-        <div className="flex items-center flex-1 justify-end"><label htmlFor="sort-select" className="text-sm font-semibold text-gray-400 mr-3">Sort by:</label><select id="sort-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)} className="bg-gray-700 text-white rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 appearance-none">{sortOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
+// Layout wie auf der Startseite für alle Offline-Manager-Tabs: zentrierte
+// Such-Pille mit rundem Sort-&-Filter-Button, ohne eigene Leiste. Aktionen sitzen
+// als runde Pillen daneben (wie der DLC-Button der Startseite).
+const ACTION_PILL = 'h-12 px-5 rounded-full text-sm font-bold text-white transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed';
+
+const FilterControls = ({ searchTerm, setSearchTerm, sortOption, setSortOption, sortOptions, statusFilter, setStatusFilter, statusFilterOptions, showBackupAll, onBackupAll, showBackupSelected, onBackupSelected, selectedCount = 0, showRestoreSelected, onRestoreSelected }) => (
+    <div className="px-6 py-4 flex flex-wrap justify-center items-center gap-3 flex-shrink-0">
+        <div className="flex flex-1 min-w-[16rem] max-w-xl items-center gap-2">
+            <div className="relative flex-grow">
+                <input type="text" placeholder="Search by name..." aria-label="Search by name" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pc-home-search w-full p-3 pl-10 pr-10 bg-gray-200 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <Icon path={ICONS.search} className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                {searchTerm && (<button type="button" onClick={() => setSearchTerm('')} className="absolute z-10 right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-300/50 transition-colors" aria-label="Clear search"><span className="text-2xl font-bold text-blue-600 pb-1">×</span></button>)}
+            </div>
+            <SortAndFilterMenu statusFilter={statusFilter} setStatusFilter={setStatusFilter} statusFilterOptions={statusFilterOptions} sortOption={sortOption} setSortOption={setSortOption} sortOptions={sortOptions} />
+        </div>
+        {(showBackupAll || showBackupSelected || showRestoreSelected) && (
+            <div className="flex items-center gap-2">
+                {showBackupAll && (<button type="button" onClick={onBackupAll} className={`${ACTION_PILL} bg-green-600 hover:bg-green-700`}>Backup All</button>)}
+                {showBackupSelected && (<button type="button" onClick={onBackupSelected} disabled={selectedCount === 0} className={`${ACTION_PILL} bg-blue-600 hover:bg-blue-700`}>Backup Selected ({selectedCount})</button>)}
+                {showRestoreSelected && (<button type="button" onClick={onRestoreSelected} disabled={selectedCount === 0} className={`${ACTION_PILL} bg-green-600 hover:bg-green-700`}>Restore Selected ({selectedCount})</button>)}
+            </div>
+        )}
     </div>
 );
+
+// Wie auf der Startseite: runder Filter-Button, der bei aktivem Filter eingefärbt
+// ist und ein "Sort & Filter"-Popover öffnet.
+const SortAndFilterMenu = ({ statusFilter, setStatusFilter, statusFilterOptions, sortOption, setSortOption, sortOptions }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const menuRef = useRef(null);
+    const hasStatusFilter = Boolean(statusFilterOptions?.length);
+    const isFilterActive = hasStatusFilter && statusFilter !== statusFilterOptions[0].value;
+
+    useEffect(() => {
+        if (!isOpen) return undefined;
+        const handleClickOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) setIsOpen(false);
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
+
+    return (
+        <div className="relative" ref={menuRef}>
+            <button
+                type="button"
+                onClick={() => setIsOpen(open => !open)}
+                aria-label={hasStatusFilter ? 'Sort and filter' : 'Sort'}
+                aria-expanded={isOpen}
+                className={`p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors duration-300 ${isFilterActive ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
+            >
+                <Icon path={ICONS.filter} className="w-6 h-6" />
+            </button>
+            {isOpen && (
+                // Klassen wie im Startseiten-Popover (HomePage): hell geschrieben, per
+                // dark:-Varianten und globalen Dark-Mappings umgefärbt, von Custom Themes unberührt.
+                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 text-gray-900 border border-gray-200 rounded-lg shadow-xl p-4 z-20">
+                    <h4 className="font-bold mb-2 text-gray-900">{hasStatusFilter ? 'Sort & Filter' : 'Sort'}</h4>
+                    <label htmlFor="offline-sort-select" className="block text-sm font-medium text-gray-700">Sort by</label>
+                    <select id="offline-sort-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)} className="mt-1 block w-full p-2 border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        {sortOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </select>
+                    {hasStatusFilter && (<>
+                        <p className="block text-sm font-medium text-gray-700 mt-4 mb-2">Filter by media state</p>
+                        <div className="space-y-2" role="radiogroup" aria-label="Filter by media state">
+                            {statusFilterOptions.map(opt => (
+                                <label key={opt.value} className="flex items-center text-gray-800 font-semibold cursor-pointer">
+                                    <input type="radio" name="mediaStateFilter" value={opt.value} checked={statusFilter === opt.value} onChange={() => setStatusFilter(opt.value)} className="h-4 w-4 text-blue-600 focus:ring-blue-500" />
+                                    <span className="ml-2">{opt.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </>)}
+                </div>
+            )}
+        </div>
+    );
+};
 
 
 // --- LISTENDARSTELLUNG ---
 
-const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, mediaDiscoveryStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
+const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, mediaAvailability, mediaDiscoveryStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
     if (!files || files.length === 0) {
         return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
     }
@@ -116,6 +188,8 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                 const lastBackupDate = backupsForFile && backupsForFile.length > 0 ? new Date(backupsForFile[0].backupDate) : null;
                 const isSelected = viewMode === 'backup' && selectedItems && selectedItems.has(file.path);
                 const discovery = viewMode === 'media' ? mediaDiscoveryStatus?.[file.path] : null;
+                const installAvailability = viewMode === 'media' && !isInstalled && mediaAvailability?.[file.path]
+                    ? getMediaInstallAvailability(mediaAvailability[file.path], allBackups) : null;
 
                 return (
                     <div key={file.path} className={`pc-offline-card pc-creation-file-card rounded-xl p-4 flex flex-col shadow-lg border transition-colors ${isInstalled ? 'bg-green-900/40 border-green-500' : 'bg-gray-700 border-gray-600 hover:border-gray-500'}`}>
@@ -162,7 +236,10 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                 {viewMode === 'media' && discovery && (
                                     <div className="w-full rounded-md bg-gray-800 px-2 py-1 text-center text-xs text-gray-300">
                                         {discovery.success ? `${discovery.assetCount} media file(s) matched` : 'Automatic media detection failed'}
-                                        {discovery.missing?.length > 0 && <span className="text-amber-400"> · {discovery.missing.length} missing</span>}
+                                        {discovery.missing?.length > 0 && <span className="pc-status-text text-amber-700 dark:text-amber-400"> · {discovery.missing.length} missing</span>}
+                                        {discovery.rejected?.length > 0 && (
+                                            <span className="pc-status-text text-red-700 dark:text-red-400" title={discovery.rejected.map(item => `${item.logicalName}: ${item.reason}`).join('\n')}> · {discovery.rejected.length} rejected</span>
+                                        )}
                                     </div>
                                 )}
                                 {viewMode === 'backup' && (
@@ -182,9 +259,15 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                                             Delete Media
                                         </button>
                                         <div className="flex items-center gap-2 bg-gray-800 rounded-full px-3 py-1.5">
-                                            <span className={`text-xs font-semibold ${isInstalled ? 'text-green-400' : 'text-gray-400'}`}>{isInstalled ? 'Installed' : 'Not installed'}</span>
+                                            <span className={`pc-status-text text-xs font-semibold ${isInstalled ? 'text-green-700 dark:text-green-400' : 'text-gray-300'}`}>{isInstalled ? 'Installed' : 'Not installed'}</span>
                                             <ToggleSwitch isToggled={isInstalled} onToggle={() => isInstalled ? onUninstallMedia(file) : onInstallMedia(file)} />
                                         </div>
+                                        {installAvailability && (
+                                            <p className={`pc-status-text w-full flex items-center justify-center gap-1.5 text-xs font-semibold ${MEDIA_AVAILABILITY_STYLES[installAvailability.tone].text}`}>
+                                                <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${MEDIA_AVAILABILITY_STYLES[installAvailability.tone].dot}`} />
+                                                {installAvailability.label}
+                                            </p>
+                                        )}
                                     </>
                                 )}
                             </div>
@@ -273,7 +356,7 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
                     getAppCheckTokenIfAvailable(),
                 ]);
             } catch (error) {
-                alert("Could not get authentication token. Please try again.");
+                alert(`Could not get authentication token: ${error?.message || 'unknown error'}. Please try again.`);
                 setGlobalLoader({ isLoading: false, message: '' });
                 return;
             }
@@ -476,6 +559,23 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
         });
     };
 
+    // Gemeinsamer Ablauf für einzelne und mehrere Restores: Rückfrage bei unsignierten
+    // Backups, Abbruch bei ungültiger Signatur. Liefert true bei Erfolg.
+    const restoreSingleBackup = async (backup) => {
+        if (!backup.isSigned && !window.confirm(`The backup for "${backup.originalFileName}" is unsigned. Restore it only if you created it or trust its source.\n\nContinue restoring?`)) return false;
+        const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
+        if (verifyResult.status === 'canceled') return false;
+        if (verifyResult.status === 'invalid') {
+            alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
+            return false;
+        }
+        if (!verifyResult.success) {
+            alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
+            return false;
+        }
+        return true;
+    };
+
     const handleRestoreSelected = async () => {
         const selectedToRestore = Object.values(selectedBackups);
         if (selectedToRestore.length === 0) return;
@@ -486,24 +586,22 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
 
         try {
             for (const backup of selectedToRestore) {
-                if (!backup.isSigned && !window.confirm(`The backup for "${backup.originalFileName}" is unsigned. Restore it only if you created it or trust its source.\n\nContinue restoring?`)) continue;
-                const verifyResult = await window.electronAPI.restoreBackup(backup.filePath, backup.originalFilePath);
-
-                if (verifyResult.status === 'canceled') continue;
-
-                if (verifyResult.status === 'invalid') {
-                    alert(`SIGNATURE INVALID: The backup for "${backup.originalFileName}" could not be restored because its signature is invalid. It may have been tampered with.`);
-                    continue;
-                }
-
-                if (verifyResult.success) {
-                    restoredCount++;
-                } else {
-                    alert(`Failed to restore "${backup.originalFileName}": ${verifyResult.message || 'Unknown error'}`);
-                }
+                if (await restoreSingleBackup(backup)) restoredCount++;
             }
             alert(`${restoredCount} of ${selectedToRestore.length} backups were restored successfully.`);
             setSelectedBackups({});
+        } catch (error) {
+            alert(`Restore failed: ${error.message}`);
+        } finally {
+            setGlobalLoader({ isLoading: false, message: '' });
+            fetchBackups();
+        }
+    };
+
+    const handleRestoreOne = async (backup) => {
+        setGlobalLoader({ isLoading: true, message: `Restoring ${backup.originalFileName}...` });
+        try {
+            if (await restoreSingleBackup(backup)) alert(`"${backup.originalFileName}" was restored successfully.`);
         } catch (error) {
             alert(`Restore failed: ${error.message}`);
         } finally {
@@ -612,6 +710,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                                             <div className="flex flex-wrap justify-center gap-2 mt-3">
                                                 {activeView === 'workshop' && backup.installStatus === 'not-installed' && <button onClick={() => handleWorkshopInstall(backup)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-xs">Install</button>}
                                                 {activeView === 'workshop' && backup.installStatus !== 'not-installed' && <button onClick={() => handleWorkshopUninstall(backup)} className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-1 px-3 rounded text-xs">Uninstall</button>}
+                                                {activeView !== 'workshop' && <button onClick={() => handleRestoreOne(backup)} title="Restore this backup" className="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-xs">Restore</button>}
                                                 <button onClick={() => handleDeleteClick(backup)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-xs">{activeView === 'workshop' ? 'Delete Package' : 'Delete'}</button>
                                             </div>
                                         </div>
@@ -628,13 +727,16 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
 };
 
 const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps, setGlobalLoader }) => {
+    const [backupNotice, setBackupNotice] = useState(null);
     const [snapshotModalState, setSnapshotModalState] = useState({ isOpen: false, file: null, gameName: null });
     const [mediaStatus, setMediaStatus] = useState({});
     const [snapshotStatus, setSnapshotStatus] = useState({});
+    const [mediaAvailability, setMediaAvailability] = useState({});
     const [mediaDiscoveryStatus, setMediaDiscoveryStatus] = useState({});
     const [statusLoading, setStatusLoading] = useState(false);
     const [backingUpMediaFile, setBackingUpMediaFile] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
     const [sortOption, setSortOption] = useState('modifiedAt_desc');
     const [deleteMediaModalState, setDeleteMediaModalState] = useState({ isOpen: false, file: null });
     const [finalDeleteState, setFinalDeleteState] = useState({ isOpen: false, file: null, mode: null });
@@ -656,9 +758,12 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
     
     const processedFiles = useMemo(() => {
         const files = scanResults?.[activeGame]?.[activeTab] || [];
-        const filtered = files.filter(file => file.name.toLowerCase().includes(searchTerm.toLowerCase()));
+        const filtered = files.filter(file => file.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+            (statusFilter === 'all' || getMediaFilterState(
+                mediaStatus[file.path] === 'installed', mediaAvailability[file.path], allBackups,
+            ) === statusFilter));
         const [key, direction] = sortOption.split('_');
-        
+
         return filtered.sort((a, b) => {
             const isAInstalled = mediaStatus[a.path] === 'installed';
             const isBInstalled = mediaStatus[b.path] === 'installed';
@@ -675,7 +780,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
             if (valA > valB) return direction === 'asc' ? 1 : -1;
             return 0;
         });
-    }, [scanResults, activeGame, activeTab, searchTerm, sortOption, snapshotStatus, mediaStatus]);
+    }, [scanResults, activeGame, activeTab, searchTerm, statusFilter, sortOption, snapshotStatus, mediaStatus, mediaAvailability, allBackups]);
 
     const checkStatuses = useCallback(async (files) => {
         if (!files || !window.electronAPI) return;
@@ -683,14 +788,23 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         const mediaStatusMap = {};
         const snapshotStatusMap = {};
         const discoveryStatusMap = {};
+        const availabilityMap = {};
         for (const file of files) {
-            const [media, hasSnapshot, snapshot] = await Promise.all([
+            const [media, hasSnapshot, snapshot, availability] = await Promise.all([
                 window.electronAPI.getMediaStatus(file.path),
                 window.electronAPI.hasMediaSnapshot(file.path),
                 window.electronAPI.getMediaSnapshot(file.path),
+                window.electronAPI.getMediaAvailability?.(file.path),
             ]);
             mediaStatusMap[file.path] = media;
             snapshotStatusMap[file.path] = hasSnapshot;
+            // Older desktop bridges cannot check the library; assume the snapshot is stored.
+            availabilityMap[file.path] = availability || {
+                assetCount: snapshot?.assets?.length || 0,
+                storedCount: snapshot?.assets?.length || 0,
+                mediaSetId: snapshot?.mediaSetId || null,
+                gameId: snapshot?.gameId || null,
+            };
             if (snapshot?.discovery) {
                 discoveryStatusMap[file.path] = {
                     success: true,
@@ -704,6 +818,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         }
         setMediaStatus(mediaStatusMap);
         setSnapshotStatus(snapshotStatusMap);
+        setMediaAvailability(availabilityMap);
         setMediaDiscoveryStatus(discoveryStatusMap);
         setStatusLoading(false);
     }, []);
@@ -721,6 +836,9 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         try {
             const result = await synchronizeMedia(file);
             if (!result.success) alert(`Automatic media detection failed: ${result.message}`);
+            else if (result.rejected?.length > 0) {
+                alert(`These media files were skipped because they could not be verified:\n${result.rejected.map(item => `• ${item.logicalName}: ${item.reason}`).join('\n')}`);
+            }
             setSnapshotModalState({ isOpen: true, file, gameName: activeGame });
         } catch (error) {
             alert(`Automatic media detection failed: ${error.message}`);
@@ -744,7 +862,9 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
                 alert(message);
                 return;
             }
-            setMediaBackupModalState({ isOpen: true, file });
+            // Missing files are acknowledged in the backup dialog ("Ignore missing media").
+            const missingMedia = [...(result.missing || []), ...(result.rejected || []).map(item => item.logicalName)];
+            setMediaBackupModalState({ isOpen: true, file, missingMedia });
         } catch (error) {
             alert(`Automatic media detection failed: ${error.message}`);
         } finally {
@@ -752,7 +872,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
         }
     };
 
-    const handleConfirmMediaBackup = async (note, isSigned) => {
+    const handleConfirmMediaBackup = async (note, isSigned, _includeMediaPackage, ignoreMissingMedia = false) => {
         const { file } = mediaBackupModalState;
         if (!file) return;
         setMediaBackupModalState({ isOpen: false, file: null });
@@ -771,7 +891,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
                     getAppCheckTokenIfAvailable(),
                 ]);
             } catch (error) {
-                alert("Could not get authentication token. Please try again.");
+                alert(`Could not get authentication token: ${error?.message || 'unknown error'}. Please try again.`);
                 setGlobalLoader({ isLoading: false, message: '' });
                 return;
             }
@@ -786,10 +906,11 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
                 isSigned,
                 idToken,
                 appCheckToken,
+                { ignoreMissingMedia },
             );
-            alert(result.message);
+            setBackupNotice(result?.success ? 'Backup created.' : (result?.message || 'The backup could not be created.'));
         } catch (error) {
-            alert(`An error occurred: ${error.message}`);
+            setBackupNotice(`An error occurred: ${error.message}`);
         } finally {
             setBackingUpMediaFile(null);
             setGlobalLoader({ isLoading: false, message: '' });
@@ -845,12 +966,22 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
 
     return (
         <div className="pc-workspace-surface flex flex-col h-full bg-gray-800">
-            {mediaBackupModalState.isOpen && <BackupNoteModal onConfirm={handleConfirmMediaBackup} onCancel={() => setMediaBackupModalState({ isOpen: false, file: null })} isOnline={!!user} />}
+            {backupNotice && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]" onClick={() => setBackupNotice(null)}>
+                    <div role="dialog" aria-modal="true" className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg text-center" onClick={e => e.stopPropagation()}>
+                        <p className="text-lg font-semibold">{backupNotice}</p>
+                        <div className="flex justify-center mt-6">
+                            <button onClick={() => setBackupNotice(null)} className="bg-blue-600 hover:bg-blue-700 font-bold py-2 px-6 rounded-lg">OK</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {mediaBackupModalState.isOpen && <BackupNoteModal onConfirm={handleConfirmMediaBackup} onCancel={() => setMediaBackupModalState({ isOpen: false, file: null })} isOnline={!!user} missingMedia={mediaBackupModalState.missingMedia || []} />}
             {snapshotModalState.isOpen && ( <MediaSnapshotModal file={snapshotModalState.file} gameName={snapshotModalState.gameName} onClose={() => setSnapshotModalState({ isOpen: false, file: null, gameName: null })} onSave={handleSaveSnapshot} /> )}
             {deleteMediaModalState.isOpen && <DeleteMediaModal file={deleteMediaModalState.file} onCancel={() => setDeleteMediaModalState({ isOpen: false, file: null })} onConfirm={handleDeletionModeSelected} />}
             {finalDeleteState.isOpen && <DeleteConfirmationModal item={finalDeleteState.file} title={`Confirm ${finalDeleteState.mode.charAt(0).toUpperCase() + finalDeleteState.mode.slice(1)} Delete`} warning={deleteWarning} onConfirm={handleConfirmMediaDelete} onCancel={() => setFinalDeleteState({ isOpen: false, file: null, mode: null })} />}
             <SubHeader {...subHeaderProps} />
-            <FilterControls searchTerm={searchTerm} setSearchTerm={setSearchTerm} sortOption={sortOption} setSortOption={setSortOption} sortOptions={SORT_OPTIONS} />
+            <FilterControls searchTerm={searchTerm} setSearchTerm={setSearchTerm} statusFilter={statusFilter} setStatusFilter={setStatusFilter} statusFilterOptions={MEDIA_STATUS_FILTER_OPTIONS} sortOption={sortOption} setSortOption={setSortOption} sortOptions={SORT_OPTIONS} />
             <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-gutter-stable">
                 {!selectedPath && !loading ? (
                     <div className="flex h-full items-center justify-center"><p className="text-gray-400">Please select the 'Frontier Developments' folder to begin.</p></div>
@@ -859,7 +990,7 @@ const MediaManager = ({ user, scanResults, loading, selectedPath, subHeaderProps
                 ) : (
                     <>
                         {statusLoading && <div className="text-center text-xs text-gray-400 mb-2">Checking statuses...</div>}
-                        <FileList files={processedFiles} viewMode="media" onManageMediaClick={handleManageMediaClick} onInstallMedia={handleInstall} onUninstallMedia={handleUninstall} onDeleteMediaClick={handleDeleteMediaClick} mediaStatus={mediaStatus} snapshotStatus={snapshotStatus} mediaDiscoveryStatus={mediaDiscoveryStatus} onBackupMediaClick={handleBackupMediaClick} backingUpMediaFile={backingUpMediaFile} allBackups={allBackups} />
+                        <FileList files={processedFiles} viewMode="media" onManageMediaClick={handleManageMediaClick} onInstallMedia={handleInstall} onUninstallMedia={handleUninstall} onDeleteMediaClick={handleDeleteMediaClick} mediaStatus={mediaStatus} snapshotStatus={snapshotStatus} mediaAvailability={mediaAvailability} mediaDiscoveryStatus={mediaDiscoveryStatus} onBackupMediaClick={handleBackupMediaClick} backingUpMediaFile={backingUpMediaFile} allBackups={allBackups} />
                     </>
                 )}
             </div>

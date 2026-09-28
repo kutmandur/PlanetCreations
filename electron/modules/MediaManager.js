@@ -3,6 +3,8 @@ const app = isMainThread ? require('electron').app : {getPath: name => workerDat
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { pipeline } = require('node:stream/promises');
+const { Transform } = require('node:stream');
 const { inspectFrontierFile } = require('./FrontierSaveParser');
 
 const {MEDIA_MANIFEST_FORMAT, MEDIA_MANIFEST_VERSION, AUDIO_EXTENSIONS, USER_MEDIA_EXTENSIONS, ALLOWED_MEDIA_EXTENSIONS, safeLogicalName, getTargetForFile, validatePortableManifest} = require('./MediaManifest');
@@ -27,28 +29,32 @@ function sha256File(filePath) {
     return sha256Buffer(fs.readFileSync(filePath));
 }
 
+const MEDIA_FAMILY_BY_EXTENSION = {
+    '.mp3': 'audio', '.ogg': 'audio',
+    '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.gif': 'image', '.webp': 'image',
+    '.mp4': 'video', '.mov': 'video', '.webm': 'video',
+};
+
+function detectMediaFamily(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null;
+    if (buffer.subarray(0, 3).toString('ascii') === 'ID3' ||
+        (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) return 'audio';
+    if (buffer.subarray(0, 4).toString('ascii') === 'OggS') return 'audio';
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image';
+    if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image';
+    if (['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) return 'image';
+    if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image';
+    if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return 'video';
+    if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'video';
+    return null;
+}
+
+// Players often save a PNG as .jpg and the games load it anyway, so the content
+// only has to belong to the same media family as the extension.
 function hasExpectedMediaSignature(fileName, buffer) {
-    const extension = path.extname(fileName).toLowerCase();
-    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return false;
-    if (extension === '.mp3') {
-        return buffer.subarray(0, 3).toString('ascii') === 'ID3' ||
-            (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0);
-    }
-    if (extension === '.ogg') return buffer.subarray(0, 4).toString('ascii') === 'OggS';
-    if (extension === '.jpg' || extension === '.jpeg') {
-        return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-    }
-    if (extension === '.png') return buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    if (extension === '.gif') return ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'));
-    if (extension === '.webp') {
-        return buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-            buffer.subarray(8, 12).toString('ascii') === 'WEBP';
-    }
-    if (extension === '.mp4' || extension === '.mov') {
-        return buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
-    }
-    if (extension === '.webm') return buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    return false;
+    const expectedFamily = MEDIA_FAMILY_BY_EXTENSION[path.extname(fileName).toLowerCase()];
+    return Boolean(expectedFamily) && detectMediaFamily(buffer) === expectedFamily;
 }
 
 function getGameIdFromPath(savePath) {
@@ -121,6 +127,58 @@ function storeAssetBuffer(asset, buffer) {
     return objectPath;
 }
 
+// Streams one asset out of a *.PlanetCreationsMedia package into the library.
+// Size, SHA-256 and file signature are checked before the object is published.
+async function storeAssetFromPackage(asset, packagePath, offset) {
+    validatePortableManifest({
+        format: MEDIA_MANIFEST_FORMAT,
+        formatVersion: MEDIA_MANIFEST_VERSION,
+        mediaSetId: crypto.randomUUID(),
+        assets: [asset],
+    });
+    if (!Number.isSafeInteger(offset) || offset < 0 || asset.size < 1) {
+        throw new Error(`Media integrity check failed for ${asset.logicalName}.`);
+    }
+    initializeDirectories();
+    const objectPath = getObjectPath(asset);
+    if (fs.existsSync(objectPath) && fs.statSync(objectPath).size === asset.size &&
+        await sha256FileStream(objectPath) === asset.sha256) {
+        return objectPath;
+    }
+    const temporaryPath = `${objectPath}.${crypto.randomUUID()}.tmp`;
+    const hash = crypto.createHash('sha256');
+    let header = Buffer.alloc(0);
+    let copied = 0;
+    try {
+        await pipeline(
+            fs.createReadStream(packagePath, { start: offset, end: offset + asset.size - 1 }),
+            new Transform({
+                transform(chunk, _encoding, callback) {
+                    copied += chunk.length;
+                    hash.update(chunk);
+                    if (header.length < 16) header = Buffer.concat([header, chunk.subarray(0, 16 - header.length)]);
+                    callback(null, chunk);
+                },
+            }),
+            fs.createWriteStream(temporaryPath, { flags: 'wx' }),
+        );
+        if (copied !== asset.size || hash.digest('hex') !== asset.sha256 ||
+            !hasExpectedMediaSignature(asset.logicalName, header)) {
+            throw new Error(`Media integrity check failed for ${asset.logicalName}.`);
+        }
+        fs.renameSync(temporaryPath, objectPath);
+        return objectPath;
+    } finally {
+        if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    }
+}
+
+async function sha256FileStream(filePath) {
+    const hash = crypto.createHash('sha256');
+    for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+    return hash.digest('hex');
+}
+
 function normalizeLegacySnapshot(snapshot, savePath) {
     if (!snapshot || !Array.isArray(snapshot.files)) return null;
     initializeDirectories();
@@ -174,62 +232,66 @@ function getSnapshot(saveOrBlueprintPath) {
 
 function createOrUpdateSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {}) {
     try {
-        initializeDirectories();
-        const current = getSnapshot(saveOrBlueprintPath);
-        const assets = [];
-        const seen = new Set();
-        if (options.preserveExistingAssets) {
-            for (const asset of current?.assets || []) {
-                if (options.preserveAssetNames && !options.preserveAssetNames.has(asset.logicalName.toLowerCase())) continue;
-                assets.push({
-                    logicalName: asset.logicalName,
-                    sha256: asset.sha256,
-                    size: asset.size,
-                    target: asset.target,
-                });
-                seen.add(asset.logicalName.toLowerCase());
-            }
-        }
-        for (const mediaPath of mediaFilePaths || []) {
-            if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
-                throw new Error(`Media file not found: ${path.basename(mediaPath)}`);
-            }
-            const logicalName = path.basename(mediaPath);
-            const lowerName = logicalName.toLowerCase();
-            if (!safeLogicalName(logicalName) || seen.has(lowerName)) {
-                throw new Error(`Duplicate or invalid media target name: ${logicalName}`);
-            }
-            getTargetForFile(logicalName);
-            const buffer = fs.readFileSync(mediaPath);
-            if (!hasExpectedMediaSignature(logicalName, buffer)) {
-                throw new Error(`The file content does not match its media extension: ${logicalName}`);
-            }
-            const asset = {
-                logicalName,
-                sha256: sha256Buffer(buffer),
-                size: buffer.length,
-                target: getTargetForFile(logicalName),
-            };
-            storeAssetBuffer(asset, buffer);
-            assets.push(asset);
-            seen.add(lowerName);
-        }
-        const manifest = {
-            format: MEDIA_MANIFEST_FORMAT,
-            formatVersion: MEDIA_MANIFEST_VERSION,
-            mediaSetId: current?.mediaSetId || crypto.randomUUID(),
-            gameId: options.gameId || current?.gameId || getGameIdFromPath(saveOrBlueprintPath),
-            localSavePath: saveOrBlueprintPath,
-            assets,
-            associationMode: options.associationMode || 'manual',
-            ...(options.discovery ? { discovery: options.discovery } : {}),
-        };
-        writeJsonAtomic(getManifestPath(saveOrBlueprintPath), manifest);
+        writeSnapshot(saveOrBlueprintPath, mediaFilePaths, options);
         return true;
     } catch (error) {
         console.error('Failed to create media manifest:', error);
         return false;
     }
+}
+
+function writeSnapshot(saveOrBlueprintPath, mediaFilePaths, options = {}) {
+    initializeDirectories();
+    const current = getSnapshot(saveOrBlueprintPath);
+    const assets = [];
+    const seen = new Set();
+    if (options.preserveExistingAssets) {
+        for (const asset of current?.assets || []) {
+            if (options.preserveAssetNames && !options.preserveAssetNames.has(asset.logicalName.toLowerCase())) continue;
+            assets.push({
+                logicalName: asset.logicalName,
+                sha256: asset.sha256,
+                size: asset.size,
+                target: asset.target,
+            });
+            seen.add(asset.logicalName.toLowerCase());
+        }
+    }
+    for (const mediaPath of mediaFilePaths || []) {
+        if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
+            throw new Error(`Media file not found: ${path.basename(mediaPath)}`);
+        }
+        const logicalName = path.basename(mediaPath);
+        const lowerName = logicalName.toLowerCase();
+        if (!safeLogicalName(logicalName) || seen.has(lowerName)) {
+            throw new Error(`Duplicate or invalid media target name: ${logicalName}`);
+        }
+        getTargetForFile(logicalName);
+        const buffer = fs.readFileSync(mediaPath);
+        if (!hasExpectedMediaSignature(logicalName, buffer)) {
+            throw new Error(`The file content does not match its media extension: ${logicalName}`);
+        }
+        const asset = {
+            logicalName,
+            sha256: sha256Buffer(buffer),
+            size: buffer.length,
+            target: getTargetForFile(logicalName),
+        };
+        storeAssetBuffer(asset, buffer);
+        assets.push(asset);
+        seen.add(lowerName);
+    }
+    const manifest = {
+        format: MEDIA_MANIFEST_FORMAT,
+        formatVersion: MEDIA_MANIFEST_VERSION,
+        mediaSetId: current?.mediaSetId || crypto.randomUUID(),
+        gameId: options.gameId || current?.gameId || getGameIdFromPath(saveOrBlueprintPath),
+        localSavePath: saveOrBlueprintPath,
+        assets,
+        associationMode: options.associationMode || 'manual',
+        ...(options.discovery ? { discovery: options.discovery } : {}),
+    };
+    writeJsonAtomic(getManifestPath(saveOrBlueprintPath), manifest);
 }
 
 function createPortableManifest(saveOrBlueprintPath, fallbackMediaSetId = crypto.randomUUID()) {
@@ -258,6 +320,28 @@ function savePortableManifestForCreation(saveOrBlueprintPath, portableManifest) 
 
 function hasMediaSnapshot(saveOrBlueprintPath) {
     return Boolean(getSnapshot(saveOrBlueprintPath)?.assets?.length);
+}
+
+// Cheap availability check for list views: size only. installMedia still
+// verifies each SHA-256 before copying anything into the game folders.
+function getMediaAvailability(saveOrBlueprintPath) {
+    const snapshot = getSnapshot(saveOrBlueprintPath);
+    const assets = snapshot?.assets || [];
+    let storedCount = 0;
+    for (const asset of assets) {
+        try {
+            const objectPath = getObjectPath(asset);
+            if (fs.existsSync(objectPath) && fs.statSync(objectPath).size === asset.size) storedCount += 1;
+        } catch {
+            // Invalid entries count as unavailable.
+        }
+    }
+    return {
+        assetCount: assets.length,
+        storedCount,
+        mediaSetId: snapshot?.mediaSetId || null,
+        gameId: snapshot?.gameId || null,
+    };
 }
 
 function readActiveManifest() {
@@ -326,7 +410,25 @@ function automaticSnapshotResult(status, snapshot, discovery = null) {
         assetCount: snapshot?.assets?.length || 0,
         referenceCount: discovery?.references?.length ?? snapshot?.discovery?.references?.length ?? null,
         missing: discovery?.missing || snapshot?.discovery?.missing || [],
+        rejected: discovery?.rejected || snapshot?.discovery?.rejected || [],
     };
+}
+
+function getMediaFileRejection(item) {
+    let descriptor = null;
+    try {
+        descriptor = fs.openSync(item.path, 'r');
+        const header = Buffer.alloc(16);
+        const bytesRead = fs.readSync(descriptor, header, 0, header.length, 0);
+        if (!hasExpectedMediaSignature(item.logicalName, header.subarray(0, bytesRead))) {
+            return 'The file content is not a supported format for its extension.';
+        }
+        return null;
+    } catch (error) {
+        return `The file could not be read: ${error.message}`;
+    } finally {
+        if (descriptor !== null) fs.closeSync(descriptor);
+    }
 }
 
 function sameStringList(left = [], right = []) {
@@ -365,26 +467,37 @@ function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = nu
         const preserveAssetNames = new Set(preservedAssets.map(asset => asset.logicalName.toLowerCase()));
         const mediaFilePaths = [];
         const selectedNames = new Set(preserveAssetNames);
+        const rejected = [];
         let supplementedAssetCount = 0;
         for (const item of discovery.found) {
             const logicalName = item.logicalName.toLowerCase();
             if (selectedNames.has(logicalName)) continue;
+            // One unreadable or mislabelled file must not block the rest of the set.
+            const reason = getMediaFileRejection(item);
+            if (reason) {
+                rejected.push({ logicalName: item.logicalName, reason });
+                continue;
+            }
             mediaFilePaths.push(item.path);
             selectedNames.add(logicalName);
             supplementedAssetCount += 1;
         }
+        const rejectedNames = new Set(rejected.map(item => item.logicalName.toLowerCase()));
         const effectiveDiscovery = {
             ...discovery,
-            missing: discovery.missing.filter(fileName => !selectedNames.has(fileName.toLowerCase())),
+            missing: discovery.missing.filter(fileName =>
+                !selectedNames.has(fileName.toLowerCase()) && !rejectedNames.has(fileName.toLowerCase())),
+            rejected,
         };
         const discoveryRecord = {
             sourceSize: discovery.source.size,
             sourceModifiedAtMs: discovery.source.modifiedAtMs,
             references: discovery.references,
             missing: effectiveDiscovery.missing,
+            rejected,
             detectedAt: new Date().toISOString(),
         };
-        if (!createOrUpdateSnapshot(
+        writeSnapshot(
             saveOrBlueprintPath,
             mediaFilePaths,
             {
@@ -394,20 +507,20 @@ function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = nu
                 preserveExistingAssets: preservedAssets.length > 0,
                 preserveAssetNames,
             },
-        )) {
-            return { success: false, status: 'error', message: 'Referenced media failed its integrity checks.' };
-        }
+        );
         const updated = getSnapshot(saveOrBlueprintPath);
         const unchanged = saveSourceUnchanged && (!preserveExistingAssets || supplementedAssetCount === 0) &&
             sameMediaAssets(existing?.assets, updated?.assets) &&
             sameStringList(existing?.discovery?.references, discovery.references) &&
-            sameStringList(existing?.discovery?.missing, effectiveDiscovery.missing);
+            sameStringList(existing?.discovery?.missing, effectiveDiscovery.missing) &&
+            sameStringList((existing?.discovery?.rejected || []).map(item => item.logicalName),
+                rejected.map(item => item.logicalName));
         const status = unchanged ? 'unchanged' :
             (preserveExistingAssets && supplementedAssetCount > 0 ? 'supplemented' : 'synchronized');
         return automaticSnapshotResult(status, updated, effectiveDiscovery);
     } catch (error) {
         console.error('[MediaManager] Failed to detect referenced media:', error);
-        return { success: false, status: 'error', message: error.message, assetCount: 0, referenceCount: null, missing: [] };
+        return { success: false, status: 'error', message: error.message, assetCount: 0, referenceCount: null, missing: [], rejected: [] };
     }
 }
 
@@ -623,9 +736,11 @@ module.exports = {
     discoverCreationMedia,
     syncAutomaticMediaSnapshot,
     hasMediaSnapshot,
+    getMediaAvailability,
     deleteCreationMedia,
     getObjectPath,
     storeAssetBuffer,
+    storeAssetFromPackage,
     findManifestPathsByMediaSetId,
     validatePortableManifest,
 };

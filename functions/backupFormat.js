@@ -8,7 +8,6 @@ const FORMAT_VERSION = 2;
 const MAX_BACKUP_SIZE_BYTES = 300 * 1024 * 1024;
 const MAX_METADATA_SIZE_BYTES = 64 * 1024;
 const MAX_MANIFEST_SIZE_BYTES = 1024 * 1024;
-const MAX_MEDIA_TOTAL_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AUDIO_EXTENSIONS = new Set([".mp3", ".ogg"]);
@@ -127,8 +126,8 @@ function validateUnsignedMediaMetadata(metadata, allowedExtensions) {
     }
     if (!SHA256_PATTERN.test(metadata.mediaManifestSha256 || "") ||
         !Number.isSafeInteger(metadata.assetCount) || metadata.assetCount < 1 || metadata.assetCount > 5000 ||
-        !Number.isSafeInteger(metadata.assetsTotalSize) || metadata.assetsTotalSize < 1 ||
-        metadata.assetsTotalSize > MAX_MEDIA_TOTAL_SIZE_BYTES) {
+        // Custom Media packages stay local (never uploaded), so their total size is unlimited.
+        !Number.isSafeInteger(metadata.assetsTotalSize) || metadata.assetsTotalSize < 1) {
         throw new Error("The media package integrity metadata is invalid.");
     }
     if (typeof metadata.gameId !== "string" || metadata.gameId.length < 1 || metadata.gameId.length > 80 ||

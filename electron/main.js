@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const mime = require('mime-types');
 const AdmZip = require('adm-zip');
 const log = require('electron-log');
+const { hasMediaPackageMagic } = require('./modules/MediaPackageFormat');
 
 const {
     indexGamesFromPath,
@@ -44,7 +45,7 @@ const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { normalizeOverlayShortcuts, applyOverlayShortcuts } = require('./modules/OverlayShortcuts');
 const { shouldShowOverlay } = require('./modules/OverlayVisibility');
 const { createBackup, listAllBackups, restoreBackup, installMediaWithBackupRecovery, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
-const { createOrUpdateSnapshot, getSnapshot, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
+const { createOrUpdateSnapshot, getSnapshot, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, getMediaAvailability, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
 const distributionInfo = getDistributionInfo();
 const isStoreBuild = distributionInfo.isStore;
@@ -235,7 +236,9 @@ function configureSessionSecurity() {
         session.defaultSession.setUserAgent(browserCompatibleUserAgent);
     }
 
-    const allowedPermissions = new Set(['notifications']);
+    // clipboard-sanitized-write erlaubt navigator.clipboard.writeText (Copy-Link-Buttons).
+    // Lesen aus der Zwischenablage bleibt gesperrt.
+    const allowedPermissions = new Set(['notifications', 'clipboard-sanitized-write']);
     const isAllowedPermission = (webContents, permission, requestingOrigin) => {
         if (!allowedPermissions.has(permission)) return false;
         const sourceUrl = requestingOrigin || webContents?.getURL?.() || '';
@@ -1343,12 +1346,18 @@ async function importBackupFromFile(filePath, overrideCategory = null) {
             return { success: false, status: verificationResult.status, message: verificationResult.error || 'This package could not be securely verified and cannot be imported.' };
         }
         
-        const zip = new AdmZip(filePath);
-        const metaEntry = zip.getEntry('metadata.json');
-        if (!metaEntry) return { success: false, status: 'error', message: 'Invalid backup file: metadata.json is missing.' };
-        
-        const metadata = JSON.parse(metaEntry.getData().toString('utf8'));
-        
+        let metadata;
+        if (hasMediaPackageMagic(filePath)) {
+            // Custom Media container (*.PlanetCreationsMedia): metadata sits in its header.
+            metadata = verificationResult.metadata;
+        } else {
+            const zip = new AdmZip(filePath);
+            const metaEntry = zip.getEntry('metadata.json');
+            if (!metaEntry) return { success: false, status: 'error', message: 'Invalid backup file: metadata.json is missing.' };
+
+            metadata = JSON.parse(metaEntry.getData().toString('utf8'));
+        }
+
         let category;
 
         if (overrideCategory) {
@@ -1461,7 +1470,7 @@ async function handleUrlImport(urlToHandle) {
 
 // --- LOGIK FÜR AUTO-IMPORT BEI DOPPELKLICK / PROTOKOLL ---
 function isPlanetCreationsFileArgument(argument) {
-    return typeof argument === 'string' && argument.toLowerCase().endsWith('.planetcreations');
+    return typeof argument === 'string' && /\.planetcreations(media)?$/i.test(argument);
 }
 
 // Development-only escape hatch for an isolated overlay preview while the installed
@@ -2253,7 +2262,7 @@ ipcMain.handle('load-external-backup', async (event) => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
         title: 'Select Backup File',
         defaultPath: app.getPath('downloads'),
-        filters: [{ name: 'PlanetCreations Backup', extensions: ['PlanetCreations'] }],
+        filters: [{ name: 'PlanetCreations Backup', extensions: ['PlanetCreations', 'PlanetCreationsMedia'] }],
         properties: ['openFile']
     });
     if (canceled || filePaths.length === 0) {
@@ -2491,9 +2500,11 @@ ipcMain.handle('has-media-snapshot', (event, filePath) => {
     requireTrustedIpcSender(event, true);
     return hasMediaSnapshot(filePath);
 });
-ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken) => {
+ipcMain.handle('backup-creation-media', (event, filePath, note, isSigned, idToken, appCheckToken, options) => {
     requireTrustedIpcSender(event, true);
-    return backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken);
+    return backupCreationMedia(app, filePath, note, isSigned, idToken, appCheckToken, {
+        ignoreMissingMedia: options?.ignoreMissingMedia === true,
+    });
 });
 ipcMain.handle('delete-creation-media', (event, filePath, mode) => {
     requireTrustedIpcSender(event, true);
@@ -2641,6 +2652,10 @@ ipcMain.handle('uninstall-media', (event, savePath) => {
 ipcMain.handle('get-media-status', (event, savePath) => {
     requireTrustedIpcSender(event, true);
     return getMediaSetStatus(savePath);
+});
+ipcMain.handle('get-media-availability', (event, savePath) => {
+    requireTrustedIpcSender(event, true);
+    return getMediaAvailability(savePath);
 });
 
 app.whenReady().then(() => {

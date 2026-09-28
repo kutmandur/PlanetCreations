@@ -4,7 +4,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 const {readFileBoundedSync} = require('./BoundedFile');
-const {inspectCreationPackage, inspectMediaPackage, sha256, MAX_BACKUP_SIZE_BYTES} = require('./BackupFormat');
+const {inspectCreationPackage, inspectMediaPackageFile, sha256, MAX_BACKUP_SIZE_BYTES} = require('./BackupFormat');
+const {hasMediaPackageMagic, readMediaPackageHeader, writeMediaPackage} = require('./MediaPackageFormat');
 async function run({operation, data}) {
     if (operation === 'hash') {
         const before = fs.statSync(data.path);
@@ -17,7 +18,7 @@ async function run({operation, data}) {
         return {size, sha256: hash.digest('hex')};
     }
     if (operation === 'inspect') {
-        const result = data.media ? inspectMediaPackage(data.path, data.extensions, data.publicKey) : inspectCreationPackage(data.path, data.extensions, data.publicKey);
+        const result = data.media ? inspectMediaPackageFile(data.path, data.extensions, data.publicKey) : inspectCreationPackage(data.path, data.extensions, data.publicKey);
         delete result.zip;
         return result;
     }
@@ -29,6 +30,7 @@ async function run({operation, data}) {
         return {payloadBuffer: entry.getData()};
     }
     if (operation === 'metadata') {
+        if (hasMediaPackageMagic(data.path)) return readMediaPackageHeader(data.path).metadata;
         const entry = new AdmZip(data.path).getEntry('metadata.json');
         if (!entry || entry.header.size > 65536) throw new Error('metadata.json is missing or too large.');
         return JSON.parse(entry.getData().toString('utf8'));
@@ -41,6 +43,12 @@ async function run({operation, data}) {
         return {sync, snapshot, manifest};
     }
     if (operation === 'list') return require('./BackupCatalog').listBackups(data.paths);
+    if (operation === 'mediaArchive') return writeMediaPackage(data);
+    if (operation === 'storeMediaAssets') {
+        const media = require('./MediaManager');
+        for (const entry of data.entries) await media.storeAssetFromPackage(entry.asset, data.packagePath, entry.offset);
+        return {stored: data.entries.length};
+    }
     if (operation === 'archive') {
         const zip = new AdmZip();
         if (data.sourcePath) {

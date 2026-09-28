@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import AnimatedPillTabs from '../ui/AnimatedPillTabs';
 import SharingQrCode from '../ui/SharingQrCode';
+import { OVERLAY_LOGO_SRC } from '../ui/GameOverlay';
 import Spinner from '../ui/Spinner';
 import VerifiedParkStats, { AreaSections, TypeSections } from '../ui/VerifiedParkStats';
 import {
@@ -308,7 +309,7 @@ const OverlayShowcasePage = ({ localClientId = '' }) => {
                                         onClick={() => selectCreation(creation)}
                                         className={`flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all ${active ? 'border-blue-500 bg-blue-50 shadow-sm ring-2 ring-blue-200 dark:bg-blue-950/60 dark:ring-blue-900' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'}`}
                                     >
-                                        <img src={creation.imageUrls?.[0] || 'logo.png'} alt="" className="h-12 w-16 shrink-0 rounded-lg object-cover" />
+                                        <img src={creation.imageUrls?.[0] || OVERLAY_LOGO_SRC} alt="" className="h-12 w-16 shrink-0 rounded-lg object-cover" />
                                         <span className="min-w-0">
                                             <span className="block truncate text-sm font-bold text-gray-900 dark:text-white">{creation.title}</span>
                                             <span className="block truncate text-xs text-gray-500 dark:text-gray-400">{creationKind(creation)} · {creation.username || 'Unknown creator'}</span>
