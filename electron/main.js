@@ -1903,7 +1903,15 @@ function flushOverlayDrag() {
         x: overlayDragState.bounds.x + Math.round(point.screenX - overlayDragState.pointerX),
         y: overlayDragState.bounds.y + Math.round(point.screenY - overlayDragState.pointerY),
     }, overlayDragState.workArea);
-    gameOverlayWindow.setPosition(next.x, next.y, false);
+    // setPosition() lets a frameless transparent window grow by rounding on scaled
+    // Windows displays (120 px -> 420 px after 300 tiny moves at 125 %). Only the
+    // wheel may resize, so every move re-applies the size captured at drag start.
+    gameOverlayWindow.setBounds({
+        x: next.x,
+        y: next.y,
+        width: overlayDragState.bounds.width,
+        height: overlayDragState.bounds.height,
+    }, false);
 }
 
 ipcMain.on('overlay-drag-move', (event, point) => {
@@ -1915,7 +1923,10 @@ ipcMain.on('overlay-drag-move', (event, point) => {
 ipcMain.on('overlay-drag-end', (event) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
     flushOverlayDrag();
-    const bounds = gameOverlayWindow.getBounds();
+    const current = gameOverlayWindow.getBounds();
+    // Persist the intended size, not a value rounded by the display scaling.
+    const bounds = overlayDragState ?
+        { ...current, width: overlayDragState.bounds.width, height: overlayDragState.bounds.height } : current;
     if (gameOverlayWindow.isResizable()) scheduleOverlaySettingsWrite({ panelBounds: bounds });
     else scheduleOverlaySettingsWrite({ x: bounds.x, y: bounds.y, size: bounds.width });
     flushPendingOverlaySettings();
