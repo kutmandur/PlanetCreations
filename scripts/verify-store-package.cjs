@@ -97,12 +97,13 @@ try {
     if (!mainSource.includes('requireOfflineManagerCapability: true')) {
         throw new Error('The packed Store client does not enforce hosted Offline Manager compatibility checks.');
     }
-    if (!preloadSource.includes('uploadPreparedBackup') || preloadSource.includes('uploadBackupFile:')) {
-        throw new Error('The packed hosted bridge does not enforce opaque prepared-upload handles.');
+    if (/prepareBackupForUpload|uploadPreparedBackup|uploadBackupFile:/.test(preloadSource) ||
+        /ipcMain\.handle\('(prepare-backup-for-upload|upload-prepared-backup)'/.test(mainSource)) {
+        throw new Error('The packed client still exposes the removed Creation upload API.');
     }
-    if (!mainSource.includes("callPlanetCreationsCallable('getUploadUrl'") ||
-        !mainSource.includes("ipcMain.handle('upload-prepared-backup'")) {
-        throw new Error('The packed client does not bind local uploads to the PlanetCreations backend.');
+    if (!preloadSource.includes('getSaveAnalysisSettings:') ||
+        !preloadSource.includes('createBackup:') || !preloadSource.includes('includeMedia = false')) {
+        throw new Error('The packed client is missing analysis controls or optional combined backups.');
     }
     if (!privacyPage.includes('info@planetcreations.net')) {
         throw new Error('The packed public privacy page is missing its contact address.');
@@ -110,7 +111,9 @@ try {
     if (!privacyPage.includes('at least 16 years old')) {
         throw new Error('The packed public privacy page is missing the minimum-age rule.');
     }
-    if (!privacyPage.includes('native upload confirmation') || !privacyPage.includes('limited desktop bridge')) {
+    if (!privacyPage.includes('limited desktop bridge') ||
+        !privacyPage.includes('Savefile analysis is disabled by default') ||
+        !privacyPage.includes('signing request does not send the savegame or media payload')) {
         throw new Error('The packed public privacy page does not disclose hosted desktop file access.');
     }
 } finally {
