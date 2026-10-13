@@ -81,9 +81,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     useEffect(() => {
         const clients = Object.entries(userProfile?.clients || {})
             .filter(([, client]) => client?.remoteInstall === true);
-        setSelectedClientId((current) =>
-            clients.some(([clientId]) => clientId === current) ? current : (clients[0]?.[0] || '')
-        );
         setSelectedQrClientId((current) =>
             clients.some(([clientId]) => clientId === current) ? current : (clients[0]?.[0] || '')
         );
