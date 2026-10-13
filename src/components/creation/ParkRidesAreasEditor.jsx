@@ -1,3 +1,6 @@
+import { PARK_INFO_FIELDS, RIDE_INFO_FIELDS, getParkInfo, PARK_TEXT_FIELDS, getParkText, getRideInfo } from '../../utils/parkInfo';
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useMemo, useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
@@ -118,7 +121,7 @@ const AttractionCategoryTabs = ({ value, onChange, lastRideCategory, lastVenueCa
     );
 };
 
-const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
+const ParkRidesAreasEditor = ({ park, metadata, value, onChange, color }) => {
     const presentation = useMemo(() => sanitizeParkRidePresentation(value), [value]);
     const rideEntries = useMemo(
         () => getPresentedParkRideEntries(park, presentation, { includeHidden: true }),
@@ -226,7 +229,7 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
     const updateRideEfn = (rideKey, metric, rawValue) => {
         const rideEfnOverrides = { ...presentation.rideEfnOverrides };
         const scores = { ...(rideEfnOverrides[rideKey] || {}) };
-        if (rawValue === '') delete scores[metric];
+        if (rawValue === '') scores[metric] = null;
         else {
             const value = Number(rawValue);
             if (!Number.isFinite(value) || value < 0 || value > 100) return;
@@ -248,21 +251,35 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
     return (
         <div className="space-y-7">
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
-                Savefile rides keep their original names and extracted stats. Your display names, visibility, custom attractions, areas and colors are presentation settings and never change the verified save metadata.
+                Park Info contains optional information entered by the creator. You can edit these values, attractions and areas. These details are not verified.
             </div>
 
+            <section className="space-y-4">
+                <h3 className="text-lg font-bold">Park Info</h3>
+                <p className="text-sm text-gray-500">Leave fields empty to hide them.</p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {PARK_TEXT_FIELDS.map(({key, label}) => <label key={key} className="text-sm">{label}
+                        <LimitedTextField maxLength={TEXT_LIMITS.parkMetadata} aria-label={label} value={getParkText(metadata, presentation)[key]}
+                            onChange={event => commit({...presentation, parkText: {...presentation.parkText, [key]: event.target.value}})} className="mt-1 w-full rounded-lg border p-2" />
+                    </label>)}
+                    {PARK_INFO_FIELDS.map(({key, label}) => <label key={key} className="text-sm">{label}
+                        <input type="number" step="any" aria-label={label} value={getParkInfo(metadata, presentation)[key] ?? ''}
+                            onChange={event => commit({...presentation, parkInfo: {...presentation.parkInfo, [key]: event.target.value === '' ? null : Number(event.target.value)}})}
+                            className="mt-1 w-full rounded-lg border p-2" />
+                    </label>)}
+                </div>
+            </section>
             <section className="space-y-4">
                 <div>
                     <h3 className="text-lg font-bold text-gray-900 dark:text-white">Areas</h3>
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Create park areas and choose the color used for their heading and outline.</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                    <input
+                    <LimitedTextField maxLength={TEXT_LIMITS.parkArea}
                         aria-label="New area name"
                         value={newAreaName}
                         onChange={event => setNewAreaName(event.target.value)}
                         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addArea(); } }}
-                        maxLength={60}
                         placeholder="e.g. Steampunk District"
                         className={`min-w-0 flex-1 rounded-xl border p-3 focus:ring-2 ${color.ring}`}
                     />
@@ -282,10 +299,9 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                                         onChange={event => updateArea(area.id, { color: normalizeAreaColor(event.target.value) })}
                                         className="h-10 w-10 flex-none cursor-pointer rounded-lg border-0 bg-transparent p-0"
                                     />
-                                    <input
+                                    <LimitedTextField maxLength={TEXT_LIMITS.parkArea}
                                         aria-label={`${area.name} name`}
                                         defaultValue={area.name}
-                                        maxLength={60}
                                         onBlur={event => {
                                             const name = event.target.value.trim();
                                             if (!name) event.target.value = area.name;
@@ -313,15 +329,14 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
             <section className="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
                 <div>
                     <h3 className="text-lg font-bold text-gray-900 dark:text-white">Attractions</h3>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Rename or hide savefile rides, assign them to an area or add an attraction that is not stored in the savefile metadata.</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Add, rename or hide attractions and assign them to an area.</p>
                 </div>
                 <div className="grid gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-                    <input
+                    <LimitedTextField maxLength={TEXT_LIMITS.parkRide}
                         aria-label="Attraction name"
                         value={newRideName}
                         onChange={event => setNewRideName(event.target.value)}
                         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addCustomRide(); } }}
-                        maxLength={100}
                         placeholder="Attraction name"
                         className={`min-w-0 rounded-xl border p-3 focus:ring-2 ${color.ring}`}
                     />
@@ -345,8 +360,6 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                 ) : (
                     <div className="space-y-2">
                         {visibleRideEntries.map(entry => {
-                            const hasGameRatings = ['excitement', 'fear', 'nausea']
-                                .some(metric => Number.isFinite(entry.ride?.ratings?.[metric]));
                             const isVenue = VENUE_CATEGORY_KEYS.has(entry.category.key);
                             return (
                             <article key={entry.key} className={`grid items-center gap-3 rounded-xl border p-3 transition-opacity sm:grid-cols-[auto_minmax(0,1fr)_10rem] ${entry.hidden ? 'bg-gray-50 opacity-55 dark:bg-gray-900' : 'bg-white dark:bg-gray-900'}`}>
@@ -354,10 +367,9 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                                     <Icon path={entry.hidden ? ICONS.eyeSlash : ICONS.eye} className="h-5 w-5" />
                                 </button>
                                 <div className="min-w-0">
-                                    <input
+                                    <LimitedTextField maxLength={TEXT_LIMITS.parkRide}
                                         aria-label={`Display name for ${entry.originalDisplayName}`}
                                         defaultValue={entry.displayName}
-                                        maxLength={100}
                                         onBlur={event => {
                                             const displayName = event.target.value.trim();
                                             if (!displayName) event.target.value = entry.originalDisplayName;
@@ -394,13 +406,16 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                                 </select>
                                 {!isVenue && (
                                     <div className="sm:col-span-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-950/50">
-                                        {hasGameRatings ? (
-                                            <p className="text-center text-xs font-semibold text-green-700 dark:text-green-300">Final EFN ratings are stored by the game and cannot be overridden.</p>
-                                        ) : (
-                                            <>
                                                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                                     <p className="text-xs font-bold text-gray-700 dark:text-gray-200">User-entered EFN</p>
-                                                    {entry.ride?.testStats?.testCurves?.average && <p className="text-[10px] text-gray-500">Calculated trace values are retained but hidden.</p>}
+
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2 mb-3">
+                                                    {RIDE_INFO_FIELDS.map(({key, label}) => <label key={key} className="text-xs">{label}
+                                                        <input type="number" step="any" aria-label={`${label} for ${entry.displayName}`} value={getRideInfo(entry.ride, entry.manualStats)[key] ?? ''}
+                                                            onChange={event => commit({...presentation, rideInfo: {...presentation.rideInfo, [entry.key]: {...presentation.rideInfo[entry.key], [key]: event.target.value === '' ? null : Number(event.target.value)}}})}
+                                                            className="mt-1 w-full rounded-lg border p-2" />
+                                                    </label>)}
                                                 </div>
                                                 <div className="grid grid-cols-3 gap-2">
                                                     {['excitement', 'fear', 'nausea'].map(metric => (
@@ -412,7 +427,7 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                                                                 min="0"
                                                                 max="100"
                                                                 step="0.01"
-                                                                value={entry.userEfn?.[metric] ?? ''}
+                                                                value={(entry.userEfn && metric in entry.userEfn ? entry.userEfn[metric] : entry.ride?.ratings?.[metric]) ?? ''}
                                                                 onChange={event => updateRideEfn(entry.key, metric, event.target.value)}
                                                                 placeholder="—"
                                                                 className="mt-1 w-full rounded-lg border px-2 py-1.5 text-center text-sm font-bold text-gray-900 dark:text-white"
@@ -420,8 +435,7 @@ const ParkRidesAreasEditor = ({ park, value, onChange, color }) => {
                                                         </label>
                                                     ))}
                                                 </div>
-                                            </>
-                                        )}
+
                                     </div>
                                 )}
                             </article>

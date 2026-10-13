@@ -1,3 +1,5 @@
+import LimitedTextField from '../../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../../utils/textLimits';
 import React, { useState } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../../firebase/config';
@@ -143,11 +145,10 @@ const MembershipSection = ({ community, setModalMessage }) => {
             ? 'Leave this blank to keep the existing password.'
             : 'Use at least 6 characters.'}
         >
-          <input
+          <LimitedTextField maxLength={TEXT_LIMITS.communityPassword} minLength={6}
             type="password"
             value={password}
-            minLength={6}
-            maxLength={128}
+
             autoComplete="new-password"
             onChange={(event) => {
               setPassword(event.target.value);

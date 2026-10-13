@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -357,7 +359,7 @@ const StreamManagement = ({
                             </label>
                             <label className="block text-sm font-semibold">
                                 Stream URL
-                                <input value={url} onChange={(event) => { setUrl(event.target.value); setPreview(null); }} type="url" className="mt-1 w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 p-2" placeholder={LIVE_PLATFORMS[platform].placeholder} />
+                                <LimitedTextField maxLength={TEXT_LIMITS.streamUrl} value={url} onChange={(event) => { setUrl(event.target.value); setPreview(null); }} type="url" className="mt-1 w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 p-2" placeholder={LIVE_PLATFORMS[platform].placeholder} />
                             </label>
                             <label className="flex items-start gap-3 rounded-xl border dark:border-gray-700 p-3">
                                 <input type="checkbox" checked={dualStream} onChange={(event) => setDualStream(event.target.checked)} className="mt-1 h-4 w-4" />
@@ -369,7 +371,7 @@ const StreamManagement = ({
                             {dualStream && (
                                 <label className="block text-sm font-semibold">
                                     {LIVE_PLATFORMS[secondaryPlatform].label} stream URL
-                                    <input value={secondaryUrl} onChange={(event) => setSecondaryUrl(event.target.value)} type="url" className="mt-1 w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 p-2" placeholder={LIVE_PLATFORMS[secondaryPlatform].placeholder} />
+                                    <LimitedTextField maxLength={TEXT_LIMITS.streamUrl} value={secondaryUrl} onChange={(event) => setSecondaryUrl(event.target.value)} type="url" className="mt-1 w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 p-2" placeholder={LIVE_PLATFORMS[secondaryPlatform].placeholder} />
                                 </label>
                             )}
                             <button type="button" disabled={working} onClick={() => analyze()} className="w-full rounded-lg bg-gray-200 dark:bg-gray-700 py-2 text-sm font-bold disabled:opacity-50">

@@ -1,3 +1,5 @@
+import LimitedTextField from '../../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../../utils/textLimits';
 import React, { useState } from 'react';
 import { db, auth } from '../../../firebase/config';
 import { doc, updateDoc, collection, getDocs, query, where, writeBatch } from 'firebase/firestore';
@@ -86,6 +88,9 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
   };
 
   const handleSave = () => {
+    const lengthError = textLengthError(name.trim(), TEXT_LIMITS.communityName, 'Community name', 3) ||
+      textLengthError(description, TEXT_LIMITS.communityDescription, 'Description');
+    if (lengthError) { setModalMessage(lengthError); return; }
     if (containsBlacklistedWord(name, blacklist) || containsBlacklistedWord(description, blacklist)) {
       setModalMessage('Community name or description contains a forbidden word.');
       return;
@@ -107,7 +112,7 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
   return (
     <SectionCard title="General" description="Your community's name and description.">
       <Field label={isAdmin ? 'Community Name (Editable by Admins)' : 'Community Name (Cannot be changed)'}>
-        <input
+        <LimitedTextField maxLength={TEXT_LIMITS.communityName} minLength={3}
           type="text"
           value={name}
           onChange={(e) => change(setName)(e.target.value)}
@@ -117,7 +122,7 @@ const GeneralSection = ({ community, userProfile, blacklist, setModalMessage, se
       </Field>
 
       <Field label="Description">
-        <textarea
+        <LimitedTextField maxLength={TEXT_LIMITS.communityDescription} as="textarea"
           value={description}
           onChange={(e) => change(setDescription)(e.target.value)}
           rows="4"

@@ -1,7 +1,6 @@
 import ContentReportButton from '../ui/ContentReportButton';
 import {useUserBlocks} from '../../contexts/BlockingContext';
 import UserBlockButton from '../ui/UserBlockButton';
-import {submitContentReport} from '../../firebase/contentReporting';
 import {getViewSessionToken} from '../../utils/viewSession';
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
@@ -21,13 +20,12 @@ import { recordView, recordVote } from '../../utils/interestTracker';
 import { LIVE_PLATFORMS, getActiveLiveStreams, isLiveStreamActive, readLiveSession, setLiveSession } from '../../utils/liveStream';
 import { readOverlayQr, setOverlayQr, subscribeOverlayQr, buildCreationShareUrl } from '../../utils/overlayQr';
 import { scheduleDataRefresh } from '../../utils/appRefresh';
-import { getVerifiedGameTags } from '../../utils/creationSavePrefill';
 import VerifiedParkStats from '../ui/VerifiedParkStats';
 import { buildCreationEditNavigationState } from '../../utils/creationNavigation';
 import { removeCreationFromCaches } from '../../utils/creationCache';
 import { buildCommunityPath } from '../../utils/communityRoutes';
 
-const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, setReportModal, creationIdOverride }) => {
+const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, setExternalLink, creationIdOverride }) => {
     const {isBlocked} = useUserBlocks();
     const { id: idFromUrl } = useParams();
     const id = creationIdOverride || idFromUrl;
@@ -45,11 +43,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [isFollowingCreation, setIsFollowingCreation] = useState(false);
     const [isTogglingCreationFollow, setIsTogglingCreationFollow] = useState(false);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
-    const [isStartingInstall, setIsStartingInstall] = useState(false);
-    const [selectedClientId, setSelectedClientId] = useState('');
-    const [metadataRepairStatus, setMetadataRepairStatus] = useState('idle');
-    const metadataRepairAttemptRef = useRef('');
-    const inGameTags = getVerifiedGameTags(creation);
 
     // Streamer Tools: Overlay-QR-Zustand (lokal + remote) und OBS-Status
     const [overlayQrEntry, setOverlayQrEntry] = useState(() => readOverlayQr());
@@ -107,38 +100,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const [reactionRevision, setReactionRevision] = useState(0);
     const navigate = useNavigate();
     const functions = getFunctions();
-
-    useEffect(() => {
-        const verified = creation?.verifiedGameMetadata;
-        const needsRideAnalysisBackfill = Boolean(
-            verified &&
-            verified.gameId === 'planet-coaster-2' &&
-            ['park', 'autosave'].includes(verified.fileKind) &&
-            !verified.rideAnalysis
-        );
-        const repairKey = creation?.backupObjectKey ?
-            `${id}:${creation.backupObjectKey}:${needsRideAnalysisBackfill ? 'ride-analysis-v1' : 'metadata'}` : '';
-        const shouldRepair = Boolean(
-            repairKey &&
-            !creation?.moderationWithheld &&
-            creation?.backupIsSigned === true &&
-            (!verified || needsRideAnalysisBackfill) &&
-            creation?.userId === user?.uid &&
-            metadataRepairAttemptRef.current !== repairKey
-        );
-        if (!shouldRepair) return;
-
-        metadataRepairAttemptRef.current = repairKey;
-        setMetadataRepairStatus('loading');
-        const refreshCreationGameMetadata = httpsCallable(functions, 'refreshCreationGameMetadata');
-        refreshCreationGameMetadata({ creationId: id })
-            .then(() => setMetadataRepairStatus('complete'))
-            .catch((error) => {
-                console.warn('Verified game metadata repair failed:', error);
-                setMetadataRepairStatus('error');
-            });
-    }, [creation?.backupIsSigned, creation?.backupObjectKey, creation?.userId,
-        creation?.verifiedGameMetadata, functions, id, user?.uid]);
 
     const formatDate = (timestamp) => {
         if (!timestamp) return 'N/A';
@@ -450,23 +411,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
         }
     };
 
-    const handleReport = () => {
-        if (!user) { setModalMessage("You must be logged in to report content."); return; }
-        setReportModal({
-            targetId: id,
-            targetType: 'creation',
-            targetTitle: creation.title,
-            onConfirm: async (reason, category, mediaUrl) => {
-                try {
-                    const result = await submitContentReport({targetType:'creation',targetId:id,...(mediaUrl?{mediaUrl}:{})}, reason, category);
-                    setModalMessage(result.duplicate ? 'This report is already in the moderation queue.' : 'Creation reported successfully. Our team will review it.');
-                } catch (error) {
-                    throw error;
-                }
-            }
-        });
-    };
-
     // Zeige Spinner nur wenn noch keine gecachte Creation vorhanden ist
     if(unavailable)return <p role="status" className="p-8 text-center">This creation is currently unavailable.</p>;
     if (loadingCreation && !creation) return <Spinner gameId={creation?.game} />;
@@ -550,41 +494,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
     const isElectron = window.electronAPI?.isElectron;
     const compatibleClients = Object.entries(userProfile?.clients || {})
         .filter(([, client]) => client?.remoteInstall === true);
-    const selectedClient = compatibleClients.find(([clientId]) => clientId === selectedClientId)?.[1];
-    const hasDownloadableBackup = Boolean(creation.backupObjectKey);
-    const canDirectInstall = Boolean(user && hasDownloadableBackup && (isElectron || compatibleClients.length > 0));
-
-    const handleDirectInstall = async () => {
-        if (!user || isStartingInstall) return;
-        setIsStartingInstall(true);
-        try {
-            if (isElectron) {
-                const getBackupDownloadUrl = httpsCallable(functions, 'getBackupDownloadUrl');
-                const response = await getBackupDownloadUrl({ creationId: id });
-                const installResult = await window.electronAPI.installQueuedCreation({
-                    creationId: id,
-                    downloadUrl: response.data.downloadUrl,
-                    title: creation.title,
-                    previewUrl: creation.imageUrls?.[0] || '',
-                });
-                if (!installResult?.success) throw new Error(installResult?.message || 'The creation could not be installed.');
-                setModalMessage(`Successfully installed '${installResult.installedFileName}'.`);
-            } else {
-                if (!selectedClientId) throw new Error('No compatible desktop client is registered.');
-                const enqueueClientInstall = httpsCallable(functions, 'enqueueClientInstall');
-                const response = await enqueueClientInstall({ creationId: id, clientId: selectedClientId });
-                setModalMessage(response.data?.duplicate ?
-                    `This creation is already queued for ${selectedClient?.displayName || 'the selected client'}.` :
-                    `Direct install queued for ${selectedClient?.displayName || 'the selected client'}.`);
-            }
-        } catch (error) {
-            console.error('Could not start direct install:', error);
-            setModalMessage(`Direct install could not be started: ${error.message}`);
-        } finally {
-            setIsStartingInstall(false);
-        }
-    };
-
     // --- Streamer Tools (Owner) + Live-Anzeige (alle Besucher) ---
     const livePlatformLabel = activeLiveStreams
         .map((stream) => LIVE_PLATFORMS[stream.platform]?.label)
@@ -665,7 +574,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                 <div className="flex items-center space-x-2">
                     <button onClick={handleShare} title="Share Creation" className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"><Icon path={ICONS.share} className="w-6 h-6" /></button>
                     {user && (<button onClick={handleFollowCreation} disabled={isTogglingCreationFollow} title={isFollowingCreation ? "Following this creation — you'll be notified of updates" : "Follow this creation to get notified of updates"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:opacity-50 ${isFollowingCreation ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.bell} className="w-6 h-6" solid={isFollowingCreation} /></button>)}
-                    {user && user.uid !== creation.userId && (<button onClick={handleFollow} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={ICONS.userAdd} className="w-6 h-6" solid={isFollowing} /></button>)}
+                    {user && user.uid !== creation.userId && (<button onClick={handleFollow} aria-label={isFollowing ? "Unfollow Creator" : "Follow Creator"} aria-pressed={isFollowing} title={isFollowing ? "Unfollow Creator" : "Follow Creator"} className={`flex items-center justify-center w-10 h-10 rounded-full transition-colors ${isFollowing ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}><Icon path={isFollowing ? ICONS.userCheck : ICONS.userPlus} className="w-6 h-6" /></button>)}
                     {canEdit && (<Link to={`/creation/${id}/edit`} state={buildCreationEditNavigationState(id)} className="flex items-center justify-center w-10 h-10 bg-yellow-500 hover:bg-yellow-600 text-white rounded-full transition-colors"><Icon path={ICONS.edit} className="w-5 h-5" solid/></Link>)}
                     {canDelete && (<button onClick={handleDelete} className="flex items-center justify-center w-10 h-10 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"><Icon path={ICONS.trash} className="w-5 h-5" solid/></button>)}
                 </div>
@@ -738,13 +647,6 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         creationId={creation.id || id}
                         rideAnalysisSummary={creation.verifiedGameMetadata?.rideAnalysis}
                     />
-                    {metadataRepairStatus === 'loading' && !creation.verifiedGameMetadata && (
-                        <p className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">Reading verified stats from the attached savefile…</p>
-                    )}
-                    {metadataRepairStatus === 'error' && !creation.verifiedGameMetadata && (
-                        <p className="mt-3 text-center text-sm text-red-600 dark:text-red-400">The attached savefile metadata could not be prepared.</p>
-                    )}
-
                     {showcaseVideos.length > 0 && (
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
                             <h3 className="text-2xl font-bold mb-4 text-center">Showcase</h3>
@@ -849,8 +751,14 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                             <div className="flex items-center justify-between"><span className="font-bold">Views:</span><span className="flex items-center space-x-1"><Icon path={ICONS.eye} className="w-5 h-5 text-gray-400"/><span className="font-bold">{creation.views || 0}</span></span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Created:</span><span>{formatDate(creation.createdAt)}</span></div>
                             <div className="flex items-center justify-between"><span className="font-bold">Updated:</span><span>{formatDate(creation.updatedAt)}</span></div>
-                            {activeMedia && activeMedia.type !== 'live' && <ContentReportButton target={{targetType:'creation',targetId:id,mediaUrl:activeMedia.url,mediaType:activeMedia.type}} label="Report selected media" />}
-                            <button onClick={handleReport}  className="w-full flex items-center justify-center space-x-2 text-gray-500 hover:text-red-500 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors pt-4 border-t mt-4"><Icon path={ICONS.flag} className="w-5 h-5"/><span>Report Creation</span></button>
+                            <div className="flex justify-center pt-4 border-t mt-4">
+                                <ContentReportButton
+                                    target={{targetType: 'creation', targetId: id,
+                                        ...(activeMedia && activeMedia.type !== 'live'
+                                            ? {mediaUrl: activeMedia.url, mediaType: activeMedia.type} : {})}}
+                                    label="Report Creation"
+                                />
+                            </div>
                         </div>
                         
                         <div className="mt-6 pt-6 border-t space-y-4">
@@ -861,28 +769,7 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                                 </div>
                             )}
 
-                            {canDirectInstall && (
-                                <div>
-                                    <p className="text-sm font-bold text-gray-600 dark:text-gray-300 mb-1 text-center">Direct Install</p>
-                                    {!isElectron && compatibleClients.length > 1 && (
-                                        <select
-                                            value={selectedClientId}
-                                            onChange={(event) => setSelectedClientId(event.target.value)}
-                                            className="w-full mb-2 p-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100"
-                                            aria-label="Direct install target"
-                                        >
-                                            {compatibleClients.map(([clientId, client]) => (
-                                                <option key={clientId} value={clientId}>{client.displayName || 'Windows PC'}</option>
-                                            ))}
-                                        </select>
-                                    )}
-                                    <button type="button" onClick={handleDirectInstall} disabled={isStartingInstall} className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-white transition-colors disabled:opacity-60 ${color.bg} ${color.hoverBg}`}>
-                                        <Icon path={ICONS.download} className="w-5 h-5" />
-                                        {isStartingInstall ? 'Preparing Direct Install...' :
-                                            (isElectron ? 'Direct Install' : `Direct Install on ${selectedClient?.displayName || 'Client'}`)}
-                                    </button>
-                                </div>
-                            )}
+
                         </div>
                         
                         {creation.customMediaLink && (
@@ -1012,18 +899,9 @@ const CreationDetail = ({ user, userProfile, setModalMessage, setConfirmation, s
                         )}
                         <div className="mt-6 space-y-4 border-t pt-6">
                             <div>
-                                <p className="mb-2 text-center text-sm font-bold text-gray-600 dark:text-gray-300">User tags</p>
+                                <p className="mb-2 text-center text-sm font-bold text-gray-600 dark:text-gray-300">Tags</p>
                                 <div className="flex flex-wrap gap-2">{creation.tags?.map(tag => (<button key={tag} onClick={() => navigate(`/?game=${creation.game}&tag=${encodeURIComponent(tag)}`)} className="cursor-pointer rounded-full bg-gray-200 px-2.5 py-1 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">{tag}</button>))}</div>
                             </div>
-                            {inGameTags.length > 0 && (
-                                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-                                    <div className="flex items-center justify-center gap-2">
-                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100">Verified in-game tags</p>
-                                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900 dark:text-blue-200">Game file</span>
-                                    </div>
-                                    <div className="mt-3 flex flex-wrap justify-center gap-2">{inGameTags.map(tag => <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-sm font-medium text-blue-800 shadow-sm dark:bg-gray-900 dark:text-blue-200">{tag}</span>)}</div>
-                                </div>
-                            )}
                         </div>
                     </div>
                     {loadingCommunities ? (

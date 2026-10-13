@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -193,7 +195,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
                 </div>
 
                 <label className="block text-sm font-bold text-gray-600 dark:text-gray-300 mb-1">Stream URL</label>
-                <input
+                <LimitedTextField maxLength={TEXT_LIMITS.streamUrl}
                     type="url"
                     value={url}
                     onChange={(e) => { setUrl(e.target.value); setUrlDirty(true); setUrlError(''); }}
@@ -218,7 +220,7 @@ const GoLiveModal = ({ user, userProfile, isElectron, obsService, initialCreatio
                 {dualStream && (
                     <label className="block text-sm font-bold text-gray-600 dark:text-gray-300 mt-4">
                         {LIVE_PLATFORMS[secondaryPlatform].label} stream URL
-                        <input
+                        <LimitedTextField maxLength={TEXT_LIMITS.streamUrl}
                             type="url"
                             value={secondaryUrl}
                             onChange={(e) => { setSecondaryUrl(e.target.value); setSecondaryUrlDirty(true); setUrlError(''); }}

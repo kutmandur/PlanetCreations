@@ -2,7 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const baseBuild = require('./package.json').build;
+const baseBuild = { ...require('./package.json').build, ...require('./electron-builder.paths.cjs') };
+const workspacePaths = require('./scripts/workspace-paths.cjs');
 
 const storeValue = (name, fallback) => {
     const value = String(process.env[name] || fallback).trim();
@@ -19,11 +20,12 @@ const electronDist = fs.existsSync(electronExecutable) ? installedElectronDist :
 
 module.exports = {
     ...baseBuild,
+    extends: null,
     ...(electronDist ? { electronDist } : {}),
     publish: null,
     directories: {
         ...baseBuild.directories,
-        output: 'dist/store',
+        output: path.join(workspacePaths.dist, 'store'),
     },
     protocols: baseBuild.protocols,
     win: {

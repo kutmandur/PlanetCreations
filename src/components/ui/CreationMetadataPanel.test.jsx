@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import CreationMetadataPanel, { formatGameMoney } from './CreationMetadataPanel';
 
 test('renders normalized blueprint costs, counts and ride ratings', () => {
@@ -151,9 +151,9 @@ test('keeps calculated EFN hidden while showing conservative stored test-trace f
     expect(screen.queryByText('Final ride rating')).not.toBeInTheDocument();
 });
 
-test('offers the Workshop-style Nerd mode for a tested local park', () => {
+test('offers Nerd mode only after local analysis is enabled', async () => {
     const readFrontierRideAnalysis = vi.fn(() => new Promise(() => {}));
-    window.electronAPI = { readFrontierRideAnalysis };
+    window.electronAPI = { readFrontierRideAnalysis, getSaveAnalysisSettings: vi.fn().mockResolvedValue({'planet-coaster-2': true}) };
     try {
         render(<CreationMetadataPanel filePath="C:\\Frontier Developments\\Planet Coaster 2\\12345678901234567\\Saves\\Test.park2" metadata={{
             gameId: 'planet-coaster-2', kind: 'park', requiredDlc: 0, requiredDlcs: [], unknownDlcBits: [], blueprint: null,
@@ -167,10 +167,14 @@ test('offers the Workshop-style Nerd mode for a tested local park', () => {
         }} />);
 
         fireEvent.click(screen.getByRole('button', { name: 'View stats' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Nerd mode' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Nerd mode' }));
         expect(readFrontierRideAnalysis).toHaveBeenCalledWith(expect.stringMatching(/Test\.park2$/));
         expect(screen.getByRole('button', { name: /Loading full-resolution data/i })).toBeDisabled();
         expect(screen.getByText(/refreshed only when this save changes/i)).toBeInTheDocument();
+        window.electronAPI.getSaveAnalysisSettings.mockResolvedValue({'planet-coaster-2': false});
+        fireEvent(window, new Event('save-analysis-settings-changed'));
+        await waitFor(() => expect(screen.queryByRole('button', {name: 'Nerd mode'})).not.toBeInTheDocument());
+        expect(screen.queryByRole('button', {name: /Loading full-resolution data/i})).not.toBeInTheDocument();
     } finally {
         delete window.electronAPI;
     }
@@ -220,4 +224,15 @@ test('renders a dedicated Planet Zoo overview with safe counts and transport rid
     expect(screen.queryByText(/Unknown DLC/)).not.toBeInTheDocument();
     expect(screen.getByText('habitat-screen.png')).toBeInTheDocument();
     expect(screen.queryByText(/No completed ride-test trace/)).not.toBeInTheDocument();
+});
+
+test('hides local Nerd mode by default even if cached statistics exist', async () => {
+    window.electronAPI = {readFrontierRideAnalysis: vi.fn(), getSaveAnalysisSettings: vi.fn().mockResolvedValue({'planet-coaster-2': false})};
+    try {
+        render(<CreationMetadataPanel filePath="C:/Test.park2" metadata={{gameId: 'planet-coaster-2', park: {rides: [{kind: 'tracked', testStats: {durationSeconds: 5}}]}}} />);
+        fireEvent.click(screen.getByRole('button', {name: 'View stats'}));
+        await waitFor(() => expect(window.electronAPI.getSaveAnalysisSettings).toHaveBeenCalled());
+        expect(screen.queryByRole('button', {name: 'Nerd mode'})).not.toBeInTheDocument();
+        expect(window.electronAPI.readFrontierRideAnalysis).not.toHaveBeenCalled();
+    } finally { delete window.electronAPI; }
 });

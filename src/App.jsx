@@ -1,3 +1,4 @@
+import useRouteScrollRestoration from './hooks/useRouteScrollRestoration';
 import {submitContentReport} from './firebase/contentReporting';
 import UserBlockingProvider from './components/ui/UserBlockingProvider';
 import AccountRoute from './components/auth/AccountRoute';
@@ -141,6 +142,7 @@ const RouteCanonicalMetadata = () => {
 };
 
 const AppContent = () => {
+    const scrollContainerRef = useRouteScrollRestoration();
     const location = useLocation();
     const navigate = useNavigate();
     const isStoreBuild = window.electronAPI?.isStoreBuild === true;
@@ -1002,7 +1004,7 @@ const AppContent = () => {
                 </div>
             )}
             
-            <main className={`flex-1 min-h-0 overflow-y-auto ${showProfileWizard ? '[scrollbar-gutter:stable]' : ''}`}>
+            <main ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${showProfileWizard ? '[scrollbar-gutter:stable]' : ''}`}>
                 <ErrorBoundary>
                     <Suspense fallback={<div className="h-full flex justify-center items-center"><Spinner /></div>}>
                         {showProfileWizard ? (

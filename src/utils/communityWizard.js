@@ -1,3 +1,4 @@
+import { TEXT_LIMITS } from './textLimits';
 import {
   getCommunitySlugError,
   slugifyCommunityName,
@@ -96,7 +97,7 @@ const validateRanks = (
   if (namedRanks.length !== ranks.length) {
     return 'Every custom rank needs a name.';
   }
-  if (namedRanks.some(rank => rank.name.trim().length > 50)) {
+  if (namedRanks.some(rank => rank.name.trim().length > TEXT_LIMITS.rankName)) {
     return 'Custom rank names can contain up to 50 characters.';
   }
   const normalizedNames = namedRanks.map(rank => rank.name.trim().toLowerCase());
@@ -129,12 +130,12 @@ export const getCommunityWizardStepError = (
     case 'basics': {
       const name = String(state.name || '').trim();
       const description = String(state.description || '').trim();
-      if (name.length < 3 || name.length > 100) {
+      if (name.length < 3 || name.length > TEXT_LIMITS.communityName) {
         return 'Community name must be between 3 and 100 characters.';
       }
       const slugError = getCommunitySlugError(slugifyCommunityName(name));
       if (slugError) return slugError;
-      if (!description || description.length > 2000) {
+      if (!description || description.length > TEXT_LIMITS.communityDescription) {
         return 'Description is required and can contain up to 2,000 characters.';
       }
       if (
@@ -165,7 +166,7 @@ export const getCommunityWizardStepError = (
       if (
         state.joinMode === 'password' &&
         (String(state.joinPassword || '').length < 6 ||
-          String(state.joinPassword || '').length > 128)
+          String(state.joinPassword || '').length > TEXT_LIMITS.communityPassword)
       ) {
         return 'The join password must be between 6 and 128 characters.';
       }

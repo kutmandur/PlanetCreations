@@ -1,3 +1,4 @@
+const {gameForFile, extensions: gameExtensions} = require('./GameFileTypes');
 const {runBackupJob} = require('./BackupJobs');
 const {assertLibraryTarget} = require('./LocalLibraryPath');
 const fs = require('fs');
@@ -22,25 +23,23 @@ const { responseToBuffer } = require('./ResponseBuffer');
 const { mediaPackageFileName } = require('./MediaPackageFormat');
 
 const API_BASE_URL = 'https://us-central1-planetcreationsdotnet.cloudfunctions.net/api';
-const ALLOWED_GAME_EXTENSIONS = ['.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto', '.zoo_auto'];
+const ALLOWED_GAME_EXTENSIONS = ['.zblpr', '.park2', '.zoo', '.blpr2', '.pzblueprint', '.prkauto2', '.zooauto', '.zoo_auto'];
 const MAX_UPLOAD_SIZE_BYTES = MAX_BACKUP_SIZE_BYTES;
 const backupCategoryMap = {
     '.park2': 'Parks', '.zoo': 'Parks',
-    '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints',
+    '.zblpr': 'Blueprints', '.blpr2': 'Blueprints', '.pzblueprint': 'Blueprints',
     '.prkauto2': 'Auto Save', '.zooauto': 'Auto Save', '.zoo_auto': 'Auto Save',
 };
-const gameByExtension = {
-    '.park2': 'planet-coaster-2', '.blpr2': 'planet-coaster-2', '.prkauto2': 'planet-coaster-2',
-    '.zoo': 'planet-zoo', '.pzblueprint': 'planet-zoo', '.zooauto': 'planet-zoo', '.zoo_auto': 'planet-zoo',
-};
+
 const kindByExtension = {
     '.park2': 'park', '.zoo': 'park',
-    '.blpr2': 'blueprint', '.pzblueprint': 'blueprint',
+    '.zblpr': 'blueprint', '.blpr2': 'blueprint', '.pzblueprint': 'blueprint',
     '.prkauto2': 'autosave', '.zooauto': 'autosave', '.zoo_auto': 'autosave',
 };
 const gameFolderById = {
     'planet-coaster-2': 'Planet Coaster 2',
     'planet-zoo': 'Planet Zoo',
+    'planet-zoo-2': 'Planet Zoo 2',
 };
 let cachedPublicKey = null;
 let publicKeyFetchedAt = 0;
@@ -187,9 +186,7 @@ async function archiveWorkshopPackage(app, sourcePath, creationId, details = {})
 }
 
 function getLatestGameFileMtime(directoryPath, gameId) {
-    const allowedExtensions = new Set(Object.entries(gameByExtension)
-        .filter(([, mappedGameId]) => mappedGameId === gameId)
-        .map(([extension]) => extension));
+    const allowedExtensions = new Set(gameExtensions[gameId] || []);
     let latest = 0;
     try {
         for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
@@ -317,31 +314,12 @@ async function validateBackupForUpload(backupFilePath) {
     }
 }
 
-async function backupAllCreations(app, files, note, isSigned, idToken, appCheckToken = null, includeMediaPackages = false) {
+async function backupAllCreations(app, files, note, isSigned, idToken, appCheckToken = null, includeMedia = false) {
     let successCount = 0;
-    let mediaPackageCount = 0;
-    let mediaSkippedCount = 0;
     for (const file of files) {
-        if (await createBackup(
-            app,
-            file.path,
-            note,
-            isSigned,
-            idToken,
-            null,
-            appCheckToken,
-        )) {
-            successCount++;
-            if (includeMediaPackages) {
-                const mediaResult = await backupCreationMedia(app, file.path, note, isSigned, idToken, appCheckToken);
-                if (mediaResult.success) mediaPackageCount++;
-                else mediaSkippedCount++;
-            }
-        }
+        if (await createBackup(app, file.path, note, isSigned, idToken, null, appCheckToken, includeMedia)) successCount++;
     }
-    const mediaSummary = includeMediaPackages ?
-        ` ${mediaPackageCount} matching Custom Media package(s) created; ${mediaSkippedCount} creation(s) did not produce a media package.` : '';
-    return { success: true, message: `${successCount} of ${files.length} creations backed up successfully.${mediaSummary}` };
+    return {success: true, message: `${successCount} of ${files.length} creations backed up successfully.`};
 }
 
 function deleteBackup(app, backupFilePath) {
@@ -374,6 +352,7 @@ async function createBackup(
     idToken = null,
     targetDir = null,
     appCheckToken = null,
+    includeMedia = false,
 ) {
     if (!fs.existsSync(sourceFilePath) || !isValidGameFile(sourceFilePath)) {
         throw new Error(`Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be backed up.`);
@@ -388,6 +367,21 @@ async function createBackup(
         console.warn(`[BackupManager] Automatic media detection failed for ${fileName}: ${mediaSync.message}`);
     }
     const portableManifest = preparedMedia.manifest;
+    const assets = [];
+    if (includeMedia) {
+        const missing = [...(mediaSync.missing || []), ...(mediaSync.rejected || []).map(item => item.logicalName)];
+        portableManifest.assets = (portableManifest.assets || []).filter(asset => {
+            const objectPath = getObjectPath(asset);
+            if (!fs.existsSync(objectPath) || fs.statSync(objectPath).size !== asset.size) {
+                missing.push(asset.logicalName);
+                return false;
+            }
+            assets.push({path: objectPath, name: `assets/${asset.sha256}${path.extname(asset.logicalName).toLowerCase()}`, size: asset.size, sha256: asset.sha256});
+            return true;
+        });
+        portableManifest.embeddedMedia = true;
+        portableManifest.missingMedia = [...new Set(missing)];
+    }
     const manifestBuffer = Buffer.from(JSON.stringify(portableManifest, null, 2));
     let metadata = {
         format: FORMAT_NAME,
@@ -395,7 +389,7 @@ async function createBackup(
         packageType: 'creation',
         packageId,
         mediaSetId: portableManifest.mediaSetId,
-        gameId: gameByExtension[extension],
+        gameId: gameForFile(sourceFilePath),
         fileKind: kindByExtension[extension],
         originalFileName: fileName,
         payloadPath: `payload/${fileName}`,
@@ -417,7 +411,7 @@ async function createBackup(
     const baseName = path.basename(fileName, extension).replace(/[^a-zA-Z0-9._-]/g, '_');
     const version = targetDir ? `upload-${packageId}` : `v${Date.now()}`;
     const destinationPath = path.join(backupDir, `${baseName}_${version}.PlanetCreations`);
-    await runBackupJob('archive', {sourcePath: sourceFilePath, destination: destinationPath, metadata, manifest: manifestBuffer.toString('utf8')});
+    await runBackupJob('archive', {sourcePath: sourceFilePath, destination: destinationPath, metadata, assets: [...new Map(assets.map(asset => [asset.name, asset])).values()], manifest: manifestBuffer.toString('utf8')});
     registerLocalTarget(app, packageId, sourceFilePath);
     return destinationPath;
 }
@@ -495,7 +489,7 @@ async function backupCreationMedia(
             packageType: 'media',
             packageId,
             mediaSetId: portableManifest.mediaSetId,
-            gameId: snapshot.gameId || gameByExtension[path.extname(sourceFilePath).toLowerCase()],
+            gameId: snapshot.gameId || gameForFile(sourceFilePath),
             originalFileName: path.basename(sourceFilePath),
             mediaManifestSha256: sha256(manifestBuffer),
             assetCount: portableManifest.assets.length,
@@ -596,6 +590,7 @@ async function writeVerifiedCreation(app, backupZipPath, verification, originalF
         try { await file.writeFile(payloadBuffer); await file.sync(); } finally { await file.close(); }
         await fs.promises.rename(temporaryPath, originalFilePath);
     } finally { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); }
+    if (verification.inspection?.assetBuffers?.length) await storeInspectedMediaAssets(app, verification.inspection);
     if (manifest) savePortableManifestForCreation(originalFilePath, manifest);
     registerLocalTarget(app, verification.metadata?.packageId, originalFilePath);
     return { success: true, status: verification.status, targetPath: originalFilePath };
@@ -604,7 +599,7 @@ async function writeVerifiedCreation(app, backupZipPath, verification, originalF
 function resolveRestoreTarget(app, metadata, originalFilePath, frontierPath) {
     const fileName = metadata.originalFileName || '';
     const extension = path.extname(fileName).toLowerCase();
-    const gameId = gameByExtension[extension];
+    const gameId = gameForFile(metadata.originalFilePath || fileName, metadata.gameId);
     if (!gameId || (metadata.gameId && metadata.gameId !== gameId) || path.basename(fileName) !== fileName) {
         throw new Error('The backup game and file type do not match.');
     }
@@ -706,7 +701,7 @@ async function installCreationPackage(app, backupZipPath, creationId, frontierPa
 
         const metadata = verification.metadata;
         const extension = path.extname(metadata.originalFileName || '').toLowerCase();
-        if (!isValidGameFile(metadata.originalFileName || '') || gameByExtension[extension] !== metadata.gameId) {
+        if (!isValidGameFile(metadata.originalFileName || '') || gameForFile(metadata.originalFileName, metadata.gameId) !== metadata.gameId) {
             throw new Error('The package game and file type do not match.');
         }
 

@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserSessionPersistence, browserLocalPersistence, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
@@ -109,6 +111,8 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
             } else { // Registration logic
                 const email = emailOrUsername.trim();
                 const finalUsername = username.trim();
+                const usernameError = textLengthError(finalUsername, TEXT_LIMITS.username, 'Username', 3);
+                if (usernameError) throw new Error(usernameError);
 
                 if (!minimumAgeConfirmed) {
                     throw new Error('You must confirm that you are at least 16 and accept the Terms of Service.');
@@ -213,7 +217,7 @@ const AuthPage = ({ setModalMessage, activeTab, blacklist }) => {
                     {authAction === 'register' && (
                          <div>
                             <label className="block text-gray-700 mb-2" htmlFor="username">Username</label>
-                            <input type="text" id="username" value={username} onChange={(e) => setUsername(e.target.value)} className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${color.ring}`} required />
+                            <LimitedTextField maxLength={TEXT_LIMITS.username} minLength={3} type="text" id="username" value={username} onChange={(e) => setUsername(e.target.value)} className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${color.ring}`} required />
                         </div>
                     )}
                     <div>

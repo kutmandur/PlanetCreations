@@ -395,6 +395,19 @@ const CreationMetadataPanel = ({
     const [previewLoading, setPreviewLoading] = useState(false);
     const [bannerImageFailed, setBannerImageFailed] = useState(false);
     const [nerdMode, setNerdMode] = useState(false);
+    const [analysisEnabled, setAnalysisEnabled] = useState(false);
+    useEffect(() => {
+        let active = true;
+        const refresh = async () => {
+            let enabled = false;
+            try { enabled = Boolean(filePath && (await window.electronAPI?.getSaveAnalysisSettings?.())?.[metadata?.gameId] === true); } catch { /* Fail closed. */ }
+            if (active) { setAnalysisEnabled(enabled); if (!enabled) setNerdMode(false); }
+        };
+        void refresh();
+        window.addEventListener('focus', refresh);
+        window.addEventListener('save-analysis-settings-changed', refresh);
+        return () => { active = false; window.removeEventListener('focus', refresh); window.removeEventListener('save-analysis-settings-changed', refresh); };
+    }, [filePath, metadata?.gameId, isOpen]);
     const [rideAnalysis, setRideAnalysis] = useState(null);
     const [rideAnalysisStatus, setRideAnalysisStatus] = useState('idle');
     const [rideAnalysisError, setRideAnalysisError] = useState('');
@@ -460,7 +473,7 @@ const CreationMetadataPanel = ({
     const blueprint = metadata?.blueprint;
     const rides = park?.rides || blueprint?.rides || [];
     const nerdModeAvailable = Boolean(
-        filePath &&
+        analysisEnabled && filePath &&
         metadata?.gameId === 'planet-coaster-2' &&
         !blueprint &&
         rides.some(ride => ride?.kind === 'tracked' && ride?.testStats) &&
@@ -491,6 +504,7 @@ const CreationMetadataPanel = ({
             setExpandedRideKey('');
             return;
         }
+        if (!nerdModeAvailable) return;
         setNerdMode(true);
         if (['loading', 'complete'].includes(rideAnalysisStatusRef.current)) return;
         rideAnalysisStatusRef.current = 'loading';
@@ -618,7 +632,7 @@ const CreationMetadataPanel = ({
                             showTraceNote={!isPlanetZoo}
                             eyebrow={isPlanetZoo ? 'Transport' : 'Rides'}
                             title={isPlanetZoo ? 'Transport ride overview' : 'Per-ride overview'}
-                            nerdMode={nerdMode}
+                            nerdMode={nerdMode && nerdModeAvailable}
                             analysis={rideAnalysis}
                             analysisLoading={rideAnalysisStatus === 'loading'}
                             expandedRideKey={expandedRideKey}
@@ -647,7 +661,6 @@ const CreationMetadataPanel = ({
                             </div>
                         </section>
                         {metadata.description && <section className="mx-auto w-fit max-w-3xl rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm dark:border-gray-800 dark:bg-gray-900/60 dark:shadow-none"><h3 className="font-semibold text-gray-950 dark:text-white">Description</h3><p className="mt-2 whitespace-pre-wrap text-center text-sm leading-relaxed text-gray-700 dark:text-gray-300">{metadata.description}</p></section>}
-                        {metadata.tags?.length > 0 && <div className="flex flex-wrap justify-center gap-1.5">{metadata.tags.map(tag => <span key={tag} className="rounded-full bg-gray-200 px-2.5 py-1 text-center text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">{humanize(tag)}</span>)}</div>}
                         <CustomMediaGrid references={customMediaReferences} />
                     </div>}
                 </div>

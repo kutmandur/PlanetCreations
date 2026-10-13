@@ -239,6 +239,8 @@ test("full creation form saves with a published text policy and registered accou
     parkRidePresentation: {
       version: 1, areas: [], customRides: [], hiddenRideKeys: [],
       rideAreaAssignments: {}, rideEfnOverrides: {}, rideDisplayNames: {},
+      parkInfo: Object.fromEntries(["placementCost", "runningCost", "placedPartCount", "sceneryPieceCount", "buildingCount", "railElementCount", "trackedRideElementCount", "binCount", "poolCount", "guestCount", "guestCap", "animalCount", "parkRating", "guestHappiness", "cash", "complexity", "scenarioStarsEarned", "scenarioStarsTotal", "sceneryCount", "serializedGroupCount", "generatedPower", "requiredPower", "generatedWater", "requiredWater", "excitement", "fear", "nausea"].map(key => [key, 1])),
+      parkText: Object.fromEntries(["gameMode", "biome", "difficulty", "gameVersion", "saveFormatVersion", "rideId"].map(key => [key, "a".repeat(500)])),
     },
     moderationWithheld: false, userId: OWNER_ID, username: "RulesOwner",
     userProfilePictureUrl: null, createdAt: serverTimestamp(),
@@ -586,6 +588,14 @@ describe("collaboration Firestore rules", { concurrency: false }, () => {
       doc(ownerDb, `creations/${PUBLISHED_CREATION_ID}`),
       {rideAnalysisObjectKey: `creation-ride-analysis/${OWNER_ID}/${PUBLISHED_CREATION_ID}/forged.pcra`},
     ));
+  });
+
+  test("manual Park Info validates values and text limits", async () => {
+    const ref = doc(authenticatedFirestore(OWNER_ID), `creations/${PUBLISHED_CREATION_ID}`);
+    await assertSucceeds(updateDoc(ref, {parkRidePresentation: {version: 1, parkInfo: {placementCost: 0, runningCost: null}, parkText: {biome: "a".repeat(500)}}}));
+    await assertSucceeds(updateDoc(ref, {parkRidePresentation: {version: 1, parkInfo: Object.fromEntries(["placementCost", "runningCost", "placedPartCount", "sceneryPieceCount", "buildingCount", "railElementCount", "trackedRideElementCount", "binCount", "poolCount", "guestCount", "guestCap", "animalCount", "parkRating", "guestHappiness", "cash", "complexity", "scenarioStarsEarned", "scenarioStarsTotal", "sceneryCount", "serializedGroupCount", "generatedPower", "requiredPower", "generatedWater", "requiredWater", "excitement", "fear", "nausea"].map(key => [key, 1])), parkText: Object.fromEntries(["gameMode", "biome", "difficulty", "gameVersion", "saveFormatVersion", "rideId"].map(key => [key, "a".repeat(500)]))}}));
+    await assertFails(updateDoc(ref, {parkRidePresentation: {version: 1, parkText: {biome: "a".repeat(501)}}}));
+    await assertFails(updateDoc(ref, {parkRidePresentation: {version: 1, parkInfo: {verified: true}}}));
   });
 
   test("owners can edit bounded park ride presentation settings", async () => {

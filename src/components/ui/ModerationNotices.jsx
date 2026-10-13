@@ -1,3 +1,5 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, {useEffect,useState} from 'react';
 import {collection,onSnapshot} from 'firebase/firestore';
 import {getFunctions,httpsCallable} from 'firebase/functions';
@@ -20,7 +22,7 @@ export default function ModerationNotices({userId,selectedCaseId,communityId}) {
             <p className="text-sm">Review record expires {item.expiresAt?.toDate?.().toLocaleDateString()}. For later questions, use the Legal Notice.</p>
             {item.status==='appealed'&&<p className="text-sm">Your appeal has been received. The moderation team will review it; no further submission is needed.</p>}
             <form onSubmit={async e=>{e.preventDefault();if(busy||!canAppeal(item)||!reasons[item.id]?.trim())return;setBusy(true);try{await httpsCallable(getFunctions(),'appealContentDecision')({caseId:item.id,reason:reasons[item.id]||''});setMessage('Appeal received.');if(communityId)setRefresh(value=>value+1);}catch(error){setMessage(error.message);}finally{setBusy(false);}}}>
-                {canAppeal(item)&&<label className="block">Reason for appeal<textarea className="w-full border rounded p-2" required maxLength={2000} value={reasons[item.id]||''} onChange={e=>setReasons({...reasons,[item.id]:e.target.value})}/></label>}
+                {canAppeal(item)&&<label className="block">Reason for appeal<LimitedTextField maxLength={TEXT_LIMITS.reportReason} as="textarea" className="w-full border rounded p-2" required value={reasons[item.id]||''} onChange={e=>setReasons({...reasons,[item.id]:e.target.value})}/></label>}
                 <div className="mt-3 p-3 bg-gray-50 border-t flex flex-wrap justify-end gap-2">{item.targetPath?.startsWith('/')&&!item.targetPath.startsWith('//')&&<ModerationButton label="View content" description="Open your content. While it is withheld, you can view it but cannot edit it." onClick={()=>navigate(item.targetPath)}/>}{canAppeal(item)&&<ModerationButton type="submit" label="Request another review" color="yellow" description="Send your explanation to the moderation team for another review. The content stays withheld until a decision is made." disabled={busy||!reasons[item.id]?.trim()}/>}</div>
             </form>
         </div>)}{message&&<p role="status">{message}</p>}

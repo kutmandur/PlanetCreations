@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useState } from 'react';
 import Icon from '../ui/Icon';
 import { ICONS } from '../../utils/helpers';
@@ -78,13 +80,12 @@ const CheckOutModal = ({ file, onConfirm, onCancel }) => {
                         <label htmlFor="note" className="block text-sm font-medium text-gray-700 mb-2">
                             What are you working on? <span className="text-gray-400">(optional)</span>
                         </label>
-                        <input
+                        <LimitedTextField maxLength={TEXT_LIMITS.checkoutNote}
                             type="text"
                             id="note"
                             value={note}
                             onChange={(e) => setNote(e.target.value)}
                             placeholder="e.g., Building the entrance area"
-                            maxLength={100}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                         />
                     </div>

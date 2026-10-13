@@ -389,25 +389,8 @@ const FileBrowser = ({ user, onBackupCreated, scanResults, loading, selectedPath
             if (!file) return;
             setGlobalLoader({ isLoading: true, message: `Backing up ${file.name}...` });
             try {
-                await window.electronAPI.createBackup(
-                    file.path,
-                    note,
-                    isSigned,
-                    idToken,
-                    appCheckToken,
-                );
-                let message = `Backup for "${file.name}" created successfully!`;
-                if (includeMediaPackage) {
-                    setGlobalLoader({ isLoading: true, message: `Creating matching Custom Media package for ${file.name}...` });
-                    const mediaResult = await window.electronAPI.backupCreationMedia(
-                        file.path,
-                        note,
-                        isSigned,
-                        idToken,
-                        appCheckToken,
-                    );
-                    message += `\n\n${mediaResult.message}`;
-                }
+                await window.electronAPI.createBackup(file.path, note, isSigned, idToken, appCheckToken, includeMediaPackage);
+                const message = `Backup for "${file.name}" created successfully!`;
                 alert(message);
                 if(onBackupCreated) onBackupCreated();
             } catch (error) { 
@@ -506,8 +489,8 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
 
             // 2. Filter by Game
             const pathLower = (firstBackup.originalFilePath || '').toLowerCase();
-            const gameMatches = (activeGame === 'Planet Coaster 2' && (firstBackup.gameId === 'planet-coaster-2' || pathLower.includes('planet coaster 2'))) ||
-                (activeGame === 'Planet Zoo' && (firstBackup.gameId === 'planet-zoo' || pathLower.includes('planet zoo')));
+            const backupGame = firstBackup.gameId || (pathLower.split(/[\\/]/).includes('planet zoo 2') ? 'planet-zoo-2' : pathLower.includes('planet zoo') ? 'planet-zoo' : pathLower.includes('planet coaster 2') ? 'planet-coaster-2' : null);
+            const gameMatches = ({'Planet Zoo 2': 'planet-zoo-2', 'Planet Zoo': 'planet-zoo', 'Planet Coaster 2': 'planet-coaster-2'})[activeGame] === backupGame;
             if (!gameMatches) return false;
 
             // 3. Filter by File Type (Sub-Tab)
@@ -523,7 +506,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                 case 'parks':
                     return firstBackup.originalFileName.endsWith('.park2') || firstBackup.originalFileName.endsWith('.zoo');
                 case 'blueprints':
-                    return firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint');
+                    return firstBackup.originalFileName.endsWith('.blpr2') || firstBackup.originalFileName.endsWith('.pzblueprint') || firstBackup.originalFileName.endsWith('.zblpr');
                 case 'autosaves':
                     return firstBackup.originalFileName.endsWith('.prkauto2') || firstBackup.originalFileName.endsWith('.zooauto') || firstBackup.originalFileName.endsWith('.zoo_auto');
                 default:
@@ -703,6 +686,7 @@ const BackupRestore = ({ refreshKey, subHeaderProps, setGlobalLoader, activeView
                                                     <div>
                                                         <p className="text-xs font-semibold text-white">{new Date(backup.backupDate).toLocaleString()}</p>
                                                         <p className="text-xs text-gray-400 italic">{backup.note || "No note"}</p>
+                                                        {backup.missingMedia?.length > 0 && <p className="text-xs text-amber-400" title={backup.missingMedia.join(', ')}>Warning: {backup.missingMedia.length} media file(s) unavailable; available media included.</p>}
                                                         {activeView === 'workshop' && <p className={`text-xs font-semibold mt-1 ${backup.installStatus === 'installed' ? 'text-green-400' : backup.installStatus === 'modified' ? 'text-yellow-400' : 'text-gray-400'}`}>{backup.installStatus === 'installed' ? 'Installed' : backup.installStatus === 'modified' ? 'Installed · game file changed' : 'Not installed'}</p>}
                                                     </div>
                                                 </div>
@@ -1016,8 +1000,8 @@ const ClientDashboard = ({ user, onOpenSettings }) => {
     // Datei-Endungen (= vom Desktop-Client scannbar) anbieten.
     const registryGames = useGames();
     const GAME_TABS = useMemo(() =>
-        registryGames
-            .filter(g => g.fileExtensions?.length > 0)
+        [...registryGames, ...(registryGames.some(g => g.id === 'planet-zoo-2') ? [] : [{id: 'planet-zoo-2', name: 'Planet Zoo 2', fileExtensions: ['.zoo', '.zblpr']}])]
+            .filter(g => g.id === 'planet-zoo-2' || g.fileExtensions?.length > 0)
             .map(g => ({ id: g.name, name: g.name })),
     [registryGames]);
     const FILE_TYPE_TABS = useMemo(() => {
@@ -1262,7 +1246,7 @@ const ClientDashboard = ({ user, onOpenSettings }) => {
                             <Icon path={ICONS.database} className="mx-auto h-12 w-12 text-blue-300" />
                             <h2 className="mt-4 text-xl font-bold">Choose your Frontier game folder</h2>
                             <p className="mt-3 text-sm leading-6 text-gray-300">
-                                Select the <strong>Frontier Developments</strong> folder that contains your Planet Coaster 2 or Planet Zoo saves. It is normally located under <strong>Saved Games</strong>. The client only scans supported game and backup files inside this folder.
+                                Select the <strong>Frontier Developments</strong> folder that contains your Planet Coaster 2, Planet Zoo or Planet Zoo 2 saves. It is normally located under <strong>Saved Games</strong>. The client only scans supported game and backup files inside this folder.
                             </p>
                             {pathSelectionError && <p role="alert" className="mt-4 rounded-lg bg-red-950/70 p-3 text-sm text-red-200">{pathSelectionError}</p>}
                             <button type="button" onClick={handleSelectFolder} disabled={selectingPath} className={`mt-6 rounded-lg px-5 py-3 font-semibold text-white ${activeGameColor.bg} disabled:cursor-wait disabled:opacity-60`}>

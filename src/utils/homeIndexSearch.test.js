@@ -26,3 +26,13 @@ describe('complete index ranking and worker compatibility', () => {
         expect(searchHomeIndex(input).every(c => c.tags.includes('nature'))).toBe(true);
     });
 });
+
+test('pool labels are opt-in for every role and do not change ranking, including in the worker', () => {
+    const input = {shouldUseIndexSearch: true, indexCreations: creations, homeState: {activeCategory: 'All', searchTerm: '', showModsOnly: false, sortBy: 'recommended'},
+        user: {uid: 'member'}, userProfile: {role: 'admin'}, interestMap: {}, activeTab: 'planet-coaster-2', selectedDlcs: [], seed: 42, now};
+    const hidden = searchHomeIndex(input);
+    expect(hidden.every(c => !c.__feedDebug)).toBe(true);
+    const shown = searchHomeIndex(decodeIndexInput(encodeIndexInput({...input, userProfile: {role: 'user'}, showFeedPools: true})));
+    expect(shown.every(c => c.__feedDebug?.pool)).toBe(true);
+    expect(shown.map(c => c.id)).toEqual(hidden.map(c => c.id));
+});

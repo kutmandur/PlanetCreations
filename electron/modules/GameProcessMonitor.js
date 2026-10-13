@@ -1,6 +1,7 @@
 const GAME_PROCESSES = [
     { gameId: 'planet-coaster-2', processName: 'PlanetCoaster2.exe' },
     { gameId: 'planet-zoo', processName: 'PlanetZoo.exe' },
+    { gameId: 'planet-zoo-2', processName: 'PlanetZoo2.exe' },
 ];
 
 /**

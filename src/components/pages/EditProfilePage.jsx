@@ -1,3 +1,4 @@
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
@@ -81,7 +82,8 @@ const SOCIAL_FIELDS = [
     {
         id: 'discord',
         label: 'Discord',
-        placeholder: 'Discord user ID',
+        placeholder: 'Username, user ID or Discord profile link',
+        hint: 'Visitors can copy your username by clicking the Discord icon. A numeric user ID or discord.com/users/ link opens your Discord profile.',
         type: 'text',
     },
     {
@@ -291,6 +293,12 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
     const handleSubmit = async (event) => {
         event.preventDefault();
         if (!profileData || saving || !isDirty) return;
+
+        if ((profileData.bio || '').length > TEXT_LIMITS.bio) {
+            focusSection('profile');
+            setModalMessage('Your bio must be 500 characters or fewer.');
+            return;
+        }
 
         if (containsBlacklistedWord(profileData.bio, blacklist)) {
             focusSection('profile');
@@ -663,18 +671,23 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
 
                             <Field
                                 label="Bio"
-                                hint="Introduce yourself and the kinds of creations you enjoy."
+                                hint="Introduce yourself and the kinds of creations you enjoy. Maximum 500 characters."
                                 htmlFor="bio"
                             >
                                 <textarea
                                     name="bio"
                                     id="bio"
+                                    maxLength={TEXT_LIMITS.bio}
+                                    aria-describedby="bio-count"
                                     value={profileData.bio || ''}
                                     onChange={handleChange}
                                     rows="5"
                                     className={`${inputClass} resize-y`}
                                     placeholder="Tell the community about yourself..."
                                 />
+                                <p id="bio-count" className="mt-1 text-sm font-medium" aria-live="polite">
+                                    {(profileData.bio || '').length} / {TEXT_LIMITS.bio} characters
+                                </p>
                             </Field>
 
                             <Field
@@ -711,6 +724,7 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                                     <Field
                                         key={field.id}
                                         label={field.label}
+                                        hint={field.hint}
                                         htmlFor={field.id}
                                     >
                                         <input

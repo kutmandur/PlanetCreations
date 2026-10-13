@@ -214,3 +214,18 @@ test('a killed restore process leaves the original and pre-restore copy intact',
         assert.equal(fs.readFileSync(path.join(root, 'Pre-Restore Backups', previous[0]), 'utf8'), 'original before crash');
     } finally { if (child.exitCode === null && child.signalCode === null) {child.kill(); await exited;} }
 });
+
+test('Planet Zoo 2 .zoo backups restore into Zoo 2 rather than Zoo 1', async () => {
+    const root = fs.mkdtempSync(path.join(electronTestRoot, 'zoo2-restore-'));
+    const frontierPath = path.join(root, 'Frontier');
+    for (const game of ['Planet Zoo', 'Planet Zoo 2']) fs.mkdirSync(path.join(frontierPath, game, '12345678901234567', 'Saves'), {recursive:true});
+    const archive = path.join(root, 'restore.PlanetCreations');
+    const zip = new AdmZip();
+    zip.addFile('metadata.json', Buffer.from(JSON.stringify({originalFileName:'park.zoo',gameId:'planet-zoo-2'})));
+    zip.addFile('park.zoo', Buffer.from('zoo2 payload'));
+    zip.writeZip(archive);
+    const result = await BackupManager.restoreBackup({getPath:()=>root}, archive, null, {frontierPath});
+    assert.equal(result.success,true,result.message);
+    assert.equal(result.targetPath,path.join(frontierPath,'Planet Zoo 2','12345678901234567','Saves','park.zoo'));
+    assert.equal(fs.existsSync(path.join(frontierPath,'Planet Zoo','12345678901234567','Saves','park.zoo')),false);
+});

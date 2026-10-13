@@ -1,3 +1,4 @@
+import { TEXT_LIMITS } from './textLimits';
 export const COLLABORATION_BUILD_DRAFT_PREFIX =
     'planetcreations.collaborationBuildDraft';
 
@@ -15,7 +16,7 @@ const normalizeCompletedTodo = (todo) => {
     const id = String(todo.id || '').trim();
     const text = String(todo.text || '').trim();
     if (!id || !text) return null;
-    return { id, text: text.slice(0, 300) };
+    return { id, text: text.slice(0, TEXT_LIMITS.collaborationTodo) };
 };
 
 const normalizeDraft = (value, collaborationId, userId) => {

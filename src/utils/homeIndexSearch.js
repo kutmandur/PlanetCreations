@@ -1,6 +1,6 @@
 import Fuse from 'fuse.js';
 import {rankCreations, DEFAULT_WEIGHTS} from './feedRanking';
-export function searchHomeIndex({shouldUseIndexSearch, indexCreations, homeState, supportsConsole, dlcFilterMode, selectedDlcs, userProfile, activeTab, user, interestMap, globalFeedWeights, localFeedWeights, seed, now}) {
+export function searchHomeIndex({shouldUseIndexSearch, indexCreations, homeState, supportsConsole, dlcFilterMode, selectedDlcs, userProfile, activeTab, user, interestMap, globalFeedWeights, localFeedWeights, seed, now, showFeedPools = false}) {
     const fuse = indexCreations?.length ? new Fuse(indexCreations, {
             keys: [
                 { name: 'title', weight: 0.6 },
@@ -78,8 +78,8 @@ export function searchHomeIndex({shouldUseIndexSearch, indexCreations, homeState
                         uid: user?.uid || null,
                         interestMap,
                         weights: localFeedWeights || globalFeedWeights || DEFAULT_WEIGHTS,
-                        // Admin-Debug: Badge auf jeder Karte zeigt Herkunfts-Pool + Score
-                        debug: userProfile?.role === 'admin',
+                        // Optional pool explanations, available to every user.
+                        debug: showFeedPools,
                         seed, now,
                     });
                 }

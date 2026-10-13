@@ -1,3 +1,5 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useState } from 'react';
 import {ModerationButton} from './ReportReviewControls';
 
@@ -18,9 +20,8 @@ const StrikeModal = ({ onConfirm, onCancel }) => {
                 <p className="text-gray-600 mb-4">Please provide a reason for this strike. The user will be notified.</p>
                 <div>
                     <label htmlFor="strike-reason" className="block text-sm font-medium text-gray-700 mb-1">Reason for Strike</label>
-                    <textarea
+                    <LimitedTextField maxLength={TEXT_LIMITS.reviewReason} as="textarea"
                         id="strike-reason"
-                        maxLength={1000}
                         disabled={busy}
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}

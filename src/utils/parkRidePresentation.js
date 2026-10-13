@@ -1,3 +1,4 @@
+import { sanitizeNumericInfo, PARK_INFO_FIELDS, RIDE_INFO_FIELDS, PARK_TEXT_FIELDS } from './parkInfo';
 import { getRideCategory, groupParkRides, RIDE_CATEGORY_ORDER } from './verifiedParkStats';
 
 export const PARK_RIDE_PRESENTATION_VERSION = 1;
@@ -94,7 +95,7 @@ export function sanitizeParkRidePresentation(value) {
             const scores = {};
             for (const metric of EFN_METRICS) {
                 const score = rawScores[metric];
-                if (Number.isFinite(score) && score >= 0 && score <= 100) scores[metric] = score;
+                if (score === null || (Number.isFinite(score) && score >= 0 && score <= 100)) scores[metric] = score;
             }
             if (Object.keys(scores).length > 0) rideEfnOverrides[rideKey] = scores;
         }
@@ -112,6 +113,9 @@ export function sanitizeParkRidePresentation(value) {
     }
 
     return {
+        parkText: Object.fromEntries(PARK_TEXT_FIELDS.filter(({key}) => typeof source.parkText?.[key] === 'string').map(({key}) => [key, source.parkText[key]])),
+        parkInfo: sanitizeNumericInfo(source.parkInfo, PARK_INFO_FIELDS),
+        rideInfo: Object.fromEntries(Object.entries(source.rideInfo || {}).filter(([key]) => cleanId(key)).slice(0, 500).map(([key, info]) => [key, sanitizeNumericInfo(info, RIDE_INFO_FIELDS)])),
         version: PARK_RIDE_PRESENTATION_VERSION,
         areas,
         customRides,
@@ -162,6 +166,7 @@ export function getPresentedParkRideEntries(park, presentation, options = {}) {
             areaId: normalized.rideAreaAssignments[key] || null,
             category: getRideCategory(ride),
             userEfn: normalized.rideEfnOverrides[key] || null,
+            manualStats: normalized.rideInfo[key],
             originalDisplayName,
             displayName: normalized.rideDisplayNames[key] || originalDisplayName,
         };
@@ -187,6 +192,7 @@ export function getPresentedParkRideEntries(park, presentation, options = {}) {
             areaId: normalized.rideAreaAssignments[customRide.id] || null,
             category: { key: option.key, label: option.label },
             userEfn: normalized.rideEfnOverrides[customRide.id] || null,
+            manualStats: normalized.rideInfo[customRide.id],
             originalDisplayName: customRide.name,
             displayName: normalized.rideDisplayNames[customRide.id] || customRide.name,
         };

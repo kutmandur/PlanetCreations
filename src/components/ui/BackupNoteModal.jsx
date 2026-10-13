@@ -1,9 +1,12 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useState } from 'react';
 
 const BackupNoteModal = ({ onConfirm, onCancel }) => {
     const [note, setNote] = useState('');
 
     const handleConfirm = () => {
+        if (note.length > TEXT_LIMITS.backupNote) return;
         onConfirm(note);
     };
 
@@ -16,7 +19,7 @@ const BackupNoteModal = ({ onConfirm, onCancel }) => {
                     <label htmlFor="backup-note" className="block text-sm font-medium text-gray-300 mb-1">
                         Backup Note (Optional)
                     </label>
-                    <textarea
+                    <LimitedTextField countClassName="text-gray-300" maxLength={TEXT_LIMITS.backupNote} as="textarea"
                         id="backup-note"
                         value={note}
                         onChange={(e) => setNote(e.target.value)}

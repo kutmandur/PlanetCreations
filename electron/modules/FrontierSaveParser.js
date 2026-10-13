@@ -1,3 +1,4 @@
+const {gameForFile} = require('./GameFileTypes');
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
@@ -10,7 +11,7 @@ const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const MAX_CREATION_PAYLOAD_BYTES = 512 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = new Set([
-    '.park2', '.blpr2', '.prkauto2',
+    '.zblpr', '.park2', '.blpr2', '.prkauto2',
     '.zoo', '.pzblueprint', '.zooauto', '.zoo_auto',
 ]);
 const MEDIA_EXTENSIONS = new Set([
@@ -57,10 +58,9 @@ function normalizeFrontierMetadata(rawMetadata, filePath = '', options = {}) {
     const ratings = blueprint?.tEFN && typeof blueprint.tEFN === 'object' ? blueprint.tEFN : null;
     const utilities = blueprint?.tUtilityParams && typeof blueprint.tUtilityParams === 'object' ? blueprint.tUtilityParams : null;
     const extension = path.extname(filePath).toLowerCase();
-    const gameId = ['.park2', '.blpr2', '.prkauto2'].includes(extension) ? 'planet-coaster-2' :
-        (['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'].includes(extension) ? 'planet-zoo' : null);
+    const gameId = gameForFile(filePath);
     const kind = ['.prkauto2', '.zooauto', '.zoo_auto'].includes(extension) ? 'autosave' :
-        (blueprint || ['.blpr2', '.pzblueprint'].includes(extension) ? 'blueprint' :
+        (blueprint || ['.blpr2', '.pzblueprint', '.zblpr'].includes(extension) ? 'blueprint' :
             (save || ['.park2', '.zoo'].includes(extension) ? 'park' : 'creation'));
     const placementCostRaw = integer(blueprint?.nPlacementCost);
     const runningCostRaw = integer(blueprint?.nRunningCost);
@@ -168,7 +168,7 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
         }
     }
     let rideAnalysis = null;
-    if (creationPayload) {
+    if (creationPayload && normalized.gameId !== 'planet-zoo-2') {
         try {
             const inner = ['.park2', '.blpr2', '.prkauto2'].includes(extension) ?
                 parseCobraSaveMetadata(

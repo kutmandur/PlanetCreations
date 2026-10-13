@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, {useEffect, useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {collection, query, orderBy, limit, where, onSnapshot, doc, getDoc} from 'firebase/firestore';
@@ -52,7 +54,7 @@ function ReviewDetails({target}){
                     </li>)}</ol>
                 </details>
                 {draft?.id===review.id?<form onSubmit={save} className="space-y-2">
-                    <label className="block">{draft.mode==='amend'?'Corrected review reason':'Reason for reopening'}<textarea required maxLength={1000} disabled={busy} value={draft.reason} onChange={e=>setDraft({...draft,reason:e.target.value})} className="block w-full border rounded p-2"/></label>
+                    <label className="block">{draft.mode==='amend'?'Corrected review reason':'Reason for reopening'}<LimitedTextField maxLength={TEXT_LIMITS.reviewReason} as="textarea" required disabled={busy} value={draft.reason} onChange={e=>setDraft({...draft,reason:e.target.value})} className="block w-full border rounded p-2"/></label>
                     <p className="text-xs">A correction updates the author’s existing notice. Reopening keeps the current content and visibility unchanged until another decision is made.</p>
                     <div className="flex flex-wrap justify-end gap-2"><ModerationButton type="submit" label="Save review change" color="green" description="Save this change and add it to the review history." disabled={busy||!draft.reason.trim()}/>
                     <ModerationButton label="Cancel" color="gray" description="Discard the unsaved change." disabled={busy} onClick={()=>setDraft(null)}/></div>

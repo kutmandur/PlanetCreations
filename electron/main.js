@@ -1,3 +1,4 @@
+const {readAnalysisPreferences, setAnalysisPreference, analysisEnabled} = require('./modules/SaveAnalysisSettings');
 const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, Notification, screen, session, safeStorage, net, globalShortcut, powerMonitor } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
@@ -2002,6 +2003,7 @@ ipcMain.handle('select-collaboration-file', async (event, gameId) => {
     requireTrustedIpcSender(event, true);
     const extensionsByGame = {
         'planet-coaster-2': ['park2', 'blpr2', 'prkauto2'],
+        'planet-zoo-2': ['zoo', 'zblpr'],
         'planet-zoo': ['zoo', 'pzblueprint', 'zooauto', 'zoo_auto'],
     };
     const extensions = extensionsByGame[gameId];
@@ -2144,7 +2146,7 @@ async function chooseFrontierFolder(event) {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     const options = {
         title: 'Choose the Frontier Developments game folder',
-        message: 'Choose the Frontier Developments folder that contains Planet Coaster 2 or Planet Zoo.',
+        message: 'Choose the Frontier Developments folder that contains Planet Coaster 2, Planet Zoo or Planet Zoo 2.',
         properties: ['openDirectory'],
         defaultPath: fs.existsSync(detectedPath) ? detectedPath : app.getPath('documents'),
     };
@@ -2215,6 +2217,7 @@ ipcMain.handle('read-file-as-data-url', (event, filePath) => {
 });
 
 ipcMain.handle('read-frontier-preview', (event, filePath) => {
+    if (!analysisEnabled(app.getPath('userData'), filePath)) return null;
     requireTrustedIpcSender(event, true);
     if (!filePath || typeof filePath !== 'string') return null;
     const resolvedPath = path.resolve(filePath);
@@ -2228,7 +2231,17 @@ ipcMain.handle('read-frontier-preview', (event, filePath) => {
     return readFrontierPreview(resolvedPath);
 });
 
+ipcMain.handle('get-save-analysis-settings', event => {
+    requireTrustedIpcSender(event, true);
+    return readAnalysisPreferences(app.getPath('userData'));
+});
+ipcMain.handle('set-save-analysis-setting', (event, gameId, enabled) => {
+    requireTrustedIpcSender(event, true);
+    return setAnalysisPreference(app.getPath('userData'), gameId, enabled);
+});
+
 ipcMain.handle('read-planet-zoo-analysis', async (event, filePath) => {
+    if (!analysisEnabled(app.getPath('userData'), filePath)) throw new Error('Savefile analysis is disabled for this game. Enable it in Client Settings.');
     requireTrustedIpcSender(event, true);
     const storedPath = getStoredPath();
     const resolvedPath = resolveZooSavePath(filePath, storedPath);
@@ -2313,7 +2326,7 @@ ipcMain.handle('list-all-local-creations-and-backups', async (event) => {
 
     for (const backup of creationBackups) {
         const origExt = path.extname(backup.originalFileName || '').toLowerCase();
-        let gameName = backup.gameId === 'planet-coaster-2' ? 'Planet Coaster 2' :
+        let gameName = backup.gameId === 'planet-zoo-2' ? 'Planet Zoo 2' : backup.gameId === 'planet-coaster-2' ? 'Planet Coaster 2' :
             (backup.gameId === 'planet-zoo' ? 'Planet Zoo' : null);
         if (!gameName && ['.park2', '.blpr2', '.prkauto2'].includes(origExt)) gameName = 'Planet Coaster 2';
         if (!gameName && ['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto'].includes(origExt)) gameName = 'Planet Zoo';
@@ -2339,170 +2352,6 @@ ipcMain.handle('list-all-local-creations-and-backups', async (event) => {
     return gameFiles;
 });
 
-ipcMain.handle('prepare-backup-for-upload', async (event, filePath, idToken, appCheckToken) => {
-    requireTrustedIpcSender(event, true);
-    if (!filePath || typeof filePath !== 'string') {
-        return { success: false, message: 'No file path provided.' };
-    }
-
-    const resolvedSourcePath = path.resolve(filePath);
-    const fileExt = path.extname(resolvedSourcePath).toLowerCase();
-
-    try {
-        if (!fs.existsSync(resolvedSourcePath) || !fs.statSync(resolvedSourcePath).isFile()) {
-            return { success: false, message: 'The selected file is no longer available.' };
-        }
-        const storedPath = getStoredPath();
-        const allowedSourceRoots = [
-            storedPath,
-            path.join(app.getPath('home'), 'Saved Games', 'Frontier Developments'),
-            path.join(app.getPath('documents'), 'Frontier Developments'),
-            path.join(app.getPath('documents'), 'PlanetCreations'),
-        ].filter(Boolean);
-        const isConfiguredSource = allowedSourceRoots.some(root => isPathInside(root, resolvedSourcePath));
-        const wasExplicitlySelected = consumeUploadSourceAuthorization(resolvedSourcePath);
-        if (!isConfiguredSource && !wasExplicitlySelected) {
-            return { success: false, message: 'The selected file is outside the configured game and backup folders.' };
-        }
-        let preparedPath = resolvedSourcePath;
-        let deleteAfterUse = false;
-        let validation;
-        if (fileExt === '.planetcreations') {
-            validation = await validateBackupForUpload(resolvedSourcePath);
-            if (!validation.valid) {
-                return { success: false, message: validation.error };
-            }
-        } else {
-            if (!isValidGameFile(resolvedSourcePath)) {
-                return {
-                    success: false,
-                    message: `Invalid file type. Only game files (${ALLOWED_GAME_EXTENSIONS.join(', ')}) can be uploaded.`
-                };
-            }
-            preparedPath = await createBackup(
-                app,
-                resolvedSourcePath,
-                "Uploaded with creation",
-                true,
-                idToken,
-                app.getPath('temp'),
-                appCheckToken,
-            );
-            if (!preparedPath) {
-                throw new Error("Backup creation function did not return a valid path.");
-            }
-            deleteAfterUse = true;
-            validation = await validateBackupForUpload(preparedPath);
-            if (!validation.valid) {
-                if (fs.existsSync(preparedPath)) fs.unlinkSync(preparedPath);
-                return { success: false, message: validation.error };
-            }
-        }
-
-        const preparedStats = fs.statSync(preparedPath);
-        const uploadHandle = preparedUploads.register({
-            filePath: path.resolve(preparedPath),
-            fileName: path.basename(preparedPath),
-            fileSize: validation.fileSize,
-            modifiedAtMs: preparedStats.mtimeMs,
-            isSigned: validation.isSigned,
-            deleteAfterUse,
-        });
-        return {
-            success: true,
-            uploadHandle,
-            fileName: path.basename(preparedPath),
-            isSigned: validation.isSigned,
-            fileSize: validation.fileSize,
-            metadata: validation.metadata,
-        };
-    } catch (error) {
-        console.error('Error in prepareBackupForUpload:', error);
-        return { success: false, message: `An error occurred: ${error.message}` };
-    }
-});
-
-ipcMain.handle('upload-prepared-backup', async (event, uploadHandle, idToken, appCheckToken, consent) => {
-    requireTrustedIpcSender(event, true);
-    const prepared = preparedUploads.take(uploadHandle);
-    if (!prepared) {
-        return { success: false, message: 'This prepared upload has expired or was already used. Please select the file again.' };
-    }
-    let uploadId = null;
-    try {
-        if (consent?.ownershipConfirmed !== true || consent?.hostingAccepted !== true) {
-            return { success: false, message: 'Ownership and hosting consent are required before upload.' };
-        }
-        const filePath = prepared.filePath;
-        if (!filePath || path.extname(filePath).toLowerCase() !== '.planetcreations' || !fs.existsSync(filePath)) {
-            return { success: false, message: 'The prepared backup file is missing or invalid.' };
-        }
-        const resolvedPath = path.resolve(filePath);
-        const stats = fs.statSync(resolvedPath);
-        if (!stats.isFile() || stats.size !== prepared.fileSize || stats.mtimeMs !== prepared.modifiedAtMs ||
-            stats.size <= 0 || stats.size > 300 * 1024 * 1024) {
-            return { success: false, message: 'The prepared backup changed before upload. Please select it again.' };
-        }
-        const validation = await validateBackupForUpload(resolvedPath);
-        if (!validation.valid || validation.fileSize !== prepared.fileSize) {
-            return { success: false, message: validation.error || 'The prepared backup could not be verified.' };
-        }
-
-        const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-        const confirmation = await dialog.showMessageBox(parentWindow, {
-            type: 'question',
-            title: 'Upload to PlanetCreations',
-            message: `Upload “${prepared.fileName}” to PlanetCreations?`,
-            detail: 'The signed package will be stored on PlanetCreations and shared with the Creation or collaboration you are editing. Continue only if you own it or have permission to share it.',
-            buttons: ['Cancel', 'Upload'],
-            defaultId: 1,
-            cancelId: 0,
-            noLink: true,
-        });
-        if (confirmation.response !== 1) {
-            return { success: false, status: 'canceled', message: 'Upload canceled.' };
-        }
-
-        const upload = await callPlanetCreationsCallable('getUploadUrl', {
-            fileName: prepared.fileName,
-            fileSize: prepared.fileSize,
-            ownershipConfirmed: true,
-            hostingAccepted: true,
-        }, idToken, appCheckToken);
-        uploadId = upload.uploadId;
-        const parsedUrl = new URL(upload.uploadUrl);
-        if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.r2.cloudflarestorage.com')) {
-            throw new Error('PlanetCreations returned an untrusted upload target.');
-        }
-        const response = await fetch(parsedUrl.toString(), {
-            method: 'PUT',
-            headers: {
-                'Content-Type': upload.contentType || 'application/zip',
-                'Content-Length': String(stats.size),
-            },
-            body: fs.createReadStream(resolvedPath),
-            // Node's fetch/undici requires half-duplex mode when the request
-            // body is a stream. Without it, the upload fails before any bytes
-            // reach R2 with "RequestInit: duplex option is required".
-            duplex: 'half',
-        });
-        if (!response.ok) {
-            throw new Error(`The file server returned HTTP ${response.status}.`);
-        }
-        return { success: true, status: response.status, uploadId };
-    } catch (error) {
-        console.error('R2 backup upload failed:', error);
-        if (uploadId) {
-            await callPlanetCreationsCallable('abortBackupUpload', { uploadId }, idToken, appCheckToken)
-                .catch(abortError => log.warn('Could not abort failed upload session:', abortError.message));
-        }
-        return { success: false, message: error.message || 'The file could not be uploaded. Please try again.' };
-    } finally {
-        deletePreparedTemporaryFile(prepared);
-    }
-});
-
-// --- Andere Kern-Funktionen ---
 ipcMain.handle('import-media-backup', (event) => {
     requireTrustedIpcSender(event, true);
     return importMediaBackup(app, dialog);
@@ -2601,9 +2450,9 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
 
     return indexed.results;
 });
-ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken) => {
+ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken, includeMedia = false) => {
     requireTrustedIpcSender(event, true);
-    return createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken);
+    return createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken, includeMedia === true);
 });
 ipcMain.handle('list-all-backups', (event) => {
     requireTrustedIpcSender(event, true);

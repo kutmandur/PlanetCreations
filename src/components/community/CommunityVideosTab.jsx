@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import LoadMoreTrigger from '../ui/LoadMoreTrigger';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getYoutubeThumbnailUrl } from '../../utils/helpers';
 import { useCommunityYoutubeVideos } from '../../hooks/youtubeVideoIndex';
@@ -48,7 +49,6 @@ const CommunityVideosTab = ({ community, creations, events }) => {
 
     const [activeSubTab, setActiveSubTab] = useState(subTabs[0]);
 
-    const loadMoreVideosRef = useRef(null);
     const {
         error: feedError,
         hasMore: hasMoreYoutubeVideos,
@@ -61,22 +61,7 @@ const CommunityVideosTab = ({ community, creations, events }) => {
         pageSize: 15,
     });
 
-    useEffect(() => {
-        const target = loadMoreVideosRef.current;
-        if (activeSubTab !== 'Youtube' || !target || !hasMoreYoutubeVideos) return undefined;
-        const observer = new IntersectionObserver(entries => {
-            if (entries[0]?.isIntersecting && !youtubeVideosFetchingMore) {
-                loadMoreYoutubeVideos();
-            }
-        }, { rootMargin: '240px' });
-        observer.observe(target);
-        return () => observer.disconnect();
-    }, [
-        activeSubTab,
-        hasMoreYoutubeVideos,
-        loadMoreYoutubeVideos,
-        youtubeVideosFetchingMore,
-    ]);
+
 
     // Showcases: Creations mit derselben showcaseVideoUrl gehören zu einem Showcase
     const showcases = useMemo(() => {
@@ -195,11 +180,10 @@ const CommunityVideosTab = ({ community, creations, events }) => {
                                 </div>
                             ))}
                         </div>
-                        {hasMoreYoutubeVideos && (
-                            <div ref={loadMoreVideosRef} className="flex min-h-24 items-center justify-center py-6">
-                                {youtubeVideosFetchingMore && <Spinner />}
-                            </div>
-                        )}
+                        <LoadMoreTrigger hasMore={hasMoreYoutubeVideos}
+                            busy={feedLoading || youtubeVideosFetchingMore} progress={indexedYoutubeVideos.length}
+                            onLoadMore={loadMoreYoutubeVideos} label="Load more videos" />
+                        {!hasMoreYoutubeVideos && <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">You have reached the end</p>}
                     </>
                 ) : (
                     <p className="text-center text-gray-500 dark:text-gray-400 mt-10 py-10 bg-white dark:bg-gray-800 rounded-lg shadow-md">This channel has no videos yet.</p>

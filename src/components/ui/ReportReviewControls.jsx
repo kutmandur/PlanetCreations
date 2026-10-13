@@ -1,3 +1,5 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, {useState, useEffect, useId} from 'react';
 import {doc, onSnapshot} from 'firebase/firestore';
 import {db} from '../../firebase/config';
@@ -55,14 +57,14 @@ export default function ReportReviewControls({reports, children}) {
             {selectedReport?.targetType==='creation'&&selectedReport.mediaKey&&<ReportedImagePreview key={reportId} report={selectedReport} review={review}/>}
             {review?.evidenceExpired&&<p className="text-sm">The original content has expired. Edit and approve the current version to release this hold.</p>}
             {review?.appeal&&<p className="text-sm">Author’s appeal: {review.appeal}</p>}
-            {showcaseEdit&&<fieldset disabled={busy} className="space-y-2 rounded border p-3"><legend>Showcase details</legend><label className="block">Showcase name<input className="block w-full border rounded p-2" maxLength={80} value={showcaseEdit.name} onChange={e=>setShowcaseEdit({...showcaseEdit,name:e.target.value})}/></label><label className="block">Video URL<input type="url" className="block w-full border rounded p-2" value={showcaseEdit.videoUrl} onChange={e=>setShowcaseEdit({...showcaseEdit,videoUrl:e.target.value})}/></label><p className="text-xs">Leave the URL empty to remove the video. Saving keeps the showcase withheld until approval.</p></fieldset>}
+            {showcaseEdit&&<fieldset disabled={busy} className="space-y-2 rounded border p-3"><legend>Showcase details</legend><label className="block">Showcase name<LimitedTextField maxLength={TEXT_LIMITS.showcaseName} className="block w-full border rounded p-2" value={showcaseEdit.name} onChange={e=>setShowcaseEdit({...showcaseEdit,name:e.target.value})}/></label><label className="block">Video URL<LimitedTextField maxLength={TEXT_LIMITS.showcaseVideoUrl} type="url" className="block w-full border rounded p-2" value={showcaseEdit.videoUrl} onChange={e=>setShowcaseEdit({...showcaseEdit,videoUrl:e.target.value})}/></label><p className="text-xs">Leave the URL empty to remove the video. Saving keeps the showcase withheld until approval.</p></fieldset>}
             {hasOriginal&&<details><summary>Retained display content (staff only)</summary><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(review.original,null,2)}</pre></details>}
             {review?.retainedEvidence&&<details><summary>Previous content (staff only)</summary><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(review.retainedEvidence,null,2)}</pre></details>}
             {review?.history?.length>0&&<details><summary>Review history</summary>{review.history.map((entry,index)=><p key={index} className="text-xs">{entry.action}: {entry.reason}</p>)}</details>}
             {!closed&&supported&&<div className="group relative text-sm">
                 <label htmlFor={reasonId} className="block w-fit cursor-help">Review reason</label>
                 <span id={`${reasonId}-help`} role="tooltip" className="pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2 w-64 max-w-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white opacity-0 shadow-lg group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">Briefly explain your moderation decision and what you checked or changed. A reason is required for review actions and is saved in the review history. Decision reasons may also be shown to the author. Maximum 1,000 characters.</span>
-                <textarea id={reasonId} aria-describedby={`${reasonId}-help`} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)} maxLength={1000} className="w-full border rounded p-2" />
+                <LimitedTextField maxLength={TEXT_LIMITS.reviewReason} as="textarea" id={reasonId} aria-describedby={`${reasonId}-help`} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)} className="w-full border rounded p-2" />
             </div>}
             {message&&<p role="status">{message}</p>}
         </div>

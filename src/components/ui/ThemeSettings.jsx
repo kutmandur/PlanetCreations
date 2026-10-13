@@ -1,3 +1,5 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useRef, useState } from 'react';
 import { savePersonalTheme } from '../../firebase/personalTheme';
 import {
@@ -133,7 +135,7 @@ export default function ThemeSettings({ user }) {
             <fieldset disabled={saving} className="min-w-0 space-y-5">
                 <div>
                     <label htmlFor="theme-background" className="block text-sm font-semibold mb-2">Background image</label>
-                    <input id="theme-background" type="url" value={draft.backgroundUrl} maxLength={2048} spellCheck={false}
+                    <LimitedTextField maxLength={TEXT_LIMITS.imageUrl} id="theme-background" type="url" value={draft.backgroundUrl} spellCheck={false}
                         onChange={event => edit('backgroundUrl', event.target.value)} placeholder="https://i.postimg.cc/…/image.jpg"
                         aria-describedby="theme-background-help" className="w-full rounded-lg border p-3 text-sm" />
                     <p id="theme-background-help" className="text-xs text-gray-500 mt-2">Paste a Postimages Direct Link. Used in landscape and whenever no portrait image is set. Leave empty to use the default background.</p>
@@ -141,7 +143,7 @@ export default function ThemeSettings({ user }) {
                 </div>
                 <div>
                     <label htmlFor="theme-portrait-background" className="block text-sm font-semibold mb-2">Portrait background image</label>
-                    <input id="theme-portrait-background" type="url" value={draft.portraitBackgroundUrl} maxLength={2048} spellCheck={false}
+                    <LimitedTextField maxLength={TEXT_LIMITS.imageUrl} id="theme-portrait-background" type="url" value={draft.portraitBackgroundUrl} spellCheck={false}
                         onChange={event => edit('portraitBackgroundUrl', event.target.value)} placeholder="https://i.postimg.cc/…/portrait.jpg"
                         aria-describedby="theme-portrait-background-help" className="w-full rounded-lg border p-3 text-sm" />
                     <p id="theme-portrait-background-help" className="text-xs text-gray-500 mt-2">Optional Postimages Direct Link for portrait windows, including phones and narrow desktop windows. Switching is automatic when you rotate or resize. If empty or unavailable, the background image above is used.</p>

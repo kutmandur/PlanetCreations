@@ -91,13 +91,13 @@ test('shows compact verified park stats and opens a full ride list grouped by ca
     expect(screen.getByTestId('ride-category-flat-ride')).toHaveTextContent('Flat Rides');
     expect(screen.queryByText('Verified')).not.toBeInTheDocument();
     expect(screen.queryByText('Rides')).not.toBeInTheDocument();
-    expect(screen.getByTestId('combined-piece-count')).toHaveTextContent(new Intl.NumberFormat().format(203557));
-    expect(screen.getByTestId('combined-piece-count').closest('[data-auto-fit-number]')).toBeInTheDocument();
+    expect(screen.getByText('Construction parts').closest('article')).toHaveTextContent(new Intl.NumberFormat().format(199034));
+
 
     fireEvent.click(screen.getByRole('button', { name: 'Ride List' }));
     expect(screen.getByRole('dialog', { name: 'Ride List' })).toBeInTheDocument();
     expect(screen.getByText('Frost Giant Reach')).toBeInTheDocument();
-    expect(screen.getByText('88 km/h')).toBeInTheDocument();
+    expect(screen.getByText('Max speed (km/h)').parentElement).toHaveTextContent('88');
     expect(screen.getByText('River Run')).toBeInTheDocument();
     expect(screen.getByText('Big Wheel')).toBeInTheDocument();
     expect(screen.getByTestId('ride-category-heading-coaster')).toHaveClass('text-center');
@@ -109,14 +109,17 @@ test('shows compact verified park stats and opens a full ride list grouped by ca
     expect(screen.queryByText('Avg excitement')).not.toBeInTheDocument();
 });
 
-test('keeps park-only controls off blueprint pages and still offers all stats', () => {
-    render(<VerifiedParkStats metadata={{ blueprint: { rideCount: 1 } }} />);
-    expect(screen.getByTestId('verified-blueprint-stats')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'More stats' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Ride List' })).not.toBeInTheDocument();
+test('hides an empty Park Info panel and preserves zero values', () => {
+    const {container, rerender} = render(<VerifiedParkStats presentation={{}} />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<VerifiedParkStats presentation={{parkInfo: {placementCost: 0}}} />);
+    expect(screen.getByText('Build cost')).toBeInTheDocument();
+    expect(screen.queryByText('Running cost')).not.toBeInTheDocument();
+    expect(screen.queryByText('N/A')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Ride List'})).not.toBeInTheDocument();
 });
 
-test('uses the animated pill selector for Normal and Nerd mode', () => {
+test('never offers online Nerd mode even for legacy analysis metadata', () => {
     render(<VerifiedParkStats
         creationId="animated-park"
         rideAnalysisSummary={{ available: true }}
@@ -132,76 +135,17 @@ test('uses the animated pill selector for Normal and Nerd mode', () => {
     />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Ride List' }));
-    const normalMode = screen.getByRole('button', { name: 'Normal mode' });
-    const selector = normalMode.parentElement;
-    expect(selector).toHaveClass('relative', 'rounded-full', 'shadow-inner');
-    expect(selector.querySelector('.transition-all.duration-300.ease-out')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Nerd mode' }));
-    expect(screen.getByRole('button', { name: 'Nerd mode' })).toHaveClass('text-white');
-    expect(screen.getByTestId('nerd-ride-list')).toHaveTextContent('Animated Coaster');
+    expect(screen.queryByRole('button', {name: 'Nerd mode'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Normal mode'})).not.toBeInTheDocument();
 });
 
-test('shows verified blueprint costs and EFN values in compact stat cards', () => {
-    render(<VerifiedParkStats
-        creationName="Boulder Blast Wooden Coaster"
-        bannerImageUrl="https://images.example.com/boulder-blast.jpg"
-        metadata={{ blueprint: {
-        placementCost: 13815.503,
-        runningCost: 574.267,
-        ratings: {
-            excitement: 4.9,
-            fear: 5.5,
-            nausea: 2.4,
-        },
-        trackedRideElementCount: 42,
-        utilities: {
-            generatedPower: 12.5,
-            requiredPower: 8,
-        },
-        researchPacks: [2621, 9999],
-    } }}
-    />);
-
-    const stats = screen.getByTestId('verified-blueprint-stats');
-    expect(stats).toHaveTextContent('Build cost');
-    expect(stats).toHaveTextContent(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(13815.503));
-    expect(stats).toHaveTextContent('Running cost');
-    expect(stats).toHaveTextContent(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(574.267));
-    expect(screen.getByTestId('blueprint-score-excitement')).toHaveTextContent('Excitement');
-    expect(screen.getByTestId('blueprint-score-excitement')).toHaveTextContent(new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(4.9));
-    expect(screen.getByTestId('blueprint-score-excitement')).toHaveAttribute('data-tone', 'yellow');
-    expect(screen.getByTestId('blueprint-score-fear')).toHaveAttribute('data-tone', 'green');
-    expect(screen.getByTestId('blueprint-score-nausea')).toHaveAttribute('data-tone', 'green');
-    expect(screen.getByTestId('blueprint-score-excitement')).toHaveClass('bg-yellow-100', 'dark:bg-yellow-800/80');
-    expect(screen.getByTestId('blueprint-score-fear')).toHaveClass('bg-green-100', 'dark:bg-green-800/80');
-    expect(screen.getByTestId('blueprint-score-nausea')).toHaveClass('bg-green-100', 'dark:bg-green-800/80');
-    expect(screen.queryByRole('button', { name: 'Ride List' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'More stats' }));
-    const dialog = screen.getByRole('dialog', { name: 'Creation stats' });
-    expect(dialog).toHaveClass('max-w-5xl', 'bg-gray-100', 'text-center', 'text-gray-900', 'dark:bg-gray-950', 'dark:text-gray-100');
-    expect(dialog.querySelector('header')).toHaveClass('from-blue-100', 'dark:from-blue-950');
-    expect(screen.getByRole('heading', { name: 'Boulder Blast Wooden Coaster' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Boulder Blast Wooden Coaster gallery banner' })).toHaveAttribute('src', 'https://images.example.com/boulder-blast.jpg');
-    expect(screen.getByTestId('banner-efn-excitement')).toHaveTextContent('Excitement');
-    expect(screen.getByTestId('banner-efn-excitement')).toHaveAttribute('data-tone', 'yellow');
-    expect(screen.getByTestId('banner-efn-excitement')).toHaveClass('bg-yellow-100/90', 'dark:bg-yellow-800/85');
-    expect(screen.getByTestId('banner-efn-fear')).toHaveAttribute('data-tone', 'green');
-    expect(screen.getByTestId('banner-efn-fear')).toHaveClass('bg-green-100/90', 'dark:bg-green-800/85');
-    expect(screen.getByTestId('banner-efn-nausea')).toHaveAttribute('data-tone', 'green');
-    expect(screen.getByTestId('banner-efn-nausea')).toHaveClass('bg-green-100/90', 'dark:bg-green-800/85');
-    expect(screen.queryByText('Stored blueprint rating')).not.toBeInTheDocument();
-    expect(dialog).toHaveTextContent('Tracked-ride elements');
-    expect(dialog).toHaveTextContent('42');
-    const trackedRideMetric = screen.getByText('Tracked-ride elements').parentElement;
-    expect(trackedRideMetric).toHaveClass('w-fit', 'text-center', 'bg-white', 'dark:bg-gray-900/75');
-    expect(trackedRideMetric.parentElement).toHaveClass('flex', 'justify-center');
-    expect(dialog).toHaveTextContent('Generated power');
-    expect(dialog).toHaveTextContent('Required power');
-    expect(dialog).toHaveTextContent('Research packs');
-    expect(dialog).toHaveTextContent('Vector · Swinging Mine Train');
-    expect(dialog).toHaveTextContent('Unknown research reward #9999');
+test('shows editable blueprint values and hides explicitly cleared legacy fields', () => {
+    render(<VerifiedParkStats metadata={{blueprint: {placementCost: 100, runningCost: 5, ratings: {excitement: 8}}}}
+        presentation={{parkInfo: {placementCost: 200, runningCost: null}, parkText: {biome: 'Desert'}}} />);
+    expect(screen.getByText('Build cost').closest('article')).toHaveTextContent('200');
+    expect(screen.queryByText('Running cost')).not.toBeInTheDocument();
+    expect(screen.getByText('Excitement')).toBeInTheDocument();
+    expect(screen.getByText('Desert')).toBeInTheDocument();
 });
 
 test('applies user visibility and offers animated Areas and Types views', () => {
@@ -259,7 +203,7 @@ test('applies user visibility and offers animated Areas and Types views', () => 
     expect(screen.getByTestId('ride-category-heading-show')).toBeInTheDocument();
 });
 
-test('shows calculated trace EFN and only falls back to creator EFN when no verified source exists', () => {
+test('prioritizes creator EFN over legacy values', () => {
     const park = {
         trackedRideCount: 1,
         rides: [{
@@ -276,15 +220,14 @@ test('shows calculated trace EFN and only falls back to creator EFN when no veri
     const rideKey = getPresentedParkRideEntries(park, null, { includeHidden: true })[0].key;
     const { rerender } = render(<VerifiedParkStats metadata={{ park }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Ride List' }));
-    expect(screen.getByTestId('test-score-excitement')).toHaveTextContent(new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(9.99));
-    expect(screen.getByTestId('test-score-excitement')).toHaveAttribute('title', 'Excitement calculated from the stored ride-test curve');
-    expect(screen.getByText('Calculated from test curve')).toBeInTheDocument();
+    expect(screen.queryByTestId('test-score-excitement')).not.toBeInTheDocument();
+    expect(screen.queryByText('Calculated from test curve')).not.toBeInTheDocument();
 
     rerender(<VerifiedParkStats metadata={{ park }} presentation={{
         rideEfnOverrides: { [rideKey]: { excitement: 2.5, fear: 4, nausea: 1 } },
     }} />);
-    expect(screen.getByTestId('test-score-excitement')).toHaveTextContent(new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(9.99));
-    expect(screen.getByTestId('test-score-excitement')).toHaveAttribute('title', 'Excitement calculated from the stored ride-test curve');
+    expect(screen.getByTestId('test-score-excitement')).toHaveTextContent(new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(2.5));
+    expect(screen.getByTestId('test-score-excitement')).toHaveAttribute('title', 'Excitement entered by the creator');
 
     const untestedPark = { trackedRideCount: 1, rides: [{
         kind: 'tracked', name: 'Untested Ride', rideCategoryKey: 'coaster', rideCategory: 'Coaster',
@@ -297,16 +240,10 @@ test('shows calculated trace EFN and only falls back to creator EFN when no veri
     expect(screen.getByTestId('test-score-excitement')).toHaveAttribute('title', 'Excitement entered by the creator');
 });
 
-test('explains why multi-ride blueprints cannot show EFN or ride analysis', () => {
-    render(<VerifiedParkStats creationId="multi-blueprint" rideAnalysisSummary={{ available: true }} metadata={{ blueprint: {
-        trackedRideCount: 2,
-        flatRideCount: 2,
-        rides: [],
-    } }} />);
-    expect(screen.getByTestId('multi-ride-blueprint-analysis-note')).toHaveTextContent(
-        'does not include final EFN ratings or ride-test curves in multi-ride blueprints',
-    );
-    expect(screen.queryByRole('button', { name: 'Nerd mode' })).not.toBeInTheDocument();
+test('shows user ratings for multi-ride blueprints without analysis claims', () => {
+    render(<VerifiedParkStats metadata={{blueprint: {trackedRideCount: 2}}} presentation={{parkInfo: {excitement: 6}}} />);
+    expect(screen.getByText('Excitement')).toBeInTheDocument();
+    expect(screen.queryByTestId('multi-ride-blueprint-analysis-note')).not.toBeInTheDocument();
 });
 
 test('lists 80 rides inside the vertically scrolling popover without horizontal overflow', () => {

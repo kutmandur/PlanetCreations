@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SUPPORTED_SAVE_EXTENSIONS = new Set([
+    '.zblpr',
     '.park2',
     '.blpr2',
     '.prkauto2',

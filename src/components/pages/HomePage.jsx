@@ -1,3 +1,5 @@
+import { useFeedPoolLabels } from '../../hooks/useFeedPoolLabels';
+import LoadMoreTrigger from '../ui/LoadMoreTrigger';
 import {useUserBlocks} from '../../contexts/BlockingContext';
 import React, { useRef, useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -474,6 +476,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
 
     // Suche über den Kompakt-Index — komplett client-seitig, kein Server-Roundtrip.
     // Erst strukturelle Filter, dann Fuse.js-Textsuche über die vorgefilterte Menge.
+    const showFeedPools = useFeedPoolLabels(user?.uid);
     const [indexSearchResults, setIndexSearchResults] = useState([]);
     const [indexComputing, setIndexComputing] = useState(false);
     useEffect(() => {
@@ -483,43 +486,28 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         setIndexSearchResults([]);
         runHomeIndexSearch({shouldUseIndexSearch, indexCreations, homeState, supportsConsole, dlcFilterMode, selectedDlcs,
             userProfile: {role: userProfile?.role, ownedDlcs: userProfile?.ownedDlcs}, activeTab, user: {uid: user?.uid}, interestMap,
-            globalFeedWeights, localFeedWeights: getLocalFeedWeights(), seed: FEED_LOAD_SEED, now: Date.now()})
+            showFeedPools, globalFeedWeights, localFeedWeights: getLocalFeedWeights(), seed: FEED_LOAD_SEED, now: Date.now()})
             .then(results => { if (!cancelled) setIndexSearchResults(results); })
             .catch(error => console.error('Index search failed:', error))
             .finally(() => { if (!cancelled) setIndexComputing(false); });
         return () => { cancelled = true; };
-    }, [shouldUseIndexSearch, indexCreations, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights, supportsConsole]);
-
-    const indexHasMore = shouldUseIndexSearch && visibleCount < indexSearchResults.length;
-
-    const showMoreIndexResults = useCallback(() => {
-        setVisibleCount(prev => (prev < indexSearchResults.length ? prev + 24 : prev));
-    }, [indexSearchResults.length]);
-
-    // Scroll handler for infinite loading
-    useEffect(() => {
-        const handleScroll = () => {
-            const isBottom = window.innerHeight + document.documentElement.scrollTop + 1 >= document.documentElement.offsetHeight;
-            if (isBottom) {
-                // Client-seitige Pagination im Suchmodus, sonst Firestore
-                if (shouldUseIndexSearch) {
-                    showMoreIndexResults();
-                } else {
-                    fetchMoreCreations();
-                }
-            }
-        };
-
-        window.addEventListener('scroll', handleScroll);
-        return () => window.removeEventListener('scroll', handleScroll);
-    }, [fetchMoreCreations, showMoreIndexResults, shouldUseIndexSearch]);
+    }, [shouldUseIndexSearch, indexCreations, homeState.searchTerm, homeState.filterTags, homeState.activeCategory, homeState.platformFilter, homeState.showModsOnly, homeState.sortBy, activeTab, dlcFilterMode, selectedDlcs, userProfile, user, interestMap, globalFeedWeights, supportsConsole, showFeedPools]);
 
     const {isBlocked} = useUserBlocks();
+    const availableIndexResults = useMemo(
+        () => indexSearchResults.filter(creation => !isBlocked(creation.userId)),
+        [indexSearchResults, isBlocked],
+    );
+    const indexHasMore = shouldUseIndexSearch && visibleCount < availableIndexResults.length;
+    const showMoreIndexResults = useCallback(() => {
+        setVisibleCount(previous => Math.min(previous + 24, availableIndexResults.length));
+    }, [availableIndexResults.length]);
+
     const filteredCreations = useMemo(() => {
         // Suchmodus: Ergebnisse kommen fertig gefiltert/sortiert aus dem Index,
         // hier nur noch die client-seitige Pagination anwenden
         if (shouldUseIndexSearch) {
-            return indexSearchResults.filter(c => !isBlocked(c.userId)).slice(0, visibleCount);
+            return availableIndexResults.slice(0, visibleCount);
         }
 
         // Standard Firestore mode - some filters still client-side
@@ -561,7 +549,7 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
         }
 
         return filtered;
-    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseIndexSearch, indexSearchResults, visibleCount, isBlocked]);
+    }, [homeState, creations, activeTab, selectedDlcs, dlcFilterMode, userProfile, shouldUseIndexSearch, availableIndexResults, visibleCount, isBlocked]);
 
 
 
@@ -757,9 +745,15 @@ const HomePage = ({ user, userProfile, activeTab, setActiveTab, homeState, setHo
                         <div className="mb-8">
                             {(homeState.searchTerm.trim() || (homeState.filterTags?.length > 0)) && <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-100">Creations Found</h2>}
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">{filteredCreations.map(creation => (<CreationCard key={creation.id} creation={creation} onTagClick={handleAddTag}/>))}</div>
+                            <LoadMoreTrigger
+                                hasMore={shouldUseIndexSearch ? indexHasMore : hasMore}
+                                busy={loadingMore || (shouldUseIndexSearch && (indexLoading || indexComputing))}
+                                progress={shouldUseIndexSearch ? visibleCount : creations.length}
+                                onLoadMore={shouldUseIndexSearch ? showMoreIndexResults : fetchMoreCreations}
+                            />
                             {loadingMore && <div className="text-center p-8 col-span-full"><Spinner/></div>}
-                            {shouldUseIndexSearch && !indexHasMore && indexSearchResults.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
-                            {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>)}
+                            {shouldUseIndexSearch && !indexHasMore && availableIndexResults.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You have reached the end</p>)}
+                            {!shouldUseIndexSearch && !hasMore && creations.length > 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You have reached the end</p>)}
                             {!loading && !(shouldUseIndexSearch && (indexLoading || indexComputing)) && filteredCreations.length === 0 && (<p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl">No creations found. Try a different search!</p>)}
                         </div>
                     </>

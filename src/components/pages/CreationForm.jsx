@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import {getFunctions as getPolicyFunctions, httpsCallable as policyCallable} from 'firebase/functions';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -17,25 +19,17 @@ import HighlightableTextarea from '../ui/HighlightableTextarea';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import InfoBox from '../ui/InfoBox';
 import MediaPreviewTile from '../ui/MediaPreviewTile';
-import SelectBackupModal from '../modals/SelectBackupModal';
 import ParkRidesAreasEditor from '../creation/ParkRidesAreasEditor';
 import {
-    buildSavegamePrefill,
-    cleanSavegameTags,
     getCreationWizardSteps,
     inferCreationCategory,
 } from '../../utils/creationSavePrefill';
 import {
-    isParkCreationCategory,
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
 import { getCachedFrontierDlcCatalogs } from '../../utils/frontierDlcCatalogCache';
 import { wasOpenedFromCreationDetail, wasOpenedFromModeration } from '../../utils/creationNavigation';
-import {
-    DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE,
-    supportsDesktopBackupUpload,
-    uploadPreparedDesktopBackup,
-} from '../../utils/desktopBackupUpload';
+
 
 const CREATION_FINALIZATION_NOTICE = Object.freeze({
     title: 'Finishing creation',
@@ -200,7 +194,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const { id: creationToEditId } = useParams(); 
     const navigate = useNavigate();
     const location = useLocation();
-    const isNewDesktopCreation = !creationToEditId && Boolean(window.electronAPI?.isElectron);
+    const isNewDesktopCreation = false;
     
     const [game, setGame] = useState(creationToEditId ? '' : initialGame || getDefaultGameId());
     const [title, setTitle] = useState('');
@@ -241,7 +235,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const [selectedSourceFile, setSelectedSourceFile] = useState(null);
     const [loadedVerifiedMetadata, setLoadedVerifiedMetadata] = useState(null);
     const [parkRidePresentation, setParkRidePresentation] = useState(() => sanitizeParkRidePresentation(null));
-    const [inGameTags, setInGameTags] = useState([]);
     const [prefilledFields, setPrefilledFields] = useState([]);
     const [pendingCategoryPrefill, setPendingCategoryPrefill] = useState(null);
     const [activeStep, setActiveStep] = useState(isNewDesktopCreation ? 'source' : 'details');
@@ -309,7 +302,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     setVideoItems(loadedVideos);
                     setCustomMediaLink(data.customMediaLink || '');
                     setTags(data.tags?.join(', ') || '');
-                    setInGameTags(cleanSavegameTags(data.verifiedGameMetadata?.metadata));
                     setLoadedVerifiedMetadata(data.verifiedGameMetadata?.metadata || null);
                     setParkRidePresentation(sanitizeParkRidePresentation(data.parkRidePresentation));
                     setStatus(data.status || 'wip');
@@ -522,179 +514,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         else setVideoItems(prev => items);
     };
     
-    const handleFileSelectedForUpload = async (file) => {
-        setIsBackupModalOpen(false);
-        if (!file || !file.path) return false;
-
-        if (!ownershipConfirmed || !hostingAccepted) {
-            setModalMessage("Please confirm that you own the creation and accept hosting before uploading it.");
-            return false;
-        }
-    
-        if (!window.electronAPI) {
-            setModalMessage("This feature is only available in the desktop client.");
-            return false;
-        }
-        if (!supportsDesktopBackupUpload(window.electronAPI)) {
-            setModalMessage(DESKTOP_UPLOAD_BRIDGE_UNAVAILABLE_MESSAGE);
-            return false;
-        }
-    
-        setIsPreparingUpload(true);
-    
-        try {
-            if (backupUploadId) {
-                const abortPreviousUpload = httpsCallable(getFunctions(), 'abortBackupUpload');
-                await abortPreviousUpload({ uploadId: backupUploadId }).catch(() => null);
-                setBackupUploadId(null);
-            }
-            const [idToken, appCheckToken] = await Promise.all([
-                auth.currentUser.getIdToken(true),
-                getAppCheckTokenIfAvailable(),
-            ]);
-            const result = await window.electronAPI.prepareBackupForUpload(
-                file.path,
-                idToken,
-                appCheckToken,
-            );
-    
-            if (!result.success) {
-                setModalMessage(result.message || "Could not prepare backup file.");
-                setIsPreparingUpload(false);
-                return false;
-            }
-    
-            setBackupInfo({ name: result.fileName, path: null, signed: result.isSigned });
-
-            setIsPreparingUpload(false);
-            setIsUploading(true);
-            setUploadProgress(0);
-            const uploadResult = await uploadPreparedDesktopBackup({
-                api: window.electronAPI,
-                preparedBackup: result,
-                idToken,
-                appCheckToken,
-                ownershipConfirmed,
-                hostingAccepted,
-            });
-            if (!uploadResult?.success) {
-                throw new Error(uploadResult?.message || `File upload failed (${uploadResult?.status || 'network error'}).`);
-            }
-            // For edits, switch the local read-only preview only after the new
-            // file reached temporary storage successfully. The authoritative copy is replaced
-            // by finalizeBackupUpload when the Creation itself is saved.
-            setSelectedSourceFile(file);
-            setInGameTags(cleanSavegameTags(file.frontierMetadata));
-            setBackupUploadId(uploadResult.uploadId);
-            setRemoveExistingBackup(false);
-            setUploadProgress(100);
-            setIsUploading(false);
-            setModalMessage("Backup uploaded securely. It will be verified when you save the creation.");
-            return true;
-        } catch (error) {
-            console.error("Error during backup attachment:", error);
-            setModalMessage(`An error occurred: ${error.message}`);
-            setIsPreparingUpload(false);
-            setIsUploading(false);
-            setBackupInfo(null);
-            return false;
-        }
-    };
-
-    const handleInitialSaveSelected = (file) => {
-        setIsBackupModalOpen(false);
-        if (!file?.path) return;
-
-        const categories = CATEGORIES[file.gameId] || [];
-        const prefill = buildSavegamePrefill(file, categories, game);
-        const applied = [];
-        setSelectedSourceFile(file);
-        setSavegameDecision('attach');
-        setBackupInfo(null);
-        setRemoveExistingBackup(false);
-
-        if (prefill.gameId && prefill.gameId !== game) {
-            setGame(prefill.gameId);
-            applied.push('game');
-        }
-        if (!title.trim() && prefill.title) {
-            setTitle(prefill.title);
-            applied.push('title');
-        }
-        if (!description.trim() && prefill.description) {
-            setDescription(prefill.description);
-            applied.push('description');
-        }
-        if (prefill.requiredDlcs !== null) {
-            setRequiredDlcs(prefill.requiredDlcs);
-            applied.push('required DLCs');
-        }
-        if (prefill.usesMods !== null) {
-            setUsesMods(prefill.usesMods);
-            applied.push('mod status');
-        }
-        setInGameTags(prefill.gameTags);
-        if (prefill.category) {
-            setCategory(prefill.category);
-            applied.push('category');
-            setPendingCategoryPrefill(null);
-        } else if (prefill.metadata && prefill.gameId) {
-            setPendingCategoryPrefill({ gameId: prefill.gameId, metadata: prefill.metadata });
-        }
-        setPrefilledFields([...new Set(applied)]);
-    };
-
-    const handleModalFileSelected = (file) => {
-        if (backupModalPurpose === 'source') {
-            handleInitialSaveSelected(file);
-            return;
-        }
-        void handleFileSelectedForUpload(file);
-    };
-
-    const handleRemoveBackup = async () => {
-        if (backupUploadId) {
-            const functions = getFunctions();
-            const abortBackupUpload = httpsCallable(functions, 'abortBackupUpload');
-            await abortBackupUpload({ uploadId: backupUploadId })
-                .catch(err => console.error("Failed to abort temporary upload:", err));
-        }
-        if (hadExistingBackup) setRemoveExistingBackup(true);
-        setBackupUploadId(null);
-        setBackupInfo(null);
-        setOwnershipConfirmed(false);
-        setHostingAccepted(false);
-    };
-
-    const handleAttachFileClick = () => {
-        if (!ownershipConfirmed || !hostingAccepted) {
-            setModalMessage("Please confirm both statements before selecting a file.");
-            return;
-        }
-        if (window.electronAPI?.isElectron) {
-            setBackupModalPurpose('upload');
-            setIsBackupModalOpen(true);
-        } else {
-            navigate('/client-info');
-        }
-    };
-
-    const chooseSavegameAttachment = () => {
-        setSavegameDecision('attach');
-        setBackupModalPurpose('source');
-        setIsBackupModalOpen(true);
-    };
-
-    const chooseManualCreation = () => {
-        if (backupUploadId || backupInfo) void handleRemoveBackup();
-        setSavegameDecision('skip');
-        setSelectedSourceFile(null);
-        setInGameTags([]);
-        setPrefilledFields([]);
-        setPendingCategoryPrefill(null);
-    };
-
-
     const hasAtLeastOneValidTag = () => tags
         .split(',')
         .map(tag => tag.trim())
@@ -702,6 +521,15 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const lengthError = textLengthError(title, TEXT_LIMITS.creationTitle, 'Title') ||
+            textLengthError(description, TEXT_LIMITS.creationDescription, 'Description') ||
+            Object.entries(parkRidePresentation.parkText || {}).map(([key, value]) => textLengthError(value, TEXT_LIMITS.parkMetadata, key)).find(Boolean);
+        if (lengthError) {
+            setActiveStep('details');
+            setMobileOpen(true);
+            setModalMessage(lengthError);
+            return;
+        }
 
         if (isNewDesktopCreation && !isStepValid('source')) {
             setActiveStep('source');
@@ -755,8 +583,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 category, status, platform,
                 requiredDlcs, communityIds: selectedCommunities,
                 communityAssignments, communitySpecificData: customFieldData,
-                parkRidePresentation: isParkCreationCategory(category) ?
-                    sanitizeParkRidePresentation(parkRidePresentation) : null,
+                parkRidePresentation: sanitizeParkRidePresentation(parkRidePresentation),
             };
             let savedCreationId;
 
@@ -802,16 +629,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 await batch.commit();
                 savedCreationId = creationToEditId;
 
-                if (backupUploadId) {
-                    setModalMessage(CREATION_FINALIZATION_NOTICE);
-                    const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
-                    await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
-                } else if (removeExistingBackup && hadExistingBackup) {
-                    const removeCreationBackup = httpsCallable(getFunctions(), 'removeCreationBackup');
-                    await removeCreationBackup({ creationId: savedCreationId });
-                }
 
-                setModalMessage(backupUploadId ? null : "Creation updated successfully!");
+
+                setModalMessage("Creation updated successfully!");
                 scheduleDataRefresh();
                 if (wasOpenedFromModeration(location.state, creationToEditId)) {
                     navigate('/moderation?tab=reported-creations', {replace:true});
@@ -850,12 +670,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     });
                     await linkBatch.commit();
                 }
-                if (backupUploadId) {
-                    setModalMessage(CREATION_FINALIZATION_NOTICE);
-                    const finalizeBackupUpload = httpsCallable(getFunctions(), 'finalizeBackupUpload');
-                    await finalizeBackupUpload({ uploadId: backupUploadId, creationId: savedCreationId });
-                }
-                setModalMessage(backupUploadId ? null : "Creation submitted successfully!");
+
+                setModalMessage("Creation submitted successfully!");
                 scheduleCreationDataRefresh({ game, creationId: savedCreationId });
                 navigate('/');
             }
@@ -890,8 +706,9 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     };
 
     const handleTagKeyDown = (e) => {
-        if (e.key === ' ' || e.key === ',') {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === ',') {
             e.preventDefault();
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
             handleAddTag(tagInput);
             setTagInput('');
         }
@@ -900,11 +717,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
     const selectedTags = tags.split(',').map(t => t.trim()).filter(Boolean);
 
     const WIZARD_STEPS = getCreationWizardSteps({
-        isDesktopClient: Boolean(window.electronAPI?.isElectron),
+        isDesktopClient: false,
         isEdit: Boolean(creationToEditId),
         category,
     });
-    const editablePark = (selectedSourceFile?.frontierMetadata || loadedVerifiedMetadata)?.park || null;
+    const editablePark = loadedVerifiedMetadata?.park || loadedVerifiedMetadata?.blueprint || null;
     const activeStepIndex = WIZARD_STEPS.findIndex(step => step.id === activeStep);
     const isLastStep = activeStepIndex === WIZARD_STEPS.length - 1;
     const activeStepLabel = WIZARD_STEPS[activeStepIndex]?.label || '';
@@ -928,28 +745,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
         event?.preventDefault();
         event?.stopPropagation();
         if (isChangingStep) return;
-        if (activeStep === 'source') {
-            if (!savegameDecision) {
-                setModalMessage('Please choose whether you want to attach a savegame.');
-                return;
-            }
-            if (savegameDecision === 'attach') {
-                if (!selectedSourceFile) {
-                    setModalMessage('Please select the savegame you want to attach.');
-                    setBackupModalPurpose('source');
-                    setIsBackupModalOpen(true);
-                    return;
-                }
-                if (!ownershipConfirmed || !hostingAccepted) {
-                    setModalMessage('Please confirm ownership and hosting before attaching the savegame.');
-                    return;
-                }
-                if (!backupInfo) {
-                    const uploaded = await handleFileSelectedForUpload(selectedSourceFile);
-                    if (!uploaded) return;
-                }
-            }
-        }
         if (activeStep === 'details' && (!title.trim() || !description.trim() || !category || !hasAtLeastOneValidTag())) {
             setCompletedSteps(prev => prev.filter(step => step !== activeStep));
             setModalMessage('Please complete the title, description, creation type and add at least one tag before continuing.');
@@ -993,7 +788,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                         );
                     })}
                 </div>
-                <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} disabled={selectedTags.length >= TAG_LIMIT} className="w-full bg-transparent focus:outline-none disabled:cursor-not-allowed" placeholder={selectedTags.length >= TAG_LIMIT ? `Maximum of ${TAG_LIMIT} tags reached.` : 'Add tags with spacebar...'} />
+                <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={handleTagKeyDown} disabled={selectedTags.length >= TAG_LIMIT} className="w-full bg-transparent focus:outline-none disabled:cursor-not-allowed" placeholder={selectedTags.length >= TAG_LIMIT ? `Maximum of ${TAG_LIMIT} tags reached.` : 'Add tags with Enter, space or comma...'} />
                 {suggestedTags.length > 0 && (
                     <div className="mt-2 pt-2 border-t flex flex-wrap gap-2">
                         {suggestedTags.map(tag => (
@@ -1004,19 +799,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             </div>
             <p className="mt-1 text-xs text-gray-500">You can add up to ten of your own tags.</p>
             </div>
-
-            {inGameTags.length > 0 && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-                    <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100">In-game tags</p>
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900 dark:text-blue-200">Read-only</span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                        {inGameTags.map(tag => <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-sm font-medium text-blue-800 shadow-sm dark:bg-gray-900 dark:text-blue-200">{tag}</span>)}
-                    </div>
-                    <p className="mt-3 text-xs text-blue-700 dark:text-blue-300">Extracted from the attached savegame. These do not count toward your ten user tags and are verified from the uploaded file by the server.</p>
-                </div>
-            )}
         </div>
     );
 
@@ -1024,13 +806,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
 
     return (
         <div className="max-w-5xl mx-auto mt-10 px-4" style={color.style}>
-            <SelectBackupModal
-                isOpen={isBackupModalOpen}
-                onClose={() => setIsBackupModalOpen(false)}
-                onFileSelect={handleModalFileSelected}
-                game={game}
-                allowGameSelection={backupModalPurpose === 'source'}
-            />
+
 
             <h1 className="text-3xl font-bold mb-6 text-center">{creationToEditId ? 'Edit Creation' : 'Create New Creation'}</h1>
             {wasOpenedFromModeration(location.state, creationToEditId) && <p className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 p-3 text-sm text-gray-800">Moderation edit: remove image or video links and update text here. Saving returns to the moderation panel without closing the report. Withheld creations stay hidden until you choose Approve edits in their review. Restore instead brings back the retained original content and never overwrites newer edits.</p>}
@@ -1058,84 +834,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                                 <h2 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100">{activeStepLabel}</h2>
                                 <span className="absolute right-0 text-sm text-gray-400">{activeStepIndex + 1} / {WIZARD_STEPS.length}</span>
                             </div>
-                {activeStep === 'source' && (<>
-                <div className="mx-auto max-w-2xl text-center">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: color.hex }}>Start with your local creation</p>
-                    <h3 className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">Would you like to attach a savegame?</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">If you select one, PlanetCreations reads its in-game image and uses safe local metadata to prefill the editable wizard fields.</p>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <button type="button" aria-pressed={savegameDecision === 'attach'} onClick={chooseSavegameAttachment} className={`rounded-2xl border-2 p-5 text-left transition-all ${savegameDecision === 'attach' ? 'border-transparent text-white shadow-lg' : 'border-gray-200 bg-gray-50 text-gray-800 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100'}`} style={savegameDecision === 'attach' ? { backgroundColor: color.hex } : {}}>
-                        <span className="flex items-center gap-3 text-lg font-bold"><Icon path={ICONS.upload} className="h-6 w-6" /> Yes, select a savegame</span>
-                        <span className={`mt-2 block text-sm ${savegameDecision === 'attach' ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}>Attach the file and prefill everything that can be read reliably.</span>
-                    </button>
-                    <button type="button" aria-pressed={savegameDecision === 'skip'} onClick={chooseManualCreation} className={`rounded-2xl border-2 p-5 text-left transition-all ${savegameDecision === 'skip' ? 'border-gray-800 bg-gray-800 text-white shadow-lg dark:border-gray-200 dark:bg-gray-100 dark:text-gray-900' : 'border-gray-200 bg-gray-50 text-gray-800 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100'}`}>
-                        <span className="block text-lg font-bold">No, fill it in manually</span>
-                        <span className={`mt-2 block text-sm ${savegameDecision === 'skip' ? 'text-white/75 dark:text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>Continue without uploading a local game file.</span>
-                    </button>
-                </div>
-
-                {savegameDecision === 'attach' && !selectedSourceFile && (
-                    <button type="button" onClick={chooseSavegameAttachment} className={`w-full rounded-xl px-4 py-3 font-semibold text-white ${color.bg} ${color.hoverBg}`}>Choose savegame</button>
-                )}
-
-                {savegameDecision === 'attach' && selectedSourceFile && (
-                    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
-                        <div className="grid md:grid-cols-[15rem_minmax(0,1fr)]">
-                            <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-950 md:aspect-auto md:min-h-44">
-                                {selectedSourceFile.previewDataUrl ? <img src={selectedSourceFile.previewDataUrl} alt="Selected in-game save preview" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center p-5 text-center text-xs text-gray-400">No in-game preview stored in this file.</div>}
-                            </div>
-                            <div className="min-w-0 p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <p className="text-xs font-semibold uppercase tracking-widest text-green-600 dark:text-green-400">Selected savegame</p>
-                                        <h4 className="mt-1 truncate text-lg font-bold text-gray-900 dark:text-white" title={selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}>{selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}</h4>
-                                        <p className="mt-1 truncate text-xs text-gray-500" title={selectedSourceFile.name}>{selectedSourceFile.name}</p>
-                                    </div>
-                                    <button type="button" onClick={chooseSavegameAttachment} className="flex-none rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100">Change</button>
-                                </div>
-                                {prefilledFields.length > 0 ? (
-                                    <div className="mt-4">
-                                        <p className="text-xs text-gray-500">Prefilled locally</p>
-                                        <div className="mt-2 flex flex-wrap gap-1.5">{prefilledFields.map(field => <span key={field} className="rounded-full bg-green-100 px-2 py-1 text-xs text-green-800 dark:bg-green-950 dark:text-green-200">{field}</span>)}</div>
-                                    </div>
-                                ) : <p className="mt-4 text-xs text-amber-600 dark:text-amber-300">The file can be attached, but it did not expose editable wizard values.</p>}
-                            </div>
-                        </div>
-
-                        {!backupInfo && (
-                            <div className="space-y-3 border-t border-gray-200 p-4 dark:border-gray-700">
-                                <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Required before upload</p>
-                                <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
-                                    <input type="checkbox" checked={ownershipConfirmed} onChange={event => setOwnershipConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
-                                    <span>I confirm that this is my own creation or that I have all necessary rights to upload it. <span className="text-red-500">*</span></span>
-                                </label>
-                                <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
-                                    <input type="checkbox" checked={hostingAccepted} onChange={event => setHostingAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
-                                    <span>I agree that this file may be uploaded to and hosted by PlanetCreations. <span className="text-red-500">*</span></span>
-                                </label>
-                                <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">Your wizard choices remain editable. Only required DLCs may later be corrected by the server; automatic stats stay in separate, server-verified fields.</p>
-                            </div>
-                        )}
-
-                        {(isPreparingUpload || isUploading) && (
-                            <div className="border-t border-gray-200 p-4 dark:border-gray-700">
-                                <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200"><Spinner /> {isPreparingUpload ? 'Preparing signed backup…' : `Uploading… ${Math.round(uploadProgress)}%`}</div>
-                                {isUploading && <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"><div className={`${color.bg} h-full rounded-full`} style={{ width: `${uploadProgress}%` }} /></div>}
-                            </div>
-                        )}
-
-                        {backupInfo && !isPreparingUpload && !isUploading && (
-                            <div className="flex items-center gap-2 border-t border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200"><Icon path={ICONS.checkCircle} className="h-5 w-5" /> Savegame is ready to be attached.</div>
-                        )}
-                    </div>
-                )}
-
-                {savegameDecision === 'skip' && (
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">No savegame will be attached. All Creation details will be entered manually.</div>
-                )}
-                </>)}
                 {activeStep === 'details' && (<>
                 {prefilledFields.length > 0 && selectedSourceFile && (
                     <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200">Prefilled from <span className="font-semibold">{selectedSourceFile.frontierMetadata?.name || selectedSourceFile.name}</span>. You remain in control of every editable field.</div>
@@ -1177,11 +875,11 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 </div>
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Title <span className="text-red-500">*</span></label>
-                    <HighlightableTextarea value={title} onChange={(e) => setTitle(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
+                    <LimitedTextField maxLength={TEXT_LIMITS.creationTitle} as={HighlightableTextarea} value={title} onChange={(e) => setTitle(e.target.value)} blacklist={blacklist} rows="1" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
                 </div>
                 <div>
                     <label className="block text-gray-700 font-bold mb-2">Description <span className="text-red-500">*</span></label>
-                    <HighlightableTextarea value={description} onChange={(e) => setDescription(e.target.value)} blacklist={blacklist} rows="5" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
+                    <LimitedTextField maxLength={TEXT_LIMITS.creationDescription} as={HighlightableTextarea} value={description} onChange={(e) => setDescription(e.target.value)} blacklist={blacklist} rows="5" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
                 </div>
                 {creationToEditId && (<div><label className="block text-gray-700 font-bold mb-2">Changelog (What's new?)</label><textarea value={changelogEntry} onChange={(e) => setChangelogEntry(e.target.value)} rows="3" className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} placeholder="e.g., Added new lighting..." ></textarea></div>)}
                 {renderTags()}
@@ -1191,6 +889,7 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                 {activeStep === 'rides-areas' && (
                     <ParkRidesAreasEditor
                         park={editablePark}
+                        metadata={loadedVerifiedMetadata}
                         value={parkRidePresentation}
                         onChange={setParkRidePresentation}
                         color={color}
@@ -1205,83 +904,6 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
                     <label className="block text-gray-700 font-bold mb-2">Custom Media Link</label>
                     <input type="url" value={customMediaLink} onChange={(e) => setCustomMediaLink(e.target.value)} className={`w-full p-3 border rounded-lg focus:ring-2 ${color.ring}`} />
                 </div>
-                {window.electronAPI?.isElectron && !isNewDesktopCreation && (
-                <div>
-                    <label className="block text-gray-700 font-bold mb-2">Add savegame file</label>
-                    <div className={`p-2 border rounded-lg transition-colors ${isUploading || isPreparingUpload ? 'bg-gray-50' : ''}`}>
-
-                        {isPreparingUpload && (
-                            <div className="flex items-center justify-center gap-2 text-gray-600 py-2">
-                                <Spinner />
-                                <p className="font-semibold">Preparing upload...</p>
-                            </div>
-                        )}
-
-                        {!isPreparingUpload && !backupInfo && !isUploading && (
-                            <div className="space-y-3">
-                                <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-left dark:border-amber-700 dark:bg-amber-950/30">
-                                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Required before uploading a file</p>
-                                    <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
-                                        <input type="checkbox" checked={ownershipConfirmed} onChange={(event) => setOwnershipConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
-                                        <span>I confirm that this is my own creation or that I have all necessary rights to upload it. <span className="text-red-500">*</span></span>
-                                    </label>
-                                    <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
-                                        <input type="checkbox" checked={hostingAccepted} onChange={(event) => setHostingAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
-                                        <span>I agree that this file may be uploaded to and hosted by PlanetCreations. <span className="text-red-500">*</span></span>
-                                    </label>
-                                </div>
-                                <button type="button" onClick={handleAttachFileClick} disabled={!ownershipConfirmed || !hostingAccepted} className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-semibold text-white transition-colors ${ownershipConfirmed && hostingAccepted ? `${color.bg} ${color.hoverBg}` : 'cursor-not-allowed bg-gray-400 dark:bg-gray-600'}`}>
-                                    <Icon path={ICONS.upload} className="w-5 h-5" />
-                                    Add savegame file
-                                </button>
-                            </div>
-                        )}
-
-                        {!isPreparingUpload && isUploading && (
-                            <div>
-                                <p className="text-sm font-semibold text-gray-700 mb-1">Uploading {backupInfo.name}...</p>
-                                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div className={`${color.bg} h-2.5 rounded-full`} style={{ width: `${uploadProgress}%` }}></div>
-                                </div>
-                                <p className="text-center text-sm text-gray-500 mt-1">{Math.round(uploadProgress)}%</p>
-                            </div>
-                        )}
-
-                        {!isPreparingUpload && backupInfo && !isUploading && (
-                            <div className="flex items-center justify-between p-2 bg-green-100 border border-green-300 rounded-lg">
-                                <div className="flex items-center gap-2">
-                                    <Icon path={ICONS.checkCircle} className="w-6 h-6 text-green-600" />
-                                    <div>
-                                        <p className="font-semibold text-green-800">{backupInfo.name}</p>
-                                        <p className={`text-xs ${backupInfo.signed ? 'text-blue-600' : 'text-gray-500'}`}>{backupInfo.signed ? 'Official signed backup' : 'Local save file'}</p>
-                                    </div>
-                                </div>
-                                <button type="button" onClick={handleRemoveBackup} className="text-red-500 hover:text-red-700 font-bold">&times;</button>
-                            </div>
-                        )}
-
-                        <p className="mt-2 text-xs text-center text-gray-500">Optional — lets desktop-client users import your creation with one click.</p>
-                    </div>
-                </div>
-                )}
-                {window.electronAPI?.isElectron && isNewDesktopCreation && (
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Attached savegame</p>
-                                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{backupInfo ? (selectedSourceFile?.frontierMetadata?.name || selectedSourceFile?.name || backupInfo.name) : 'No savegame attached'}</p>
-                            </div>
-                            <button type="button" onClick={() => goToStep('source')} className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-white">Change</button>
-                        </div>
-                    </div>
-                )}
-                {!window.electronAPI?.isElectron && (
-                    <div className="text-center py-3 px-4 border rounded-lg">
-                        <Icon path={ICONS.upload} className="w-8 h-8 mx-auto text-gray-400 mb-1" />
-                        <p className="font-semibold text-gray-700 dark:text-gray-200">Savegame uploads are available in the desktop client.</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Adding a savegame is optional. You can continue without attaching one.</p>
-                    </div>
-                )}
                 </>)}
 
                 {activeStep === 'media' && (<>

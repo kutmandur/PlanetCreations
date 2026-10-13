@@ -3,9 +3,11 @@ const path = require('path');
 const GAME_NAMES = {
     'planet-coaster-2': 'Planet Coaster 2',
     'planet-zoo': 'Planet Zoo',
+    'planet-zoo-2': 'Planet Zoo 2',
 };
 
 const EXTENSIONS_BY_GAME = {
+    'planet-zoo-2': new Set(['.zoo', '.zblpr']),
     'planet-coaster-2': new Set(['.park2', '.blpr2', '.prkauto2']),
     'planet-zoo': new Set(['.zoo', '.pzblueprint', '.zooauto', '.zoo_auto']),
 };

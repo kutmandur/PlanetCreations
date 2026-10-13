@@ -1,3 +1,4 @@
+import LoadMoreTrigger from '../ui/LoadMoreTrigger';
 import React, { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { db } from '../../firebase/config';
@@ -315,18 +316,7 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
 
     const hasMore = visibleCommunities.length < filteredAndSortedCommunitys.length;
 
-    useEffect(() => {
-        const handleScroll = () => {
-            const isBottom = window.innerHeight + document.documentElement.scrollTop + 1 >= document.documentElement.offsetHeight;
-            if (isBottom && hasMore) {
-                setPage(prevPage => prevPage + 1);
-            }
-        };
-        if ([PARTNER_TAB, 'Browser', 'My Communitys'].includes(communitysState.activeTab)) {
-            window.addEventListener('scroll', handleScroll);
-        }
-        return () => window.removeEventListener('scroll', handleScroll);
-    }, [hasMore, communitysState.activeTab]);
+
 
     const canCreate = userProfile && ['admin', 'moderator', 'influencer'].includes(userProfile.role);
     const showCreateButton = canCreate && !userHasCommunity;
@@ -371,9 +361,10 @@ const CommunitysPage = ({ user, userProfile, communitysState, setCommunitysState
                                     : <CommunityCard key={community.id} community={community} />
                             ))}
                         </div>
-                        {hasMore && <div className="text-center col-span-full p-8"><Spinner /></div>}
-                        {!hasMore && communitysState.activeTab === 'Browser' && visibleCommunities.length > 0 && (
-                            <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You've reached the end!</p>
+                        <LoadMoreTrigger hasMore={hasMore} busy={loading} progress={visibleCommunities.length}
+                            onLoadMore={() => setPage(current => current + 1)} label="Load more communities" />
+                        {!hasMore && visibleCommunities.length > 0 && (
+                            <p className="text-center text-gray-500 mt-10 text-xl col-span-full">You have reached the end</p>
                         )}
                         {visibleCommunities.length === 0 && (
                             <p className="text-center text-gray-500 mt-10 text-xl">

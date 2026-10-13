@@ -1,3 +1,5 @@
+import LimitedTextField from './LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useState } from 'react';
 import ReportImagePicker from './ReportImagePicker';
 import {ModerationButton} from './ReportReviewControls';
@@ -42,12 +44,11 @@ const ReportModal = ({ targetType, targetId, onConfirm, onCancel, initialCategor
                 {category==='other'&&initialMediaType==='video'&&<p className="text-sm mb-3">This report refers to the selected video.</p>}
                 <div>
                     <label htmlFor="report-reason" className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
-                    <textarea
+                    <LimitedTextField maxLength={TEXT_LIMITS.reportReason} as="textarea"
                         id="report-reason"
                         value={reason}
                         onChange={(e) => { setReason(e.target.value); setError(''); }}
                         rows="4"
-                        maxLength={2000}
                         className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500"
                         placeholder={`Why are you reporting this ${targetType}?`}
                     />

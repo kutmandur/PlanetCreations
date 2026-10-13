@@ -16,7 +16,7 @@ function wrapFrontierPayload(payload, kind = 1) {
     return Buffer.concat([header, body]);
 }
 
-test('creation backup automatically links media and can create the matching separate package', async () => {
+test('combined creation backup embeds available media and preserves separate media export', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'planetcreations-backup-media-test-'));
     const fakePaths = {
         userData: path.join(root, 'user-data'),
@@ -24,7 +24,8 @@ test('creation backup automatically links media and can create the matching sepa
         temp: path.join(root, 'temp'),
     };
     const fakeApp = { getPath: name => fakePaths[name] || root };
-    const originalLoad = Module._load;
+    for (const id of ['planet-coaster-2', 'planet-zoo']) require('./SaveAnalysisSettings').setAnalysisPreference(fakePaths.userData, id, true);
+const originalLoad = Module._load;
     Module._load = function mockElectron(request, parent, isMain) {
         if (request === 'electron') return { app: fakeApp };
         return originalLoad.call(this, request, parent, isMain);
@@ -42,7 +43,7 @@ test('creation backup automatically links media and can create the matching sepa
 
     const saveZip = new AdmZip();
     saveZip.addFile('metadata', wrapFrontierPayload(JSON.stringify({ sName: 'Media Park', tSave: { sParkName: 'Media Park' } })));
-    saveZip.addFile('parkdata', wrapFrontierPayload(Buffer.from('CobraSav\0screen.png\0'), 6));
+    saveZip.addFile('parkdata', wrapFrontierPayload(Buffer.from('CobraSav\0screen.png\0missing.mp4\0'), 6));
     saveZip.writeZip(savePath);
 
     try {
@@ -56,7 +57,8 @@ test('creation backup automatically links media and can create the matching sepa
             true,
         );
         assert.equal(result.success, true);
-        assert.match(result.message, /1 matching Custom Media package/);
+        const separate = await BackupManager.backupCreationMedia(fakeApp, savePath, 'separate export');
+        assert.equal(separate.success, true);
 
         const creationPackages = fs.readdirSync(path.join(fakePaths.documents, 'PlanetCreations', 'Parks'));
         const mediaPackages = fs.readdirSync(path.join(fakePaths.documents, 'PlanetCreations', 'Custom Media'));
@@ -65,6 +67,14 @@ test('creation backup automatically links media and can create the matching sepa
 
         const creationArchive = new AdmZip(path.join(fakePaths.documents, 'PlanetCreations', 'Parks', creationPackages[0]));
         const manifest = JSON.parse(creationArchive.getEntry('media_manifest.json').getData().toString('utf8'));
+        assert.equal(manifest.embeddedMedia, true);
+        assert.ok(manifest.missingMedia.includes('missing.mp4'));
+        assert.ok(creationArchive.getEntry(`assets/${manifest.assets[0].sha256}.png`));
+        const inspection = require('./BackupFormat').inspectCreationPackage(creationArchive.toBuffer(), ['.park2']);
+        assert.equal(inspection.assetBuffers.length, 1);
+        const tampered = new AdmZip(creationArchive.toBuffer());
+        tampered.updateFile(`assets/${manifest.assets[0].sha256}.png`, Buffer.from('modified'));
+        assert.throws(() => require('./BackupFormat').inspectCreationPackage(tampered.toBuffer(), ['.park2']), /media/i);
         assert.equal(manifest.assets.length, 1);
         assert.equal(manifest.assets[0].logicalName, 'screen.png');
 

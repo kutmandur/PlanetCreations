@@ -30,3 +30,9 @@ test('uses the declared priority if both supported games are running', () => {
         GAME_PROCESSES[0].gameId,
     );
 });
+
+test('detects Planet Zoo 2 independently of Planet Zoo and ignores launchers', () => {
+    assert.equal(detectActiveGameFromTasklist('"PlanetZoo2.exe","42","Console","1","100 K"'), 'planet-zoo-2');
+    assert.equal(detectActiveGameFromTasklist('"PLANETZOO2.EXE","42","Console","1","100 K"'), 'planet-zoo-2');
+    assert.equal(detectActiveGameFromTasklist('"PlanetZoo2Launcher.exe","42","Console","1","100 K"'), null);
+});

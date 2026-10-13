@@ -1,3 +1,4 @@
+const {analysisEnabled} = require('./SaveAnalysisSettings');
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -11,10 +12,14 @@ const { buildRideAnalysisObject } = require('./RideAnalysisObject');
 // valid per-file entries: reading large Frontier saves is tied exclusively to
 // the source file signature. Users can explicitly request a full refresh from
 // the Offline Manager when they want every save interpreted by a newer parser.
+function isAnalysisEnabled(filePath) {
+    try { return analysisEnabled(app.getPath('userData'), filePath); } catch { return false; }
+}
 const METADATA_CACHE_VERSION = 6;
 let latestDlcCatalogs = {};
 
 const GAME_CONFIG = {
+    'Planet Zoo 2': { folderName: 'Planet Zoo 2', fileTypes: { park: '.zoo', blueprint: '.zblpr', autosave: [] } },
     'Planet Coaster 2': {
         folderName: 'Planet Coaster 2',
         fileTypes: {
@@ -110,6 +115,7 @@ function allGameFiles(results) {
 function scanGamesFromPath(basePath) {
     const results = enumerateGamesFromPath(basePath);
     for (const fileRecord of allGameFiles(results)) {
+        if (!isAnalysisEnabled(fileRecord.path)) { fileRecord.metadataStatus = 'disabled'; continue; }
         try {
             const inspection = inspectFrontierFile(fileRecord.path);
             fileRecord.frontierMetadata = inspection.metadata;
@@ -222,6 +228,7 @@ function indexGamesFromPath(basePath, options = {}) {
     const currentCacheKeys = new Set(fileRecords.map(fileRecord => path.resolve(fileRecord.path)));
     pruneMissingCacheEntries(cache, basePath, currentCacheKeys);
     for (const fileRecord of fileRecords) {
+        if (!isAnalysisEnabled(fileRecord.path)) { fileRecord.metadataStatus = 'disabled'; continue; }
         const cacheKey = path.resolve(fileRecord.path);
         const cached = cache.files[cacheKey];
         const isFresh = isMetadataCacheEntryFresh(
@@ -290,6 +297,7 @@ function saveMetadataInspection(cache, pendingFile, inspection, error = null) {
 }
 
 function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs, options = {}) {
+    if (!isAnalysisEnabled(filePath)) return Promise.reject(new Error('Savefile analysis is disabled for this game. Enable it in Client Settings.'));
     return new Promise((resolve, reject) => {
         const worker = new Worker(path.join(__dirname, 'FrontierMetadataWorker.js'), {
             workerData: {
@@ -316,6 +324,7 @@ function inspectFrontierFileInWorker(filePath, dlcCatalogs = latestDlcCatalogs, 
 }
 
 async function loadOrCreateRideAnalysis(filePath, dlcCatalogs = latestDlcCatalogs) {
+    if (!isAnalysisEnabled(filePath)) throw new Error('Savefile analysis is disabled for this game.');
     const resolvedPath = path.resolve(filePath);
     const stats = fs.statSync(resolvedPath);
     const pendingFile = {

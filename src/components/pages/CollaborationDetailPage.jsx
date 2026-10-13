@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import {useUserBlocks} from '../../contexts/BlockingContext';
 import ContentReportButton from '../ui/ContentReportButton';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -702,6 +704,8 @@ const CollaborationDetailPage = ({
     const handleAddTodo = async (event) => {
         event.preventDefault();
         const text = newTodo.trim();
+        const lengthError = textLengthError(text, TEXT_LIMITS.collaborationTodo, 'Task');
+        if (lengthError) { setModalMessage(lengthError); return; }
         if (!text) return;
         try {
             await addTodo(collaborationId, user.uid, text);
@@ -939,10 +943,9 @@ const CollaborationDetailPage = ({
             <div className="p-4">
                 {canEdit && (
                     <form onSubmit={handleAddTodo} className="mb-4 flex gap-2">
-                        <input
+                        <LimitedTextField maxLength={TEXT_LIMITS.collaborationTodo}
                             value={newTodo}
                             onChange={(event) => setNewTodo(event.target.value)}
-                            maxLength={160}
                             placeholder="Add a task"
                             className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                             style={{ '--tw-ring-color': gameColor.hex }}
@@ -1353,10 +1356,9 @@ const CollaborationDetailPage = ({
                     </div>
 
                     <form onSubmit={handleAddTodo} className="mb-4 flex gap-2">
-                        <input
+                        <LimitedTextField maxLength={TEXT_LIMITS.collaborationTodo}
                             value={newTodo}
                             onChange={(event) => setNewTodo(event.target.value)}
-                            maxLength={200}
                             placeholder="Add a todo"
                             className="min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:ring-2 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                             style={{'--tw-ring-color': gameColor.hex}}

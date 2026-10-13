@@ -8,7 +8,7 @@ const asar = require('@electron/asar');
 const storeConfig = require('../electron-builder.store.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
-const requestedDirectory = process.argv[2] || 'dist/store';
+const requestedDirectory = process.argv[2] || storeConfig.directories.output;
 const storeDirectory = path.resolve(projectRoot, requestedDirectory);
 const appxFiles = fs.readdirSync(storeDirectory).filter((name) => name.endsWith('.appx'));
 if (appxFiles.length !== 1) {

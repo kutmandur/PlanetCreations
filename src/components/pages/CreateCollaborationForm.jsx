@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -389,12 +391,11 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                             <label htmlFor="collab-banner" className="mb-2 block font-bold text-gray-700 dark:text-gray-200">
                                 Banner image
                             </label>
-                            <input
+                            <LimitedTextField maxLength={TEXT_LIMITS.imageUrl}
                                 id="collab-banner"
                                 type="url"
                                 value={form.bannerImageUrl}
                                 onChange={(event) => setField('bannerImageUrl', event.target.value)}
-                                maxLength={2048}
                                 placeholder="https://…"
                                 className={inputClass}
                             />
@@ -419,7 +420,7 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                                 </span>
                             </div>
                             <div className="flex gap-2">
-                                <input
+                                <LimitedTextField maxLength={TEXT_LIMITS.imageUrl}
                                     id="collab-gallery-image"
                                     type="url"
                                     value={galleryImageInput}
@@ -431,7 +432,6 @@ const CreateCollaborationForm = ({ user, setModalMessage }) => {
                                             addGalleryImageUrls(galleryImageInput);
                                         }
                                     }}
-                                    maxLength={2048}
                                     placeholder="https://…"
                                     className={`${inputClass} min-w-0 flex-1`}
                                 />

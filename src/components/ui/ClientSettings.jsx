@@ -19,6 +19,7 @@ function SettingToggle({ title, description, checked, disabled, onChange }) {
 export default function ClientSettings({ setModalMessage }) {
     const api = window.electronAPI;
     const supported = api?.isElectron === true;
+    const [analysis, setAnalysis] = useState(null);
     const [path, setPath] = useState(null);
     const [startup, setStartup] = useState(null);
     const [autoEnabled, setAutoEnabled] = useState(null);
@@ -43,6 +44,7 @@ export default function ClientSettings({ setModalMessage }) {
             }
         };
         setErrors({});
+        load('savefile analysis', api.getSaveAnalysisSettings, setAnalysis);
         load('game folder', api.getStoredPath, setPath);
         load('startup settings', api.getLaunchAtLogin, setStartup);
         load('automatic overlay', api.getOverlayAutoEnabled, setAutoEnabled);
@@ -112,6 +114,18 @@ export default function ClientSettings({ setModalMessage }) {
             <p className="mt-1 text-gray-600">Settings for this device. Available in the desktop client, including without signing in.</p>
         </div>
         <ClientUpdateSettings />
+        <section className={cardClass}>
+            <h3 className="text-lg font-bold">Local savefile analysis (experimental)</h3>
+            <p className="text-sm text-gray-600">Optional, unofficial analysis scripts, similar to a mod. Enable at your own risk. Analysis runs entirely on this device; savefiles and analysis results are not uploaded. The scripts read your saves without changing them.</p>
+            <p className="text-sm text-gray-600">Off by default for each game. Enables detailed statistics, previews and automatic discovery of associated media. File listing and ordinary backups work without it. Already associated media can still be backed up.</p>
+            {Object.entries({'planet-coaster-2':'Planet Coaster 2','planet-zoo':'Planet Zoo','planet-zoo-2':'Planet Zoo 2'}).map(([id,name]) => <SettingToggle key={id}
+                title={`${name}: savefile analysis`} description="Stored locally for this device."
+                checked={analysis?.[id] === true} disabled={Boolean(busy) || !analysis || !api.setSaveAnalysisSetting}
+                onChange={() => run('save analysis settings', async () => {
+                    setAnalysis(await api.setSaveAnalysisSetting(id, !analysis[id]));
+                    window.dispatchEvent(new Event('save-analysis-settings-changed'));
+                })} />)}
+        </section>
         {Object.keys(errors).length > 0 && <div role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">
             {Object.entries(errors).map(([key, error]) => <p key={key}>{error}</p>)}
             <button type="button" className="mt-2 underline" onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>

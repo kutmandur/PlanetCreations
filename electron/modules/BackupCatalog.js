@@ -1,13 +1,11 @@
+const {gameForFile} = require('./GameFileTypes');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 const {sha256} = require('./BackupFormat');
 const {hasMediaPackageMagic, readMediaPackageHeader} = require('./MediaPackageFormat');
-const gameByExtension = {
-    '.park2': 'planet-coaster-2', '.blpr2': 'planet-coaster-2', '.prkauto2': 'planet-coaster-2',
-    '.zoo': 'planet-zoo', '.pzblueprint': 'planet-zoo', '.zooauto': 'planet-zoo', '.zoo_auto': 'planet-zoo',
-};
+
 function getBackupBaseDir(app) {
     return path.join(app.getPath('documents'), 'PlanetCreations');
 }
@@ -75,12 +73,19 @@ function listAllBackupsSync(app) {
                 const packageType = metadata.packageType || metadata.backupType || 'creation';
                 const backupData = {
                     ...metadata,
+                    missingMedia: (() => {
+                        try { const entry = new AdmZip(archivePath).getEntry('media_manifest.json');
+                            if (!entry || entry.header.size > 1024 * 1024) return [];
+                            const manifest = JSON.parse(entry.getData().toString('utf8'));
+                            return manifest.embeddedMedia && Array.isArray(manifest.missingMedia) ? manifest.missingMedia.filter(name => typeof name === 'string') : [];
+                        } catch { return []; }
+                    })(),
                     backupType: packageType,
                     backupDate: metadata.createdAt || metadata.backupDate,
                     category,
                     filePath: archivePath,
                     originalFilePath: targets[metadata.packageId]?.targetPath || metadata.originalFilePath || null,
-                    gameId: metadata.gameId || gameByExtension[path.extname(originalFileName).toLowerCase()] || null,
+                    gameId: metadata.gameId || gameForFile(metadata.originalFilePath || originalFileName) || null,
                 };
                 if (category === 'Workshop') {
                     const record = workshop[path.resolve(archivePath)];

@@ -1,4 +1,3 @@
-import { isParkCreationCategory } from './parkRidePresentation';
 
 const GAME_BY_EXTENSION = new Map([
     ['.park2', 'planet-coaster-2'],
@@ -78,23 +77,6 @@ export function inferCreationCategory(metadata, categories = []) {
     return null;
 }
 
-export function cleanSavegameTags(metadata, maximum = 200) {
-    const ignored = new Set(['blueprint', 'park', 'savegame', 'autosave']);
-    const unique = new Map();
-    for (const value of metadata?.tags || []) {
-        const cleaned = String(value || '')
-            .replace(/^(?:Filter_|Menu_)/i, '')
-            .replaceAll('_', ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        const key = normalized(cleaned);
-        if (!key || ignored.has(key) || unique.has(key)) continue;
-        unique.set(key, cleaned.slice(0, 100));
-        if (unique.size >= maximum) break;
-    }
-    return [...unique.values()];
-}
-
 export function buildSavegamePrefill(file, categories = [], fallbackGameId = null) {
     const metadata = file?.frontierMetadata || null;
     const gameId = getSavegameGameId(file, fallbackGameId);
@@ -105,23 +87,15 @@ export function buildSavegamePrefill(file, categories = [], fallbackGameId = nul
         category: inferCreationCategory(metadata, categories),
         requiredDlcs: Array.isArray(metadata?.requiredDlcs) ? metadata.requiredDlcs : null,
         usesMods: typeof metadata?.isModded === 'boolean' ? metadata.isModded : null,
-        // These stay separate from the ten editable user tags. The uploaded
-        // file is parsed again on the server and its verified copy is stored
-        // below verifiedGameMetadata rather than in the user-owned tags field.
-        gameTags: cleanSavegameTags(metadata),
         metadata,
     };
-}
-
-export function getVerifiedGameTags(creation, maximum = 200) {
-    return cleanSavegameTags(creation?.verifiedGameMetadata?.metadata, maximum);
 }
 
 export function getCreationWizardSteps({ isDesktopClient, isEdit, category }) {
     return [
         ...((isDesktopClient && !isEdit) ? [{ id: 'source', label: 'Savegame' }] : []),
         { id: 'details', label: 'Details' },
-        ...(isParkCreationCategory(category) ? [{ id: 'rides-areas', label: 'Attractions & Areas' }] : []),
+        { id: 'rides-areas', label: 'Park Info' },
         { id: 'savegame', label: 'Sharing' },
         { id: 'media', label: 'Gallery' },
         { id: 'sharing', label: 'Communitys' },

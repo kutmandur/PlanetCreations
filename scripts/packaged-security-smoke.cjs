@@ -1,3 +1,4 @@
+const workspacePaths = require('./workspace-paths.cjs');
 // Run the packaged Electron runtime without launching the app or touching user data.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -8,7 +9,7 @@ const {execFileSync} = require('node:child_process');
 async function main() {
     const root = path.resolve(__dirname, '..');
     const option = (name, fallback) => process.argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
-    const packageDirectory = path.resolve(root, option('package', '.security-build/package/win-unpacked'));
+    const packageDirectory = path.resolve(root, option('package', path.join(workspacePaths.evidence, 'package/win-unpacked')));
     const resources = path.join(packageDirectory, 'resources');
     if (process.argv.includes('--child')) {
         const {runBackupJob} = require(path.join(resources, 'app.asar/electron/modules/BackupJobs'));
@@ -41,8 +42,8 @@ async function main() {
         }
         return;
     }
-    const web = fs.readFileSync(path.resolve(root, option('web', '.security-build/web'), 'index.html'), 'utf8');
-    const desktop = fs.readFileSync(path.resolve(root, option('electron', '.security-build/electron'), 'index.html'), 'utf8');
+    const web = fs.readFileSync(path.resolve(root, option('web', workspacePaths.web), 'index.html'), 'utf8');
+    const desktop = fs.readFileSync(path.resolve(root, option('electron', workspacePaths.electron), 'index.html'), 'utf8');
     assert.match(web, /src="\/assets\//);
     assert.match(desktop, /src="\.\/assets\//);
     const asar = require('@electron/asar');

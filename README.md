@@ -3,6 +3,24 @@
 React/Electron application with an online workshop, local game-file management
 and a separate Firebase backend and Discord bot.
 
+## Workspace layout
+
+Run all npm, Firebase and Git commands inside `planet-creation-net-project/`.
+In the organized workspace, generated files live beside the repository:
+
+- `../build-artefakte/web/`: hosted web build.
+- `../build-artefakte/electron/`: desktop fallback build.
+- `../build-artefakte/dist/`: installers; Store packages in `dist/store/`.
+- `../release-belege/.security-build/`: security verification packages and evidence.
+- `../lokale-werkzeuge/.local-runtimes/`: isolated smoke-test profiles and fixtures.
+- `../dokumentation/`, `../research/`, `../ki-notizen/`: internal documentation, research and AI notes.
+
+`scripts/workspace-paths.cjs` detects this layout. Standalone clones and CI keep
+repository-local build/package paths. Desktop packages always contain the UI at
+`build/` internally. Explicit CLI output paths still override defaults. Web and
+Electron builds retain separate asset bases; deploy only the web output.
+Public release notes remain in `docs/releases/` for GitHub Actions.
+
 ## Build and run
 
 Use Node.js 24.18.x for the app and bot; Firebase Functions use Node.js 22.
@@ -209,3 +227,14 @@ pattern; an empty list installs the standard terms. Deploy the affected callable
 validators with explicit function filters. A word filter is a moderation aid,
 not a guarantee that all prohibited text is detected. The Legal Notice always
 exposes the existing support address even while Firestore is unavailable.
+
+
+### Text input limits
+
+For every new or changed text field, check its Firestore, Cloud Function, or native validation contract first. Define the UI limit in `src/utils/textLimits.js` and reuse the same semantic constant across creation, editing, onboarding, and inline controls. Do not invent limits for searches or fields without a product requirement.
+
+Use `src/components/ui/LimitedTextField.jsx` for bounded inputs and textareas, or an equivalent native `maxLength` plus a persistent visible counter associated with `aria-describedby`. Existing help and labels must remain accessible. Show minimums where applicable; fixed-format fields should explain their format. A placeholder or hover tooltip alone is insufficient.
+
+Validate loaded and programmatic values before saving, especially in button-driven and `noValidate` forms; `textLengthError` provides a shared check. Preserve over-limit drafts and show an actionable error instead of silently truncating. Backend validation remains authoritative. Count UTF-16 code units consistently with HTML `maxLength` and JavaScript `String.length` (some emoji count as two).
+
+When changing limits, test the boundary and one character beyond it, loaded over-limit values, accessible help, and every alternate entry point. Verify typing/paste in a real browser when available; synthetic change events do not enforce native `maxLength`. Run affected tests and keep the web and Electron builds separate.

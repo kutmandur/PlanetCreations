@@ -83,3 +83,19 @@ test('manages areas, custom rides, visibility and assignments', () => {
     fireEvent.change(areaSelect, { target: { value: harborOption.value } });
     expect(screen.getByLabelText('Area for Harbor Launch')).not.toHaveValue('');
 });
+
+test('edits and clears optional stats without losing areas or zero values', () => {
+    const onChange = vi.fn();
+    const value = {areas: [{id: 'a', name: 'Harbor', color: '#2563EB'}]};
+    const {rerender} = render(<ParkRidesAreasEditor metadata={{blueprint: {placementCost: 99}}} park={park} value={value} onChange={onChange} color={{}} />);
+    fireEvent.change(screen.getByLabelText('Build cost'), {target: {value: '0'}});
+    const updated = onChange.mock.lastCall[0];
+    expect(updated.parkInfo.placementCost).toBe(0);
+    expect(updated.areas).toEqual(value.areas);
+    rerender(<ParkRidesAreasEditor metadata={{blueprint: {placementCost: 99}}} park={park} value={updated} onChange={onChange} color={{}} />);
+    expect(screen.getByLabelText('Build cost')).toHaveValue(0);
+    fireEvent.change(screen.getByLabelText('Build cost'), {target: {value: ''}});
+    expect(onChange.mock.lastCall[0].parkInfo.placementCost).toBeNull();
+    fireEvent.change(screen.getByLabelText('Lateral G min for Launch One', {exact: false}), {target: {value: '-2'}});
+    expect(Object.values(onChange.mock.lastCall[0].rideInfo)[0].lateral_min).toBe(-2);
+});

@@ -1,6 +1,6 @@
 {
   "name": "planet-creation-net",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "description": "PlanetCreations Desktop Client",
   "author": "PlanetCreations",
   "private": true,
@@ -65,29 +65,21 @@
   },
   "overrides": {
     "js-yaml": "^4.3.2",
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "@grpc/grpc-js": "^1.14.6"
   },
   "build": {
-    "extends": null,
+    "extends": "./electron-builder.paths.cjs",
     "toolsets": {
       "winCodeSign": "1.1.0"
     },
     "appId": "com.planetcreations.app",
     "productName": "PlanetCreations Client",
-    "files": [
-      "build/**/*",
-      "electron/**/*",
-      "!electron/**/*.test.js",
-      "!electron/modules/FrontierSaveWatcher.js"
-    ],
     "publish": {
       "provider": "github",
       "owner": "kutmandur",
       "repo": "PlanetCreations",
       "private": true
-    },
-    "directories": {
-      "buildResources": "assets"
     },
     "win": {
       "target": "nsis",

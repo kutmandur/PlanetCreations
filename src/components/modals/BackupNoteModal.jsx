@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useState } from 'react';
 import ToggleSwitch from '../ui/ToggleSwitch';
 
@@ -6,15 +8,15 @@ const MAX_LISTED_MISSING = 8;
 const BackupNoteModal = ({ onConfirm, onCancel, isOnline, showMediaPackageOption = false, missingMedia = [] }) => {
     const [note, setNote] = useState('');
     const [isSigned, setIsSigned] = useState(false);
-    const [includeMediaPackage, setIncludeMediaPackage] = useState(true);
-    const [ignoreMissingMedia, setIgnoreMissingMedia] = useState(false);
+    const [includeMediaPackage, setIncludeMediaPackage] = useState(false);
     const hasMissingMedia = missingMedia.length > 0;
-    const blockedByMissingMedia = hasMissingMedia && !ignoreMissingMedia;
+    const blockedByMissingMedia = false;
 
     const handleConfirm = () => {
+        if (note.length > TEXT_LIMITS.backupNote) return;
         if (blockedByMissingMedia) return;
         const args = [note, isSigned, showMediaPackageOption && includeMediaPackage];
-        if (hasMissingMedia) args.push(ignoreMissingMedia);
+        if (hasMissingMedia) args.push(true);
         onConfirm(...args);
     };
 
@@ -22,7 +24,7 @@ const BackupNoteModal = ({ onConfirm, onCancel, isOnline, showMediaPackageOption
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]" onClick={onCancel}>
             <div className="bg-gray-800 text-white rounded-lg shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <h2 className="text-xl font-bold mb-4">Add a Note to Your Backup</h2>
-                <textarea
+                <LimitedTextField countClassName="text-gray-300" maxLength={TEXT_LIMITS.backupNote} as="textarea"
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
                     className="w-full bg-gray-900 border border-gray-600 rounded-md p-2 h-24"
@@ -43,28 +45,12 @@ const BackupNoteModal = ({ onConfirm, onCancel, isOnline, showMediaPackageOption
                         />
                     </div>
                 </div>
-                {hasMissingMedia && (
-                    <div className="mt-4 rounded-lg bg-gray-700 p-3">
-                        <div className="flex items-center justify-between">
-                            <div className="pr-4">
-                                <h3 className="font-semibold text-white">Ignore missing media</h3>
-                                <p className="text-sm text-gray-400">
-                                    {missingMedia.length} referenced file{missingMedia.length === 1 ? ' is' : 's are'} missing or could not be verified. Turn this on to back up the available files without {missingMedia.length === 1 ? 'it' : 'them'}.
-                                </p>
-                            </div>
-                            <ToggleSwitch isToggled={ignoreMissingMedia} onToggle={() => setIgnoreMissingMedia(value => !value)} />
-                        </div>
-                        <ul className="mt-2 max-h-28 overflow-y-auto text-xs text-gray-300 list-disc pl-5" aria-label="Missing media files">
-                            {missingMedia.slice(0, MAX_LISTED_MISSING).map(name => <li key={name} className="truncate" title={name}>{name}</li>)}
-                            {missingMedia.length > MAX_LISTED_MISSING && <li>…and {missingMedia.length - MAX_LISTED_MISSING} more</li>}
-                        </ul>
-                    </div>
-                )}
+                {hasMissingMedia && <p className="mt-2 text-xs text-amber-400" title={missingMedia.join(', ')}>Warning: {missingMedia.length} media file(s) unavailable. The backup will include the available files.</p>}
                 {showMediaPackageOption && (
                     <div className="mt-4 flex items-center justify-between rounded-lg bg-gray-700 p-3">
                         <div className="pr-4">
-                            <h3 className="font-semibold text-white">Create separate Custom Media package</h3>
-                            <p className="text-sm text-gray-400">Automatically detects the files referenced by this creation. If none are available, the creation backup is still created normally.</p>
+                            <h3 className="font-semibold text-white">Include associated media in this backup</h3>
+                            <p className="text-sm text-gray-400">Save the game file and available associated media together. Missing media are listed as a warning and do not prevent the backup.</p>
                         </div>
                         <ToggleSwitch isToggled={includeMediaPackage} onToggle={() => setIncludeMediaPackage(value => !value)} />
                     </div>

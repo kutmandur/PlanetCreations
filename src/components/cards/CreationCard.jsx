@@ -87,6 +87,11 @@ const CreationCard = memo(({
                     : undefined
             }
         >
+                {creation.__feedDebug && (
+                    <div className={`absolute z-20 ${isLive ? 'top-8' : 'top-2'} left-2 bg-black/75 text-white text-[10px] px-2 py-1 rounded-md`}>
+                        {POOL_LABELS[creation.__feedDebug.pool] || creation.__feedDebug.pool}
+                    </div>
+                )}
             <div className="relative h-48 overflow-hidden">
                 {isLive && (
                     <span className="absolute top-2 left-2 z-10 bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wide flex items-center gap-1">
@@ -103,20 +108,7 @@ const CreationCard = memo(({
                     <div className={`w-3 h-3 rounded-full ring-2 ring-white ${creation.status === 'finished' ? 'bg-green-500' : 'bg-orange-500'}`} title={creation.status === 'finished' ? 'Finished' : 'Work in Progress'}></div>
                     {creation.modStatus === 'UsingMods' && <div className="w-3 h-3 rounded-full ring-2 ring-white bg-purple-500" title="Uses Mods"></div>}
                 </div>
-                {creation.__feedDebug && (
-                    // Admin-Debug: aus welchem Pool dieser Eintrag im
-                    // Recommended-Feed gezogen wurde (+ Komponenten-Scores im Tooltip)
-                    <div
-                        className={`absolute ${isLive ? 'top-8' : 'top-2'} left-2 bg-black/75 text-white text-[10px] font-mono px-2 py-1 rounded-md`}
-                        title={Object.entries(creation.__feedDebug.parts)
-                            .map(([k, v]) => `${k}: ${v.toFixed(3)}`)
-                            .join('\n')}
-                    >
-                        {POOL_LABELS[creation.__feedDebug.pool] || creation.__feedDebug.pool}
-                        {' · '}
-                        {creation.__feedDebug.score.toFixed(2)}
-                    </div>
-                )}
+
                 <div className="absolute bottom-2 left-2 bg-black/60 text-white px-2 py-1 rounded-md text-xs font-semibold">
                     <div onClick={handleProfileClick} className="hover:underline flex items-center">
                         <ProfileImage src={creation.userProfilePictureUrl} alt={creation.username} className="w-6 h-6 rounded-full mr-2 border-2 border-white object-cover" />

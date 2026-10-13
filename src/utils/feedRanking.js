@@ -41,7 +41,7 @@ export const DEFAULT_WEIGHTS = {
 
 export const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS);
 
-// Anzeige-Labels für die Pools (Admin-Debug-Badge)
+// Labels for optional feed pool badges.
 export const POOL_LABELS = {
     live: 'Live',
     recency: 'New',
@@ -231,3 +231,12 @@ export function rankCreations(creations, ctx = {}) {
 
     return result;
 }
+
+export const POOL_DESCRIPTIONS = {
+    live: 'Selected from the Live pool because this creation has an active live stream.',
+    recency: 'Selected from the New pool, which favors recently published creations. Newer creations receive a higher score.',
+    popularity: 'Selected from the Popular pool based on views and positive ratings after subtracting negative ratings.',
+    activity: 'Selected from the Active pool based on its activity score. Older activity gradually carries less weight.',
+    affinity: 'Selected from the For you pool because its tags match your saved interests. This pool uses activity-based personalization only when enabled.',
+    discovery: 'Selected from the Discovery pool to add variety through a randomized selection.',
+};

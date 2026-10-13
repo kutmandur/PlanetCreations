@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/config';
 import { doc, updateDoc, arrayUnion, arrayRemove, writeBatch, query, collection, where, getDocs } from 'firebase/firestore';
@@ -32,11 +34,10 @@ const ShowcaseVideoModal = ({ title, initialName, initialUrl, isSaving, onSave, 
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
                 <h2 className="text-xl font-bold text-gray-800 mb-4">{title}</h2>
                 <label className="block text-sm font-bold text-gray-700 mb-1">Showcase Name</label>
-                <input
+                <LimitedTextField maxLength={TEXT_LIMITS.showcaseName}
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    maxLength={80}
                     placeholder="e.g. Summer Showcase #3"
                     className="w-full p-3 border rounded-lg mb-4 focus:outline-none focus:ring-2"
                     style={{ '--tw-ring-color': 'var(--theme-color)' }}

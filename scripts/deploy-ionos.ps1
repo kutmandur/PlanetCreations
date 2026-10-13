@@ -7,7 +7,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
-    $BuildDirectory = Join-Path $PSScriptRoot '..\build'
+    $BuildDirectory = & node (Join-Path $PSScriptRoot 'workspace-paths.cjs') web
+    if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the web build directory.' }
 }
 $expectedEd25519Fingerprint =
     'SHA256:1gx2w8Rtv3wCgi7Jh8myf/KVd72cRQbow03UP8P095Q'

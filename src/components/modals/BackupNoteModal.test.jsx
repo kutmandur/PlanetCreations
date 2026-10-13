@@ -1,34 +1,19 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import BackupNoteModal from './BackupNoteModal';
-
-test('offers a separate automatically detected media package by default', () => {
+test('combined media backup is optional and defaults off', () => {
     const onConfirm = vi.fn();
-    render(<BackupNoteModal onConfirm={onConfirm} onCancel={() => {}} isOnline={false} showMediaPackageOption />);
-
-    expect(screen.getByText('Create separate Custom Media package')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm Backup' }));
-    expect(onConfirm).toHaveBeenCalledWith('', false, true);
+    render(<BackupNoteModal onConfirm={onConfirm} onCancel={()=>{}} isOnline={false} showMediaPackageOption />);
+    expect(screen.getByText('Include associated media in this backup')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name:'Confirm Backup'}));
+    expect(onConfirm).toHaveBeenCalledWith('',false,false);
 });
-
-test('requires "Ignore missing media" before backing up with missing files', () => {
+test('missing media are a small warning and do not block backup', () => {
     const onConfirm = vi.fn();
-    render(<BackupNoteModal onConfirm={onConfirm} onCancel={() => {}} isOnline={false} missingMedia={['intro.mp4', 'theme.mp3']} />);
-
-    expect(screen.getByText('intro.mp4')).toBeInTheDocument();
-    const confirm = screen.getByRole('button', { name: 'Confirm Backup' });
-    expect(confirm).toBeDisabled();
-    fireEvent.click(confirm);
-    expect(onConfirm).not.toHaveBeenCalled();
-
-    const toggle = screen.getByText('Ignore missing media').closest('.rounded-lg').querySelector('.cursor-pointer');
-    fireEvent.click(toggle);
+    render(<BackupNoteModal onConfirm={onConfirm} onCancel={()=>{}} isOnline={false} missingMedia={['intro.mp4']} />);
+    expect(screen.getByText(/Warning: 1 media/)).toBeInTheDocument();
+    const confirm = screen.getByRole('button', {name:'Confirm Backup'});
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
-    expect(onConfirm).toHaveBeenCalledWith('', false, false, true);
-});
-
-test('does not show the missing media option when nothing is missing', () => {
-    render(<BackupNoteModal onConfirm={() => {}} onCancel={() => {}} isOnline={false} />);
-    expect(screen.queryByText('Ignore missing media')).not.toBeInTheDocument();
+    expect(onConfirm).toHaveBeenCalledWith('',false,false,true);
 });

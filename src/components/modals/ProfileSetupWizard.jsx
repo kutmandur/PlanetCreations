@@ -1,3 +1,4 @@
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useRef, useState } from 'react';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -239,6 +240,9 @@ const ProfileSetupWizard = ({
     };
 
     const validateStep = (stepId) => {
+        if (stepId === 'profile' && (form.bio || '').length > TEXT_LIMITS.bio) {
+            return 'Your bio must be 500 characters or fewer.';
+        }
         if (stepId === 'profile' && containsBlacklistedWord(form.bio, blacklist)) {
             return 'Your bio contains a forbidden word.';
         }
@@ -382,15 +386,20 @@ const ProfileSetupWizard = ({
                                 </div>
                             </div>
                         </Field>
-                        <Field label="Bio" hint="Introduce yourself and the creations you enjoy." htmlFor="setup-bio">
+                        <Field label="Bio" hint="Introduce yourself and the creations you enjoy. Maximum 500 characters." htmlFor="setup-bio">
                             <textarea
                                 id="setup-bio"
+                                maxLength={TEXT_LIMITS.bio}
+                                aria-describedby="setup-bio-count"
                                 value={form.bio}
                                 onChange={(e) => setField('bio', e.target.value)}
                                 rows="4"
                                 className={`${inputClass} resize-y`}
                                 placeholder="Tell the community about yourself..."
                             />
+                            <p id="setup-bio-count" className="mt-1 text-sm font-medium" aria-live="polite">
+                                {(form.bio || '').length} / {TEXT_LIMITS.bio} characters
+                            </p>
                         </Field>
                         <Field label="Country" hint="Optional. This appears publicly on your profile." htmlFor="setup-country">
                             <input

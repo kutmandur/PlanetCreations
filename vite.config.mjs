@@ -1,3 +1,4 @@
+import workspacePaths from './scripts/workspace-paths.cjs';
 import {defineConfig} from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -7,6 +8,7 @@ export default defineConfig(({mode}) => ({
     // packaged Electron fallback is loaded through file:// and therefore keeps
     // a separate relative-asset build.
     base: mode === 'electron' ? './' : '/',
+    cacheDir: workspacePaths.organizedWorkspace ? '../build-artefakte/.vite' : 'node_modules/.vite',
     plugins: [
         react(),
         tailwindcss(),
@@ -37,7 +39,7 @@ export default defineConfig(({mode}) => ({
     },
     build: {
         emptyOutDir: true,
-        outDir: 'build',
+        outDir: mode === 'electron' ? workspacePaths.electron : workspacePaths.web,
     },
     test: {
         environment: 'jsdom',

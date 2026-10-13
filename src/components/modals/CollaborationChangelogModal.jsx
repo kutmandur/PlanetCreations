@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth } from '../../firebase/config';
@@ -395,7 +397,7 @@ const CollaborationChangelogModal = ({
                             Attach image URLs
                         </label>
                         <div className="flex gap-2">
-                            <input
+                            <LimitedTextField maxLength={TEXT_LIMITS.imageUrl}
                                 id="collaboration-changelog-image"
                                 type="url"
                                 value={imageInput}

@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../../firebase/config';
 import { collection, query, where, getDocs, getCountFromServer } from 'firebase/firestore';
@@ -35,6 +37,9 @@ const SubmissionForm = ({ creation, event, onConfirm, community, blacklist = [] 
     const canSubmit = allRulesChecked && allRequiredFieldsFilled;
 
     const handleSubmit = async () => {
+        const lengthError = Object.values(customFieldData).map(value =>
+            textLengthError(value, TEXT_LIMITS.eventAnswer, 'Event answer')).find(Boolean);
+        if (lengthError) { setError(lengthError); return; }
         // Validate custom field data against blacklist
         for (const value of Object.values(customFieldData)) {
             if (containsBlacklistedWord(String(value), blacklist)) {
@@ -73,8 +78,8 @@ const SubmissionForm = ({ creation, event, onConfirm, community, blacklist = [] 
                                 <label className="block text-sm font-semibold text-gray-700">
                                     {field.label} {field.required && <span className="text-red-500">*</span>}
                                 </label>
-                                <input
-                                    type="text"
+                                <LimitedTextField maxLength={TEXT_LIMITS.eventAnswer}
+                                    type="text" value={customFieldData[field.id] || ''}
                                     onChange={(e) => handleFieldChange(field.id, e.target.value)}
                                     className="w-full p-2 border rounded-md mt-1"
                                     required={field.required}

@@ -1,3 +1,5 @@
+import LimitedTextField from '../../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../../utils/textLimits';
 import React, { useState, useRef } from 'react';
 import { scheduleDataRefresh } from '../../../utils/appRefresh';
 import { db } from '../../../firebase/config';
@@ -103,6 +105,8 @@ const RanksSection = ({ community, setModalMessage }) => {
   };
 
   const handleSave = async () => {
+    const lengthError = ranks.map(rank => textLengthError(rank.name, TEXT_LIMITS.rankName, 'Rank name')).find(Boolean);
+    if (lengthError) { setModalMessage(lengthError); return; }
     setSaving(true);
     try {
       const specialRanks = [
@@ -262,7 +266,7 @@ const RanksSection = ({ community, setModalMessage }) => {
               <div className="cursor-grab text-gray-400 pt-2.5"><Icon path={GRAB_HANDLE_ICON} className="w-5 h-5" /></div>
               <div className="flex-grow space-y-2">
                 <div className="flex items-center space-x-2">
-                  <input
+                  <LimitedTextField maxLength={TEXT_LIMITS.rankName}
                     type="text"
                     placeholder="Custom Rank Name"
                     value={rank.name}

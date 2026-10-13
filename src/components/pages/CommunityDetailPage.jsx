@@ -1,3 +1,4 @@
+import LoadMoreTrigger from '../ui/LoadMoreTrigger';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -111,7 +112,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 navigate('/communitys');
                 return;
             }
-            
+
             const communityDoc = querySnapshot.docs[0];
             const communityData = { id: communityDoc.id, ...communityDoc.data() };
             setCommunity(communityData);
@@ -212,13 +213,13 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         fetchMembers();
         return () => { isMounted = false; };
     }, [community, canViewInfoPage]);
-    
+
     useEffect(() => {
         if (!community || !canViewInfoPage) return;
         const fetchInitialEvents = async () => {
             setHasMoreEvents(true);
             const eventsQuery = query(
-                collection(db, 'events'), 
+                collection(db, 'events'),
                 where('communityId', '==', community.id),
                 orderBy('startDate', 'desc'),
                 limit(12)
@@ -239,41 +240,29 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
         setLoadingMoreEvents(true);
 
         const nextQuery = query(
-            collection(db, 'events'), 
+            collection(db, 'events'),
             where('communityId', '==', community.id),
             orderBy('startDate', 'desc'),
             startAfter(lastVisibleEvent),
             limit(12)
         );
-        
+
         const docSnapshots = await getDocs(nextQuery);
         const newEvents = docSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
+
         if (newEvents.length > 0) {
             setEvents(prev => [...prev, ...newEvents]);
             setLastVisibleEvent(docSnapshots.docs[docSnapshots.docs.length - 1]);
         }
-        
+
         if (newEvents.length < 12) {
             setHasMoreEvents(false);
         }
-        
+
         setLoadingMoreEvents(false);
     }, [loading, loadingMoreEvents, hasMoreEvents, lastVisibleEvent, community]);
 
-    useEffect(() => {
-        if (activeTab !== 'Events') return;
 
-        const handleScroll = () => {
-            const isBottom = window.innerHeight + document.documentElement.scrollTop + 1 >= document.documentElement.offsetHeight;
-            if (isBottom) {
-                fetchMoreEvents();
-            }
-        };
-
-        window.addEventListener('scroll', handleScroll);
-        return () => window.removeEventListener('scroll', handleScroll);
-    }, [activeTab, fetchMoreEvents]);
 
 
     // Resolve each creator's community roles to colored rank objects (the index
@@ -405,7 +394,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
     }, [activeTab, unpinnedCreations, members, searchTerm, creationStatusFilter, creationPlatformFilter, memberRankFilter, creationRankFilter, creationTagFilter, creationDlcFilter]);
 
     if (loading || !community || community.slug !== communityName) return <Spinner />;
-    
+
     const handleJoin = async () => {
         if (!user) { setModalMessage("You must be logged in to join a community."); return; }
         const joinMode = community.joinMode || 'open';
@@ -476,7 +465,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
             }
         });
     };
-    
+
     const themeColor = community?.themeColor || '#F97316';
     const joinActionLabel = isProcessingJoin
         ? 'Joining...'
@@ -615,8 +604,8 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
 
                 <div className="flex flex-col md:flex-row justify-center items-center md:items-start gap-y-4 px-2">
                     <div className="flex flex-col sm:flex-row gap-2 order-2 md:order-1 w-56 flex-shrink-0">
-                        <button 
-                            onClick={() => navigate('/communitys')} 
+                        <button
+                            onClick={() => navigate('/communitys')}
                             className="flex items-center justify-center community-bg hover:brightness-90 text-white px-4 py-2 rounded-md transition-all font-semibold"
                         >
                             <Icon path={ICONS.arrowLeft} className="w-5 h-5 mr-2"/> Back to Hub
@@ -665,7 +654,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                         <h1 className="text-4xl font-bold text-gray-800 dark:text-gray-100">{community.name}</h1>
                         <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">{community.description}</p>
                     </div>
-                    
+
                     <div className="text-center order-3 md:order-3 md:text-right w-56 flex-shrink-0">
                         {user && !isCommunityOwner ? (
                             isMember ? (
@@ -888,9 +877,9 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                                 {visibleEvents.map(event => <EventCard key={event.id} event={event} community={community} userProfile={userProfile} showStatus={false} />)}
                             </div>
-                            {loadingMoreEvents && <div className="text-center col-span-full p-8"><Spinner /></div>}
+
                             {!hasMoreEvents && events.length > 0 && (
-                                <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You've reached the end!</p>
+                                <p className="text-center text-gray-500 dark:text-gray-400 mt-10 text-xl col-span-full">You have reached the end</p>
                             )}
                         </>
                     ) : (
@@ -899,6 +888,9 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                             <p className="mt-2">This community hasn't scheduled any events.</p>
                         </div>
                     )}
+                    <LoadMoreTrigger hasMore={hasMoreEvents && !!lastVisibleEvent}
+                        busy={loading || loadingMoreEvents} progress={events.length}
+                        onLoadMore={fetchMoreEvents} label="Load more events" />
                 </div>
             )}
 
@@ -923,7 +915,7 @@ const CommunityDetailPage = ({ user, userProfile, setModalMessage, setConfirmati
                 )}
               </>
             )}
-            
+
             {showManageButton && (
                 <FloatingActionButtonManage communityId={community.id} />
             )}

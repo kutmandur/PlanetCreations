@@ -77,7 +77,7 @@ describe('CreationForm desktop savegame start', () => {
         delete window.electronAPI;
     });
 
-    test('asks first and prefills editable fields from the selected save', async () => {
+    test('offers Park Info for every creation category', async () => {
         render(
             <MemoryRouter>
                 <CreationForm
@@ -90,42 +90,11 @@ describe('CreationForm desktop savegame start', () => {
             </MemoryRouter>,
         );
 
-        expect(screen.getByRole('heading', { name: 'Would you like to attach a savegame?' })).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: /Yes, select a savegame/i }));
-        fireEvent.click(await screen.findByRole('button', { name: /Arctic Launch\.blpr2/i }));
-        expect(await screen.findByAltText('In-game save preview')).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: 'Confirm Selection' }));
-
-        await waitFor(() => expect(screen.getByText('Selected savegame')).toBeInTheDocument());
-        fireEvent.click(screen.getByRole('button', { name: /Details/i }));
-
-        expect(await screen.findByDisplayValue('Arctic Launch')).toBeInTheDocument();
-        expect(screen.getByDisplayValue('A frozen launch coaster.')).toBeInTheDocument();
-        expect(screen.getByText('In-game tags')).toBeInTheDocument();
-        expect(screen.getByText('Coasters')).toBeInTheDocument();
-        expect(screen.getByText('0 / 10')).toBeInTheDocument();
-        expect(screen.getByPlaceholderText('Add tags with spacebar...')).toBeEnabled();
-        expect(screen.getByText('1 DLC(s) selected')).toBeInTheDocument();
-    });
-
-    test('adds the Attractions & Areas step only after selecting Park', async () => {
-        render(
-            <MemoryRouter>
-                <CreationForm
-                    user={{ uid: 'creator-1' }}
-                    userProfile={{ ownedDlcs: {} }}
-                    setModalMessage={vi.fn()}
-                    initialGame="planet-coaster-2"
-                    blacklist={[]}
-                />
-            </MemoryRouter>,
-        );
-
-        expect(screen.queryByRole('button', { name: /Attractions & Areas/i })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Park Info/i })).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /Details/i }));
         fireEvent.click(await screen.findByRole('button', { name: 'Park' }));
-        expect(screen.getByRole('button', { name: /Attractions & Areas/i })).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: /Attractions & Areas/i }));
+        expect(screen.getByRole('button', { name: /Park Info/i })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /Park Info/i }));
         expect(screen.getByRole('heading', { name: 'Areas' })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Attractions' })).toBeInTheDocument();
         expect(screen.getByLabelText('Attraction category')).toHaveValue('restaurant');
@@ -141,7 +110,8 @@ describe('CreationForm desktop savegame start', () => {
         expect(screen.getByRole('option', { name: 'Show' })).toBeInTheDocument();
     });
 
-    test.each([true, false])('normal users can save a new tag with attached savegame=%s', async attachSavegame => {
+    test('normal users can save a new tag without upload controls', async () => {
+        const attachSavegame = false;
         const setModalMessage = vi.fn();
         const validateContentText = vi.fn().mockResolvedValue({ data: {} });
         const finalizeBackupUpload = vi.fn().mockResolvedValue({ data: { success: true } });
@@ -193,14 +163,19 @@ describe('CreationForm desktop savegame start', () => {
             fireEvent.click(screen.getByRole('button', { name: 'Attach & Continue' }));
             await screen.findByDisplayValue('Arctic Launch');
         } else {
-            fireEvent.click(screen.getByRole('button', { name: /Continue without/i }));
+            expect(screen.queryByRole('button', {name: /select a savegame/i})).not.toBeInTheDocument();
             fireEvent.click(screen.getByRole('button', { name: /Details/i }));
             fireEvent.click(await screen.findByRole('button', { name: 'Coaster' }));
             const [title, description] = screen.getAllByRole('textbox');
             fireEvent.change(title, { target: { value: 'Arctic Launch' } });
             fireEvent.change(description, { target: { value: 'A frozen launch coaster.' } });
         }
-        const tagInput = screen.getByPlaceholderText('Add tags with spacebar...');
+        const tagInput = screen.getByPlaceholderText('Add tags with Enter, space or comma...');
+        fireEvent.change(tagInput, { target: { value: 'winter' } });
+        expect(fireEvent.keyDown(tagInput, { key: 'Enter' })).toBe(false);
+        expect(tagInput).toHaveValue('');
+        expect(addDoc).not.toHaveBeenCalled();
+        expect(fireEvent.keyDown(tagInput, { key: 'Enter' })).toBe(false);
         fireEvent.change(tagInput, { target: { value: 'winter' } });
         fireEvent.keyDown(tagInput, { key: ' ' });
         fireEvent.click(screen.getByRole('button', { name: /Sharing/i }));

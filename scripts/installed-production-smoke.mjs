@@ -1,3 +1,4 @@
+import workspacePaths from './workspace-paths.cjs';
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -20,7 +21,7 @@ const installedClient = process.env.PLANETCREATIONS_CLIENT_EXE
     "planet-creation-net",
     "PlanetCreations Client.exe",
   );
-const isolatedRoot = path.join(projectRoot, ".local-runtimes", "installed-smoke");
+const isolatedRoot = path.join(workspacePaths.runtimes, "installed-smoke");
 const firebaseCli = process.platform === "win32" ? process.execPath : "npx";
 const firebaseCliPrefix = process.platform === "win32" ? [path.join(
   path.dirname(process.execPath),
@@ -634,8 +635,7 @@ function stopClient(instance) {
 
 async function main() {
   const fixtureRoot = path.resolve(
-    projectRoot,
-    ".local-runtimes",
+    workspacePaths.runtimes,
     "collaboration-save-fixtures",
   );
   const sourceSave = path.resolve(process.argv[2] || path.join(

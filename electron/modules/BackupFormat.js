@@ -97,7 +97,6 @@ function inspectCreationPackage(source, allowedExtensions, publicKey = null) {
     const zip = readZip(source);
     const entries = zip.getEntries();
     validateEntryPaths(entries);
-    if (entries.length !== 3) throw new Error('A creation package must contain exactly three files.');
     const { value: metadata } = parseJsonEntry(zip.getEntry('metadata.json'), 'metadata.json', MAX_METADATA_SIZE_BYTES);
     validateCommonMetadata(metadata, allowedExtensions, 'creation');
     if (metadata.payloadPath !== `payload/${metadata.originalFileName}` ||
@@ -108,7 +107,7 @@ function inspectCreationPackage(source, allowedExtensions, publicKey = null) {
     const payloadEntry = zip.getEntry(metadata.payloadPath);
     const manifestResult = parseJsonEntry(zip.getEntry('media_manifest.json'), 'media_manifest.json', MAX_MANIFEST_SIZE_BYTES);
     const expectedNames = new Set(['metadata.json', 'media_manifest.json', metadata.payloadPath]);
-    if (!payloadEntry || entries.some(entry => !expectedNames.has(entry.entryName))) {
+    if (!payloadEntry) {
         throw new Error('The creation package contains an unexpected file.');
     }
     if (payloadEntry.header.size !== metadata.payloadSize) {
@@ -126,9 +125,24 @@ function inspectCreationPackage(source, allowedExtensions, publicKey = null) {
     if (manifestResult.value.mediaSetId !== metadata.mediaSetId) {
         throw new Error('The media manifest belongs to a different package.');
     }
+    const assetBuffers = [];
+    let mediaSize = 0;
+    if (manifestResult.value.embeddedMedia === true) {
+        for (const asset of manifestResult.value.assets) {
+            const name = `assets/${asset.sha256}${path.extname(asset.logicalName).toLowerCase()}`;
+            expectedNames.add(name);
+            const entry = zip.getEntry(name);
+            if (!entry || entry.header.size !== asset.size || mediaSize + asset.size > MAX_MEDIA_TOTAL_SIZE_BYTES) throw new Error('Invalid embedded media size.');
+            const buffer = entry.getData();
+            if (buffer.length !== asset.size || sha256(buffer) !== asset.sha256) throw new Error('Embedded media failed its integrity check.');
+            mediaSize += buffer.length;
+            assetBuffers.push({asset, buffer});
+        }
+    }
+    if (entries.length !== expectedNames.size || entries.some(entry => !expectedNames.has(entry.entryName))) throw new Error('The creation package contains unexpected files.');
     const signatureStatus = !metadata.isSigned ? 'unsigned' :
         (!publicKey ? 'unverified' : (verifyMetadataSignature(metadata, publicKey) ? 'verified' : 'invalid'));
-    return { zip, metadata, mediaManifest: manifestResult.value, payloadBuffer, signatureStatus };
+    return { zip, metadata, mediaManifest: manifestResult.value, payloadBuffer, assetBuffers, signatureStatus };
 }
 
 function inspectMediaPackage(source, allowedExtensions, publicKey = null) {

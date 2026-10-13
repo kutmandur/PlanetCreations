@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { PARK_INFO_FIELDS, getParkInfo, PARK_TEXT_FIELDS, getParkText, RIDE_INFO_FIELDS, getRideInfo } from '../../utils/parkInfo';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { getCombinedParkPieceCount, getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
+import { getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
 export { getPlanetCoaster2ScoreTone } from '../../utils/verifiedParkStats';
 import {
     colorWithAlpha,
@@ -9,15 +9,10 @@ import {
     groupPresentedParkRidesByArea,
     sanitizeParkRidePresentation,
 } from '../../utils/parkRidePresentation';
-import CreationMetadataPanel from './CreationMetadataPanel';
-import RideNerdAnalysis from './RideNerdAnalysis';
 import AnimatedPillTabs from './AnimatedPillTabs';
-import { parseRideAnalysisBuffer } from '../../utils/rideAnalysis';
-import { downloadCreationRideAnalysis } from '../../utils/rideAnalysisDownload';
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const decimalFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
-const moneyFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const CATEGORY_STYLES = {
     coaster: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200',
@@ -118,47 +113,6 @@ const BlueprintStatCard = ({ label, value, formatter = decimalFormatter, metric,
     );
 };
 
-const VerifiedBlueprintStats = ({ metadata, creationName, bannerImageUrl }) => {
-    const blueprint = metadata?.blueprint;
-    const ratings = blueprint?.ratings;
-    const hasPlacementCost = Number.isFinite(blueprint?.placementCost);
-    const hasRunningCost = Number.isFinite(blueprint?.runningCost);
-    const ratingEntries = [
-        { metric: 'excitement', label: 'Excitement', value: ratings?.excitement },
-        { metric: 'fear', label: 'Fear', value: ratings?.fear },
-        { metric: 'nausea', label: 'Nausea', value: ratings?.nausea },
-    ].filter(entry => Number.isFinite(entry.value));
-    if (!blueprint) return null;
-
-    const isMultiRideBlueprint = blueprint?.rideCount > 1 ||
-        (blueprint?.trackedRideCount || 0) + (blueprint?.flatRideCount || 0) > 1;
-    return <>
-        <div
-            className="mt-3 grid gap-2 text-left"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(7.5rem, 1fr))' }}
-            data-testid="verified-blueprint-stats"
-        >
-            {hasPlacementCost && <BlueprintStatCard label="Build cost" value={blueprint.placementCost} formatter={moneyFormatter} neutral />}
-            {hasRunningCost && <BlueprintStatCard label="Running cost" value={blueprint.runningCost} formatter={moneyFormatter} neutral />}
-            {ratingEntries.map(entry => (
-                <BlueprintStatCard key={entry.metric} {...entry} />
-            ))}
-            <CreationMetadataPanel
-                metadata={metadata}
-                creationName={creationName}
-                bannerImageUrl={bannerImageUrl}
-                triggerLabel="More stats"
-                triggerClassName="flex min-h-14 items-center justify-center rounded-xl bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
-            />
-        </div>
-        {isMultiRideBlueprint && (
-            <p data-testid="multi-ride-blueprint-analysis-note" className="mx-auto mt-3 max-w-2xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100">
-                Planet Coaster 2 does not include final EFN ratings or ride-test curves in multi-ride blueprints, so no reliable ride analysis can be shown for this file.
-            </p>
-        )}
-    </>;
-};
-
 const TinyMetric = ({ label, value, accent = '' }) => (
     <div className="min-w-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-center dark:border-gray-700 dark:bg-gray-950">
         <p className="truncate text-[9px] uppercase tracking-wide text-gray-500">{label}</p>
@@ -167,6 +121,7 @@ const TinyMetric = ({ label, value, accent = '' }) => (
 );
 
 const TestScoreMetric = ({ metric, label, value, source }) => {
+    if (!Number.isFinite(value)) return null;
     const tone = getPlanetCoaster2ScoreTone(metric, value);
     return (
         <div
@@ -182,62 +137,24 @@ const TestScoreMetric = ({ metric, label, value, source }) => {
     );
 };
 
-const RideStats = ({ ride, userEfn }) => {
-    const stats = ride?.testStats;
-    const ratings = ride?.ratings;
-    const hasGameRatings = ['excitement', 'fear', 'nausea']
-        .some(metric => Number.isFinite(ratings?.[metric]));
-    const calculatedRatings = stats?.calculatedRatings || (stats?.testCurves?.average ? {
-        ...stats.testCurves.average,
-        source: 'legacy-tracked-ride-test-curve-sample-mean',
-        isFinalRating: false,
-    } : null);
-    const hasCalculatedRatings = ['excitement', 'fear', 'nausea']
-        .some(metric => Number.isFinite(calculatedRatings?.[metric]));
-    const scores = hasGameRatings ? ratings : (hasCalculatedRatings ? calculatedRatings : userEfn);
-    const scoreSource = hasGameRatings ? 'game' : (hasCalculatedRatings ? 'calculated' : 'user');
-    if (!stats && !scores) {
-        return <p className="mt-3 text-xs text-gray-500">{ride?.isCustom ? 'Custom attraction — no savefile stats.' : 'No stored per-ride test stats.'}</p>;
-    }
-    return (
-        <div className="mt-3 space-y-2">
-            {scores && (
-                <div className="space-y-1.5">
-                    {scoreSource === 'calculated' && <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">Calculated from test curve</p>}
-                    <div className="grid grid-cols-3 gap-1.5">
-                    <TestScoreMetric metric="excitement" label="Excitement" value={scores.excitement} source={scoreSource} />
-                    <TestScoreMetric metric="fear" label="Fear" value={scores.fear} source={scoreSource} />
-                    <TestScoreMetric metric="nausea" label="Nausea" value={scores.nausea} source={scoreSource} />
-                    </div>
-                </div>
-            )}
-            {stats && <>
-                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                    <TinyMetric label="Test duration" value={`${formatNumber(stats.durationSeconds, 2)} s`} />
-                    <TinyMetric label="Traversal" value={`${formatNumber(stats.traversalLengthMeters, 2)} m`} />
-                    <TinyMetric label="Max speed" value={`${formatNumber(stats.maxSpeedKph, 2)} km/h`} />
-                    <TinyMetric label="Samples" value={formatNumber(stats.sampleCount)} />
-                </div>
-                {stats.gForces && (
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                        <TinyMetric label="Lateral G min / max" value={`${formatNumber(stats.gForces.lateral?.min, 2)} / ${formatNumber(stats.gForces.lateral?.max, 2)}`} />
-                        <TinyMetric label="Vertical G min / max" value={`${formatNumber(stats.gForces.vertical?.min, 2)} / ${formatNumber(stats.gForces.vertical?.max, 2)}`} />
-                        <TinyMetric label="Longitudinal G min / max" value={`${formatNumber(stats.gForces.longitudinal?.min, 2)} / ${formatNumber(stats.gForces.longitudinal?.max, 2)}`} />
-                    </div>
-                )}
-            </>}
+const RideStats = ({ride, userEfn, manualStats}) => {
+    const stats = getRideInfo(ride, manualStats);
+    const scores = {...ride?.ratings, ...userEfn};
+    return <div className="mt-3 space-y-2">
+        <div className="grid grid-cols-3 gap-1.5">
+            {['excitement', 'fear', 'nausea'].filter(key => Number.isFinite(scores[key])).map(metric =>
+                <TestScoreMetric key={metric} metric={metric} label={metric[0].toUpperCase() + metric.slice(1)} value={scores[metric]} source="user" />)}
         </div>
-    );
+        <div className="grid grid-cols-2 gap-1.5">
+            {RIDE_INFO_FIELDS.filter(({key}) => Number.isFinite(stats[key])).map(({key, label}) =>
+                <TinyMetric key={key} label={label} value={formatNumber(stats[key], 2)} />)}
+        </div>
+    </div>;
 };
 
 const RideCard = ({
     entry,
     showType = false,
-    nerdMode = false,
-    analysis,
-    analysisLoading = false,
-    expanded = false,
-    onToggle,
     checked = false,
     onToggleChecked = null,
 }) => {
@@ -247,7 +164,7 @@ const RideCard = ({
         <article
             data-testid={`ride-card-${categoryKey}-${index}`}
             data-checked={onToggleChecked ? String(checked) : undefined}
-            className={`min-w-0 rounded-2xl border p-3 text-center shadow-sm transition-all ${nerdMode ? 'w-full sm:p-5' : ''} ${checked ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : ''} ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
+            className={`min-w-0 rounded-2xl border p-3 text-center shadow-sm transition-all ${checked ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-gray-900' : ''} ${CATEGORY_CARD_STYLES[categoryKey] || CATEGORY_CARD_STYLES['tracked-ride']}`}
         >
             {onToggleChecked && (
                 <label className="mb-2 ml-auto flex w-fit cursor-pointer items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700 shadow-sm dark:bg-gray-950/75 dark:text-gray-200">
@@ -270,16 +187,8 @@ const RideCard = ({
                     </span>
                 )}
             </div>
-            {!ride.isCountPlaceholder && <RideStats ride={ride} userEfn={entry.userEfn} />}
-            {ride.isCountPlaceholder && <p className="mt-3 text-center text-xs text-gray-500">Ride counted, but no individual record was available.</p>}
-            {nerdMode && ride.kind === 'tracked' && !ride.isCountPlaceholder && (
-                <div className="mt-4">
-                    <button type="button" disabled={analysisLoading || !analysis} onClick={onToggle} className="rounded-full bg-gray-900 px-4 py-2 text-xs font-bold text-white hover:bg-black disabled:cursor-wait disabled:opacity-50 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200">
-                        {analysisLoading ? 'Loading full-resolution data…' : (expanded ? 'Close detailed analysis' : 'Open detailed analysis')}
-                    </button>
-                    {expanded && analysis && <RideNerdAnalysis analysis={analysis} entry={entry} />}
-                </div>
-            )}
+            <RideStats ride={ride} userEfn={entry.userEfn} manualStats={entry.manualStats} />
+
         </article>
     );
 };
@@ -344,146 +253,39 @@ const AreaSections = ({ groups, checkedRideKeys = new Set(), onToggleChecked = n
 
 export { AreaSections, TypeSections };
 
-const RideListPopover = ({
-    groups,
-    areaGroups,
-    hasAreas,
-    creationId,
-    rideAnalysisSummary,
-    onClose,
-}) => {
+const RideListPopover = ({groups, areaGroups, hasAreas, onClose}) => {
     const [grouping, setGrouping] = useState(hasAreas ? 'areas' : 'types');
-    const [nerdMode, setNerdMode] = useState(false);
-    const [analysis, setAnalysis] = useState(null);
-    const [analysisStatus, setAnalysisStatus] = useState('idle');
-    const [analysisError, setAnalysisError] = useState('');
-    const [expandedRideKey, setExpandedRideKey] = useState('');
-    const analysisStatusRef = useRef('idle');
-    const allEntries = useMemo(() => groups.flatMap(group => group.rides), [groups]);
-    const nerdModeAvailable = Boolean(creationId && rideAnalysisSummary?.available);
-
-    const loadAnalysis = useCallback(async () => {
-        if (!nerdModeAvailable || ['loading', 'complete'].includes(analysisStatusRef.current)) return;
-        analysisStatusRef.current = 'loading';
-        setAnalysisStatus('loading');
-        setAnalysisError('');
-        try {
-            const requestChunk = httpsCallable(getFunctions(), 'getCreationRideAnalysisChunk');
-            const analysisBuffer = await downloadCreationRideAnalysis(
-                creationId,
-                async payload => (await requestChunk(payload)).data,
-            );
-            setAnalysis(parseRideAnalysisBuffer(analysisBuffer));
-            analysisStatusRef.current = 'complete';
-            setAnalysisStatus('complete');
-        } catch (error) {
-            console.warn('Full-resolution ride analysis could not be loaded:', error);
-            analysisStatusRef.current = 'error';
-            setAnalysisError(error.message || 'Full-resolution ride analysis could not be loaded.');
-            setAnalysisStatus('error');
-        }
-    }, [creationId, nerdModeAvailable]);
-
-    const enableNerdMode = () => {
-        setNerdMode(true);
-        void loadAnalysis();
-    };
-    const changeMode = mode => {
-        if (mode === 'nerd') {
-            enableNerdMode();
-            return;
-        }
-        setNerdMode(false);
-        setExpandedRideKey('');
-    };
     useEffect(() => {
         const handleKeyDown = event => { if (event.key === 'Escape') onClose(); };
         const previousOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
         document.addEventListener('keydown', handleKeyDown);
-        return () => {
-            document.body.style.overflow = previousOverflow;
-            document.removeEventListener('keydown', handleKeyDown);
-        };
+        return () => { document.body.style.overflow = previousOverflow; document.removeEventListener('keydown', handleKeyDown); };
     }, [onClose]);
-
     return createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-2 backdrop-blur-sm sm:p-3" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-            <div role="dialog" aria-modal="true" aria-label="Ride List" className="flex max-h-[calc(100vh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-gray-300 bg-gray-100 shadow-2xl dark:border-gray-700 dark:bg-gray-950 sm:max-h-[calc(100vh-1.5rem)]">
-                <header className="flex flex-none items-start justify-between gap-4 border-b border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900 sm:px-7">
-                    <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-300">Park metadata</p>
-                        <h2 className="mt-1 text-2xl font-bold text-gray-950 dark:text-white">Ride List</h2>
-                        <p className="mt-1 text-xs text-gray-500">Stored game EFN takes priority; when it is missing, EFN is calculated from the saved test curve.</p>
-                    </div>
-                    <button type="button" aria-label="Close Ride List" onClick={onClose} className="grid h-10 w-10 flex-none place-items-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700">
-                        <span aria-hidden="true" className="relative block h-4 w-4">
-                            <span className="absolute left-1/2 top-1/2 h-0.5 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-current" />
-                            <span className="absolute left-1/2 top-1/2 h-0.5 w-4 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-current" />
-                        </span>
-                    </button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-3" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+            <div role="dialog" aria-modal="true" aria-label="Ride List" className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-gray-100 dark:bg-gray-950">
+                <header className="flex items-center justify-between p-5">
+                    <div><h2 className="text-2xl font-bold">Ride List</h2><p className="text-xs text-gray-500">Information provided by the creator.</p></div>
+                    <button type="button" aria-label="Close Ride List" onClick={onClose} className="h-10 w-10 rounded-full bg-gray-200 text-xl dark:bg-gray-800">×</button>
                 </header>
-                <div className="overflow-y-auto p-4 sm:p-6">
-                    {nerdModeAvailable && (
-                        <div className="mx-auto mb-5 w-full max-w-xs">
-                            <AnimatedPillTabs
-                                activeTab={nerdMode ? 'nerd' : 'normal'}
-                                onChange={changeMode}
-                                tabs={[
-                                    { id: 'normal', label: 'Normal mode' },
-                                    { id: 'nerd', label: 'Nerd mode' },
-                                ]}
-                            />
-                        </div>
-                    )}
-                    {nerdMode && analysisStatus === 'error' && <p role="alert" className="mb-5 rounded-xl border border-red-300 bg-red-50 p-3 text-center text-sm text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">{analysisError}</p>}
-                    {hasAreas && (
-                        <div className={`mb-6 ${nerdMode ? 'hidden' : ''}`}>
-                            <AnimatedPillTabs
-                                activeTab={grouping}
-                                onChange={setGrouping}
-                                tabs={[{ id: 'areas', label: 'Areas' }, { id: 'types', label: 'Types' }]}
-                            />
-                        </div>
-                    )}
-                    {nerdMode ? (
-                        <div className="mx-auto w-full max-w-5xl space-y-3 overflow-x-hidden" data-testid="nerd-ride-list">
-                            {allEntries.map(entry => (
-                                <RideCard
-                                    key={entry.key}
-                                    entry={entry}
-                                    showType
-                                    nerdMode
-                                    analysis={analysis}
-                                    analysisLoading={analysisStatus === 'loading'}
-                                    expanded={expandedRideKey === entry.key}
-                                    onToggle={() => setExpandedRideKey(current => current === entry.key ? '' : entry.key)}
-                                />
-                            ))}
-                        </div>
-                    ) : (grouping === 'areas' && hasAreas ? <AreaSections groups={areaGroups} /> : <TypeSections groups={groups} />)}
+                <div className="overflow-y-auto p-5">
+                    {hasAreas && <div className="mb-6"><AnimatedPillTabs activeTab={grouping} onChange={setGrouping} tabs={[{id: 'areas', label: 'Areas'}, {id: 'types', label: 'Types'}]} /></div>}
+                    {grouping === 'areas' && hasAreas ? <AreaSections groups={areaGroups} /> : <TypeSections groups={groups} />}
                 </div>
             </div>
-        </div>,
-        document.body,
-    );
+        </div>, document.body);
 };
 
-const VerifiedParkStats = ({ metadata, presentation, creationName, bannerImageUrl, creationId, rideAnalysisSummary }) => {
+const VerifiedParkStats = ({ metadata, presentation }) => {
     const [rideListOpen, setRideListOpen] = useState(false);
     const normalizedPresentation = useMemo(() => sanitizeParkRidePresentation(presentation), [presentation]);
-    const park = metadata?.park || (normalizedPresentation.customRides.length > 0 ? { rides: [] } : null);
+    const park = metadata?.park || metadata?.blueprint || { rides: [] };
+    const parkInfo = getParkInfo(metadata, normalizedPresentation);
+    const parkText = getParkText(metadata, normalizedPresentation);
     const groups = useMemo(() => groupPresentedParkRides(park, normalizedPresentation), [park, normalizedPresentation]);
     const areaGroups = useMemo(() => groupPresentedParkRidesByArea(park, normalizedPresentation), [park, normalizedPresentation]);
-    if (!park) return (
-        <VerifiedBlueprintStats
-            metadata={metadata}
-            creationName={creationName}
-            bannerImageUrl={bannerImageUrl}
-        />
-    );
-
-    const pieceCount = getCombinedParkPieceCount(park);
+    if (!groups.length && !Object.values(parkText).some(value => value.trim()) && !PARK_INFO_FIELDS.some(({key}) => Number.isFinite(parkInfo[key]))) return null;
     return <>
         <div
             className="mt-3 grid gap-2 text-left"
@@ -500,19 +302,16 @@ const VerifiedParkStats = ({ metadata, presentation, creationName, bannerImageUr
                     <AutoFitStatNumber value={group.rides.length} />
                 </article>
             ))}
-            <article className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-900" title="Placement parts plus separately stored rail elements, tracked-ride elements and bins. Transform entities are excluded to avoid double counting.">
-                <p className="min-w-0 flex-1 text-[10px] font-bold uppercase leading-tight tracking-wide text-gray-500">Scenery pieces</p>
-                <AutoFitStatNumber value={pieceCount} testId="combined-piece-count" className="text-gray-950 dark:text-white" />
-            </article>
-            <button type="button" onClick={() => setRideListOpen(true)} disabled={groups.length === 0} className="min-h-14 rounded-xl bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Ride List</button>
+            {PARK_TEXT_FIELDS.filter(({key}) => parkText[key].trim()).map(({key, label}) => <TinyMetric key={key} label={label} value={parkText[key]} />)}
+            {PARK_INFO_FIELDS.filter(({key}) => Number.isFinite(parkInfo[key])).map(({key, label}) =>
+                <BlueprintStatCard key={key} label={label} value={parkInfo[key]} metric={['excitement', 'fear', 'nausea'].includes(key) ? key : undefined} neutral />)}
+            {groups.length > 0 && <button type="button" onClick={() => setRideListOpen(true)} className="min-h-14 rounded-xl bg-blue-600 px-3 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Ride List</button>}
         </div>
         {rideListOpen && (
             <RideListPopover
                 groups={groups}
                 areaGroups={areaGroups}
                 hasAreas={normalizedPresentation.areas.length > 0}
-                creationId={creationId}
-                rideAnalysisSummary={rideAnalysisSummary}
                 onClose={() => setRideListOpen(false)}
             />
         )}

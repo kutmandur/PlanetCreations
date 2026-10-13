@@ -85,18 +85,25 @@ service cloud.firestore {
         ? get(policy).data.pattern : baseline;
     }
     function textMatchesPolicy(value, pattern) {
-      return value is string && !value.lower().replace('[​‌‍﻿]', '').matches('(?s)' + pattern);
+      return value is string && (value == '' || !value.lower().replace('[​‌‍﻿]', '').matches('(?s)' + pattern));
     }
     function acceptableText(value) {
       return textMatchesPolicy(value, textPolicyPattern());
     }
     function acceptableContent(data) {
+      return acceptableContentWithPattern(data, textPolicyPattern());
+    }
+    function acceptableContentWithPattern(data, pattern) {
       // Resolve the policy once for all fields. Repeating its document checks
       // for each field exceeds the Rules expression budget on full creations.
-      let pattern = textPolicyPattern();
-      return textMatchesPolicy(data.get('title', ''), pattern) && textMatchesPolicy(data.get('description', ''), pattern) &&
-        textMatchesPolicy(data.get('name', ''), pattern) && textMatchesPolicy(data.get('bio', ''), pattern) &&
-        textMatchesPolicy(data.get('message', ''), pattern) && textMatchesPolicy(data.get('content', ''), pattern) && textMatchesPolicy(data.get('text', ''), pattern) && textMatchesPolicy(data.get('note', ''), pattern);
+      return (!('title' in data) || textMatchesPolicy(data.title, pattern)) &&
+        (!('description' in data) || textMatchesPolicy(data.description, pattern)) &&
+        (!('name' in data) || textMatchesPolicy(data.name, pattern)) &&
+        (!('bio' in data) || textMatchesPolicy(data.bio, pattern)) &&
+        (!('message' in data) || textMatchesPolicy(data.message, pattern)) &&
+        (!('content' in data) || textMatchesPolicy(data.content, pattern)) &&
+        (!('text' in data) || textMatchesPolicy(data.text, pattern)) &&
+        (!('note' in data) || textMatchesPolicy(data.note, pattern));
     }
     // --- Data Validation Functions ---
 
@@ -149,44 +156,70 @@ service cloud.firestore {
       ]);
     }
 
-    // User-owned display settings. These may hide or add presentation-only
-    // rides, but never contain or replace the server-owned verified metadata.
+    // Creator-owned optional values: constrain the schema here; readers accept
+    // only finite numbers and never treat these statistics as trusted metadata.
+    function validManualParkInfo(data) {
+      return data is map && data.keys().hasOnly(["placementCost", "runningCost", "placedPartCount", "sceneryPieceCount", "buildingCount", "railElementCount", "trackedRideElementCount", "binCount", "poolCount", "guestCount", "guestCap", "animalCount", "parkRating", "guestHappiness", "cash", "complexity", "scenarioStarsEarned", "scenarioStarsTotal", "sceneryCount", "serializedGroupCount", "generatedPower", "requiredPower", "generatedWater", "requiredWater", "excitement", "fear", "nausea"]);
+    }
+
+    function validManualParkText(data) {
+      // Padding keeps sparse and fully populated forms within the expression budget.
+      let values = data.values().concat(['', '', '', '', '', '']);
+      return data is map && data.keys().hasOnly(["gameMode", "biome", "difficulty", "gameVersion", "saveFormatVersion", "rideId"]) &&
+        (values[0] is string && values[0].size() <= 500) && (values[1] is string && values[1].size() <= 500) && (values[2] is string && values[2].size() <= 500) && (values[3] is string && values[3].size() <= 500) && (values[4] is string && values[4].size() <= 500) && (values[5] is string && values[5].size() <= 500);
+    }
+
     function isValidParkRidePresentation(data) {
       let presentation = data.get('parkRidePresentation', null);
+      let areas = presentation == null ? [] : presentation.get('areas', []);
+      let customRides = presentation == null ? [] : presentation.get('customRides', []);
+      let hiddenRideKeys = presentation == null ? [] : presentation.get('hiddenRideKeys', []);
+      let rideAreaAssignments = presentation == null ? {} : presentation.get('rideAreaAssignments', {});
+      let rideEfnOverrides = presentation == null ? {} : presentation.get('rideEfnOverrides', {});
+      let rideDisplayNames = presentation == null ? {} : presentation.get('rideDisplayNames', {});
+      let parkInfo = presentation == null ? {} : presentation.get('parkInfo', {});
+      let parkText = presentation == null ? {} : presentation.get('parkText', {});
+      let rideInfo = presentation == null ? {} : presentation.get('rideInfo', {});
       return presentation == null || (
         presentation is map &&
         presentation.keys().hasOnly([
           'version', 'areas', 'customRides', 'hiddenRideKeys',
-          'rideAreaAssignments', 'rideEfnOverrides', 'rideDisplayNames'
+          'rideAreaAssignments', 'rideEfnOverrides', 'rideDisplayNames', 'parkInfo', 'rideInfo', 'parkText'
         ]) &&
+        parkInfo is map &&
+        (parkInfo.size() == 0 || validManualParkInfo(parkInfo)) &&
+        parkText is map && (parkText.size() == 0 || validManualParkText(parkText)) &&
+        rideInfo is map &&
+        rideInfo.size() <= 500 &&
         presentation.get('version', 1) == 1 &&
-        presentation.get('areas', []) is list &&
-        presentation.get('areas', []).size() <= 24 &&
-        presentation.get('customRides', []) is list &&
-        presentation.get('customRides', []).size() <= 100 &&
-        presentation.get('hiddenRideKeys', []) is list &&
-        presentation.get('hiddenRideKeys', []).size() <= 500 &&
-        presentation.get('rideAreaAssignments', {}) is map &&
-        presentation.get('rideAreaAssignments', {}).keys().size() <= 500 &&
-        presentation.get('rideEfnOverrides', {}) is map &&
-        presentation.get('rideEfnOverrides', {}).keys().size() <= 500 &&
-        presentation.get('rideDisplayNames', {}) is map &&
-        presentation.get('rideDisplayNames', {}).keys().size() <= 500
+        areas is list &&
+        areas.size() <= 24 &&
+        customRides is list &&
+        customRides.size() <= 100 &&
+        hiddenRideKeys is list &&
+        hiddenRideKeys.size() <= 500 &&
+        rideAreaAssignments is map &&
+        rideAreaAssignments.keys().size() <= 500 &&
+        rideEfnOverrides is map &&
+        rideEfnOverrides.keys().size() <= 500 &&
+        rideDisplayNames is map &&
+        rideDisplayNames.keys().size() <= 500
       );
     }
 
     // Validiert Creation-Daten bei Create. Erlaubte Spiele kommen aus der
     // Games-Registry (meta/games.gameIds, nur enabled — Admin-Tab "Games");
     // solange das Doc noch nicht existiert, greift die alte Fallback-Liste.
-    function validChangelogChange(data, existing) {
+    function validChangelogChange(data, existing, pattern) {
       let old = existing.get('changelog', []);
       let next = data.get('changelog', []);
       return next == old || (next is list && next.size() == old.size() + 1 &&
         // Rules cannot slice an empty prefix when adding the first entry.
-        (old.size() == 0 || next[0:old.size()] == old) && acceptableText(next[old.size()].get('text', '')));
+        (old.size() == 0 || next[0:old.size()] == old) && textMatchesPolicy(next[old.size()].get('text', ''), pattern));
     }
     function isValidCreationCreate(data) {
-      return data.get('moderationWithheld', false) == false && data.get('moderationHolds', {}) == {} && acceptableContent(data) && validChangelogChange(data, {}) && data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&
+      let pattern = textPolicyPattern();
+      return data.get('moderationWithheld', false) == false && data.get('moderationHolds', {}) == {} && acceptableContentWithPattern(data, pattern) && validChangelogChange(data, {}, pattern) && data.keys().hasAll(['title', 'game', 'category', 'userId', 'tags']) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
              (
                exists(/databases/$(database)/documents/meta/games)
@@ -205,29 +238,33 @@ service cloud.firestore {
              data.get('activityScore', 0) == 0 && data.get('activityAt', null) == null &&
              data.get('liveStream', null) == null &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             data.tags is list && acceptableText(data.tags.join(' ')) && data.tags.size() > 0 && data.tags.size() <= 20;
+             data.tags is list && textMatchesPolicy(data.tags.join(' '), pattern) && data.tags.size() > 0 && data.tags.size() <= 20;
     }
 
     // Validiert Creation-Daten bei Update (verhindert Likes-Manipulation durch normale User)
-    function isValidCreationUpdate(data, existing) {
-      return data.get('moderationWithheld', false) == existing.get('moderationWithheld', false) && data.get('moderationHolds', {}) == existing.get('moderationHolds', {}) && acceptableContent(data) && validChangelogChange(data, existing) && data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
-             data.userId == existing.userId &&
+    function creationProtectedFieldsUnchanged(data, existing) {
+      return !data.diff(existing).affectedKeys().hasAny(['userId', 'game', 'likes', 'dislikes', 'views', 'reportCount', 'moderationWithheld', 'moderationHolds', 'activityScore', 'activityAt', 'liveStream']) || (
+        data.userId == existing.userId &&
              data.game == existing.game &&
              data.get('likes', 0) == existing.get('likes', 0) &&
              data.get('dislikes', 0) == existing.get('dislikes', 0) &&
              data.get('views', 0) == existing.get('views', 0) &&
              data.get('reportCount', 0) == existing.get('reportCount', 0) &&
+        data.get('moderationWithheld', false) == existing.get('moderationWithheld', false) &&
+        data.get('moderationHolds', {}) == existing.get('moderationHolds', {}) &&
+        data.get('activityScore', 0) == existing.get('activityScore', 0) &&
+        data.get('activityAt', null) == existing.get('activityAt', null) &&
+        data.get('liveStream', null) == existing.get('liveStream', null)
+      );
+    }
+
+    function isValidCreationUpdate(data, existing) {
+      let pattern = textPolicyPattern();
+      return acceptableContentWithPattern(data, pattern) && validChangelogChange(data, existing, pattern) && data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             creationProtectedFieldsUnchanged(data, existing) &&
              isValidParkRidePresentation(data) &&
              (!('description' in data.keys()) || (data.description is string && data.description.size() <= 5000)) &&
-             data.tags is list && acceptableText(data.tags.join(' ')) && data.tags.size() > 0 && data.tags.size() <= 20 &&
-             // Activity-Score wird nur serverseitig gepflegt (onCreationActivityScore,
-             // Admin SDK umgeht Rules) — Clients dürfen ihn nicht manipulieren.
-             data.get('activityScore', 0) == existing.get('activityScore', 0) &&
-             data.get('activityAt', null) == existing.get('activityAt', null) &&
-             // Live-Status ebenfalls nur serverseitig (goLive/endLive/Sweep
-             // verifizieren über die Twitch-/YouTube-API) — sonst könnte ein
-             // modifizierter Client sich Live-Badge und Feed-Boost erschleichen.
-             data.get('liveStream', null) == existing.get('liveStream', null);
+             data.tags is list && textMatchesPolicy(data.tags.join(' '), pattern) && data.tags.size() > 0 && data.tags.size() <= 20;
     }
 
     // Event-Einreichungen werden ausschließlich durch die atomare Callable
@@ -506,12 +543,11 @@ service cloud.firestore {
           isValidCreationCreate(request.resource.data));
       // Views and reaction totals are server-authoritative.
       allow update: if accountCanWrite() && ((isLoggedIn() && (
-          !(isOwner(resource.data.userId) && resource.data.get('moderationWithheld', false)) &&
+          !(resource.data.userId == request.auth.uid && resource.data.get('moderationWithheld', false)) &&
           serverBackupFieldsAreUnchanged(request.resource.data, resource.data) &&
           collaborationPublicationFieldsAreUnchanged(request.resource.data, resource.data) &&
           eventSubmissionFieldsAreUnchanged(request.resource.data, resource.data) &&
-          ((isOwner(resource.data.userId) && isValidCreationUpdate(request.resource.data, resource.data)) ||
-          (isModerator() && isValidCreationUpdate(request.resource.data, resource.data)))
+          ((resource.data.userId == request.auth.uid || isModerator()) && isValidCreationUpdate(request.resource.data, resource.data))
        )));
       allow delete: if accountCanWrite() && (isLoggedIn() && (
         isModerator() ||

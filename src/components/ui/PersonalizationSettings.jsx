@@ -1,3 +1,4 @@
+import { useFeedPoolLabels, setFeedPoolLabels } from '../../hooks/useFeedPoolLabels';
 import React, { useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -20,6 +21,7 @@ import {
 //    läuft ohne Opt-in leer und ist deshalb ausgegraut)
 const PersonalizationSettings = ({ user, setModalMessage, setConfirmation, embedded = false }) => {
     const [enabled, setEnabled] = useState(getPersonalizationConsent() === true);
+    const showPoolLabels = useFeedPoolLabels(user?.uid);
     const [saving, setSaving] = useState(false);
 
     // Globales Default als Slider-Startwert, falls der User nie etwas gesetzt hat
@@ -126,6 +128,17 @@ const PersonalizationSettings = ({ user, setModalMessage, setConfirmation, embed
                     How much of what do you want to see in your Recommended feed?
                     {!enabled && ' ("Matches my interests" needs personalization enabled.)'}
                 </p>
+                <label className="group/pool relative flex items-center gap-3 mb-4 cursor-pointer">
+                    <input type="checkbox" checked={showPoolLabels}
+                        onChange={event => {
+                            try { setFeedPoolLabels(user?.uid, event.target.checked); }
+                            catch { setModalMessage('Could not save this setting on your device.'); }
+                        }} aria-describedby="feed-pool-labels-help" />
+                    <span>Show feed pool labels on creations</span>
+                    <span id="feed-pool-labels-help" role="tooltip" className="pointer-events-none absolute left-0 bottom-full z-30 mb-2 hidden w-72 max-w-[80vw] rounded-md bg-gray-900 p-3 text-xs font-normal leading-relaxed text-white shadow-lg group-hover/pool:block group-focus-within/pool:block">
+                        Show or hide the small pool tags on creation cards in your Recommended feed. Each tag names the pool that selected that creation. This only changes the visibility of the tags, not the feed mix. Off by default.
+                    </span>
+                </label>
                 <FeedWeightSliders
                     weights={effectiveWeights}
                     onChange={handleWeightsChange}

@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import {getFunctions, httpsCallable} from 'firebase/functions';
 import React, { useState, useMemo } from 'react';
 import Spinner from '../ui/Spinner';
@@ -31,6 +33,8 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
     const handleAddWord = async () => {
         const wordToAdd = newWord.trim().toLowerCase();
         if (!wordToAdd) return;
+        const lengthError = textLengthError(wordToAdd, TEXT_LIMITS.policyTerm, 'Policy term');
+        if (lengthError) { setModalMessage(lengthError); return; }
 
         if (blacklist.includes(wordToAdd)) {
             setModalMessage(`"${wordToAdd}" is already on the blacklist.`);
@@ -71,7 +75,7 @@ const BlacklistManager = ({ blacklist, setModalMessage }) => {
             <p className="mb-3 text-sm">Terms are checked on the server and in Firestore rules. Draft text is kept for correction. Review terms carefully to avoid blocking ordinary game descriptions.</p>
             <button className="mb-4 underline" disabled={loading} onClick={async()=>{setLoading(true);try{await httpsCallable(getFunctions(),'updateContentPolicy')({action:'publish'});setModalMessage('Current text policy published.');}catch(error){setModalMessage(error.message);}finally{setLoading(false);}}}>Publish current terms to the shared policy</button>
             <div className="flex space-x-2 mb-4">
-                <input
+                <LimitedTextField maxLength={TEXT_LIMITS.policyTerm}
                     type="text"
                     value={newWord}
                     onChange={(e) => setNewWord(e.target.value)}

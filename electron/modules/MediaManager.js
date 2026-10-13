@@ -1,3 +1,4 @@
+const {analysisEnabled} = require('./SaveAnalysisSettings');
 const {isMainThread, workerData} = require('node:worker_threads');
 const app = isMainThread ? require('electron').app : {getPath: name => workerData.data.paths[name]};
 const crypto = require('crypto');
@@ -60,12 +61,14 @@ function hasExpectedMediaSignature(fileName, buffer) {
 function getGameIdFromPath(savePath) {
     const lowerPath = String(savePath || '').toLowerCase();
     if (lowerPath.includes('planet coaster 2')) return 'planet-coaster-2';
+    if (lowerPath.split(/[\\/]/).includes('planet zoo 2')) return 'planet-zoo-2';
     if (lowerPath.includes('planet zoo')) return 'planet-zoo';
     return null;
 }
 
 function getGameName(gameId, savePath = '') {
     if (gameId === 'planet-coaster-2' || String(savePath).includes('Planet Coaster 2')) return 'Planet Coaster 2';
+    if (gameId === 'planet-zoo-2' || String(savePath).split(/[\\/]/).includes('Planet Zoo 2')) return 'Planet Zoo 2';
     if (gameId === 'planet-zoo' || String(savePath).includes('Planet Zoo')) return 'Planet Zoo';
     throw new Error('Could not determine the game for this media set.');
 }
@@ -363,6 +366,7 @@ function getGameMediaPaths(gameName) {
 }
 
 function discoverCreationMedia(saveOrBlueprintPath, inspectionOverride = null) {
+    if (!analysisEnabled(app.getPath('userData'), saveOrBlueprintPath)) return {success:false, disabled:true, message:'Automatic media discovery requires savefile analysis in Client Settings.', references:[], found:[], assets:[], missing:[], rejected:[], referenceCount:0};
     const inspection = inspectionOverride ||
         inspectFrontierFile(saveOrBlueprintPath, { includeMediaReferences: true });
     const gameId = inspection.metadata?.gameId || getGameIdFromPath(saveOrBlueprintPath);
@@ -444,6 +448,7 @@ function sameMediaAssets(left = [], right = []) {
 }
 
 function syncAutomaticMediaSnapshot(saveOrBlueprintPath, inspectionOverride = null) {
+    if (!analysisEnabled(app.getPath('userData'), saveOrBlueprintPath)) return {success:true, disabled:true, message:'Automatic save analysis is disabled; existing media associations are retained.', missing:[], rejected:[], referenceCount:0};
     try {
         const existing = getSnapshot(saveOrBlueprintPath);
         const stats = fs.statSync(saveOrBlueprintPath);

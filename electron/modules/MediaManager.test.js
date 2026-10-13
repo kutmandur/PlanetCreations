@@ -11,6 +11,7 @@ const fakePaths = {
     userData: path.join(testRoot, 'user-data'),
     documents: path.join(testRoot, 'documents'),
 };
+for (const id of ['planet-coaster-2', 'planet-zoo']) require('./SaveAnalysisSettings').setAnalysisPreference(fakePaths.userData, id, true);
 const originalLoad = Module._load;
 Module._load = function mockElectron(request, parent, isMain) {
     if (request === 'electron') {

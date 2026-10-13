@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import ContentReportButton from '../ui/ContentReportButton';
 import {useUserBlocks} from '../../contexts/BlockingContext';
 import {useQueries} from '@tanstack/react-query';
@@ -177,12 +179,11 @@ const CollaborationComments = ({ comments, currentUserId, onAddComment, collabor
             {/* Input Area */}
             <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200">
                 <div className="flex gap-2">
-                    <input
+                    <LimitedTextField maxLength={TEXT_LIMITS.collaborationComment}
                         type="text"
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                         placeholder="Write a message..."
-                        maxLength={1000}
                         className="flex-1 px-4 py-2 bg-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 focus:bg-white transition-colors"
                         disabled={!currentUserId}
                     />

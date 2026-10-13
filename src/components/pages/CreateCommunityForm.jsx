@@ -1,3 +1,5 @@
+import LimitedTextField from '../ui/LimitedTextField';
+import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -585,10 +587,9 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         <label className="mb-2 block font-bold text-gray-700">
           Community Name <span className="text-red-500">*</span>
         </label>
-        <input
+        <LimitedTextField maxLength={TEXT_LIMITS.communityName} minLength={3}
           type="text"
           value={name}
-          maxLength={100}
           onChange={event => setName(event.target.value)}
           className={inputClass}
           placeholder="Coaster Builders"
@@ -603,7 +604,7 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
         </label>
         <textarea
           value={description}
-          maxLength={2000}
+          maxLength={TEXT_LIMITS.communityDescription}
           rows={7}
           onChange={event => setDescription(event.target.value)}
           className={inputClass}
@@ -813,10 +814,9 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
           <label className="mb-2 block font-bold text-gray-700">
             Join Password <span className="text-red-500">*</span>
           </label>
-          <input
+          <LimitedTextField maxLength={TEXT_LIMITS.communityPassword} minLength={6}
             type="password"
-            minLength={6}
-            maxLength={128}
+
             autoComplete="new-password"
             value={joinPassword}
             onChange={event => setJoinPassword(event.target.value)}
@@ -1094,10 +1094,9 @@ const CreateCommunityForm = ({ setModalMessage, blacklist, userProfile }) => {
               </div>
               <div className="min-w-0 flex-grow space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
+                  <LimitedTextField maxLength={TEXT_LIMITS.rankName}
                     type="text"
                     value={rank.name}
-                    maxLength={50}
                     onChange={event => handleRankChange(
                       index,
                       'name',

@@ -1,3 +1,6 @@
+import LoadMoreTrigger from '../ui/LoadMoreTrigger';
+import DiscordProfileLink from '../profile/DiscordProfileLink';
+import { getDiscordProfileUrl } from '../../utils/discordProfile';
 import {useUserBlocks} from '../../contexts/BlockingContext';
 import {submitContentReport} from '../../firebase/contentReporting';
 import UserBlockButton from '../ui/UserBlockButton';
@@ -33,14 +36,14 @@ const STEAM_ICON = "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371
 
 const getPlatform = (id) => SOCIAL_PLATFORMS.find(p => p.id === id);
 
-// Profilfeld → Icon + Link-Auflösung (Discord speichert nur die User-ID).
+// Discord IDs open profiles; usernames are copied from the same icon.
 const PROFILE_SOCIALS = [
     { field: 'youtube', title: 'YouTube', platform: getPlatform('youtube'), href: p => p.youtube },
     { field: 'twitch', title: 'Twitch', platform: getPlatform('twitch'), href: p => p.twitch },
     { field: 'instagram', title: 'Instagram', platform: getPlatform('instagram'), href: p => p.instagram },
     { field: 'tiktok', title: 'TikTok', platform: getPlatform('tiktok'), href: p => p.tiktok },
     { field: 'x', title: 'X (Twitter)', platform: getPlatform('x'), href: p => p.x },
-    { field: 'discord', title: 'Discord', platform: getPlatform('discord'), href: p => `https://discord.com/users/${p.discord}` },
+    { field: 'discord', title: 'Discord', platform: getPlatform('discord'), href: p => getDiscordProfileUrl(p.discord) },
     { field: 'steam', title: 'Steam', platform: { icon: STEAM_ICON, solid: true }, href: p => p.steam },
     { field: 'website', title: 'Website', platform: getPlatform('website'), href: p => p.website },
 ];
@@ -66,7 +69,9 @@ const ProfileLinks = ({
         >
             <Icon path={ICONS.share} className="h-5 w-5" />
         </button>
-        {activeSocials.map((social) => (
+        {activeSocials.map((social) => social.field === 'discord' ? (
+            <DiscordProfileLink key={social.field} value={profile.discord} hasProfileBanner={hasProfileBanner} themeHex={themeHex} />
+        ) : (
             <a
                 key={social.field}
                 href={social.href(profile)}
@@ -169,15 +174,7 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
         setLoadingMoreCreations(false);
     }, [userId, loadingMoreCreations, hasMoreCreations, lastVisibleCreation]);
 
-    useEffect(() => {
-        const handleScroll = () => {
-            if (window.innerHeight + document.documentElement.scrollTop + 100 >= document.documentElement.offsetHeight) {
-                fetchMoreCreations();
-            }
-        };
-        window.addEventListener('scroll', handleScroll);
-        return () => window.removeEventListener('scroll', handleScroll);
-    }, [fetchMoreCreations]);
+
 
 
     useEffect(() => {
@@ -623,7 +620,8 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
 
     const activeSocials = PROFILE_SOCIALS.filter((social) => {
         if (!profile?.[social.field]) return false;
-        return social.field === 'discord' || isSafeHttpUrl(social.href(profile));
+        if (social.field === 'discord') return Boolean(String(profile.discord).trim());
+        return Boolean(social.href(profile)) && isSafeHttpUrl(social.href(profile));
     });
     const profileBannerUrl =
         profile?.profileBannerUrl && isSafeHttpUrl(profile.profileBannerUrl)
@@ -1013,14 +1011,15 @@ const ProfilePage = ({ user, userProfile, setReportModal, setModalMessage, setCo
                                         </p>
                                     )
                                 )}
-                                {loadingMoreCreations && (
-                                    <div className="col-span-full p-8 text-center">
-                                        <Spinner />
-                                    </div>
-                                )}
+                                <LoadMoreTrigger
+                                    hasMore={hasMoreCreations && !!lastVisibleCreation}
+                                    busy={loadingInitialCreations || loadingMoreCreations}
+                                    progress={creations.length}
+                                    onLoadMore={fetchMoreCreations}
+                                />
                                 {!hasMoreCreations && creations.length > 0 && (
                                     <p className="col-span-full mt-10 text-center text-xl text-gray-500">
-                                        You've seen all their creations!
+                                        You have reached the end
                                     </p>
                                 )}
                             </>

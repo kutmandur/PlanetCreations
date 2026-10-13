@@ -53,6 +53,7 @@ test('sanitizes invalid and oversized presentation values', () => {
         },
         rideDisplayNames: { 'custom-1': ' Mine Train Express ', 'bad key': 'Ignored' },
     })).toEqual({
+        parkInfo: {}, rideInfo: {}, parkText: {},
         version: 1,
         areas: [{ id: 'valid', name: 'Main', color: '#ABCDEF' }],
         customRides: [{ id: 'custom-1', name: 'Mine Train', rideCategoryKey: 'coaster' }],
