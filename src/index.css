@@ -634,3 +634,11 @@ html.pc-window-resizing *::after {
     animation: grow-shrink 2s infinite ease-in-out;
   }
 }
+
+/* A fixed capture canvas with a separately positioned interactive panel.
+   Transform also contains fixed-position chrome and modal backdrops. */
+.overlay-surface-content { position: absolute; transform: translateZ(0); overflow: hidden; }
+.overlay-surface-content .game-overlay-stage,
+.overlay-surface-content .pc-app-shell { width: 100%; height: 100%; }
+.overlay-surface-content .game-overlay-chrome { -webkit-app-region: no-drag; }
+.overlay-surface-resize { position: absolute; right: 0; bottom: 0; z-index: 10001; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none; color: white; background: #374151; }

@@ -23,8 +23,12 @@ const { readFrontierPreview } = require('./modules/FrontierSaveParser');
 const { loadPlanetZooAnalysis } = require('./modules/PlanetZooAnalysisService');
 const { resolveZooSavePath } = require('./modules/LocalLibraryPath');
 const { FrontierSaveIndexWatcher } = require('./modules/FrontierSaveIndexWatcher');
+const { AutoBackupManager, validateAutoBackupSource } = require('./modules/AutoBackupManager');
+let autoBackupManager = null;
+let autoBackupStartupError = null;
+let autoBackupQuitPending = false;
 const { findLatestCollaborationSave } = require('./modules/CollaborationSaveFinder');
-const { detectActiveGameFromTasklist } = require('./modules/GameProcessMonitor');
+const { detectActiveGameFromTasklist, detectActiveGameFromProc } = require('./modules/GameProcessMonitor');
 const { resolveDevServerUrl } = require('./modules/DevServerUrl');
 const {
     buildBundledAppRouteUrl,
@@ -45,6 +49,22 @@ const { PreparedUploadRegistry } = require('./modules/PreparedUploadRegistry');
 const { buildDesktopWebUserAgent } = require('./modules/DesktopUserAgent');
 const { normalizeOverlayShortcuts, applyOverlayShortcuts } = require('./modules/OverlayShortcuts');
 const { shouldShowOverlay } = require('./modules/OverlayVisibility');
+const { OverlaySurface } = require('./modules/OverlaySurface');
+// XWayland supplies positioning and native input regions on Wayland desktops.
+if (process.platform === 'linux' && process.env.DISPLAY && !app.commandLine.hasSwitch('ozone-platform')) {
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
+}
+let overlaySurface = null;
+const supportsOverlaySurface = process.platform === 'win32' ||
+    (process.platform === 'linux' && Boolean(process.env.DISPLAY) && app.commandLine.getSwitchValue('ozone-platform') === 'x11');
+function getOverlayBounds() { return overlaySurface ? overlaySurface.getBounds() : gameOverlayWindow.getBounds(); }
+function setOverlayBounds(bounds, animate = false) {
+    if (overlaySurface) {
+        overlaySurface.setBounds(bounds);
+        if (isGameOverlayExpanded) scheduleOverlaySettingsWrite({ panelBounds: getOverlayBounds() });
+    } else gameOverlayWindow.setBounds(bounds, animate);
+}
+
 const { createBackup, listAllBackups, restoreBackup, installMediaWithBackupRecovery, installCreationPackage, archiveWorkshopPackage, installWorkshopPackage, uninstallWorkshopPackage, backupCreationMedia, importMediaBackup, deleteBackup, backupAllCreations, verifyBackup, validateBackupForUpload, isValidGameFile, ALLOWED_GAME_EXTENSIONS } = require('./modules/BackupManager');
 const { createOrUpdateSnapshot, getSnapshot, uninstallMedia, getMediaSetStatus, hasMediaSnapshot, getMediaAvailability, deleteCreationMedia, syncAutomaticMediaSnapshot } = require('./modules/MediaManager');
 
@@ -789,14 +809,16 @@ function createGameOverlayWindow() {
     gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
     loadOnlineWorkshop(gameOverlayWindow, '/');
     const rememberExpandedBounds = () => {
-        if (isGameOverlayExpanded && gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
-            scheduleOverlaySettingsWrite({ panelBounds: gameOverlayWindow.getBounds() });
+        if (!overlaySurface && isGameOverlayExpanded && gameOverlayWindow && !gameOverlayWindow.isDestroyed()) {
+            scheduleOverlaySettingsWrite({ panelBounds: getOverlayBounds() });
             syncStreamManagementWithOverlay();
         }
     };
     gameOverlayWindow.on('move', rememberExpandedBounds);
     gameOverlayWindow.on('resize', rememberExpandedBounds);
-    gameOverlayWindow.on('closed', () => { gameOverlayWindow = null; });
+    gameOverlayWindow.on('closed', () => { gameOverlayWindow = null; overlaySurface = null; });
+    gameOverlayWindow.on('page-title-updated', event => event.preventDefault());
+    gameOverlayWindow.setTitle('PlanetCreations Overlay');
     return gameOverlayWindow;
 }
 
@@ -806,7 +828,7 @@ function getStreamManagementBounds() {
 
 function getStreamManagementLayout() {
     const anchor = gameOverlayWindow && !gameOverlayWindow.isDestroyed() ?
-        gameOverlayWindow.getBounds() : screen.getPrimaryDisplay().workArea;
+        getOverlayBounds() : screen.getPrimaryDisplay().workArea;
     const area = screen.getDisplayMatching(anchor).workArea;
     const horizontalSpace = Math.max(0,
         area.width - (STREAM_MANAGEMENT_WORK_AREA_MARGIN * 2) - STREAM_MANAGEMENT_GAP);
@@ -847,7 +869,7 @@ function getStreamManagementLayout() {
 
 function windowHasBounds(browserWindow, bounds) {
     if (!browserWindow || browserWindow.isDestroyed()) return false;
-    const current = browserWindow.getBounds();
+    const current = browserWindow === gameOverlayWindow ? getOverlayBounds() : browserWindow.getBounds();
     return ['x', 'y', 'width', 'height'].every((key) => current[key] === bounds[key]);
 }
 
@@ -874,7 +896,7 @@ function syncStreamManagementWithOverlay({ focus = false } = {}) {
     try {
         const layout = getStreamManagementLayout();
         if (!windowHasBounds(gameOverlayWindow, layout.overlayBounds)) {
-            gameOverlayWindow.setBounds(layout.overlayBounds, false);
+            setOverlayBounds(layout.overlayBounds, false);
         }
         const manager = createStreamManagementWindow();
         if (!windowHasBounds(manager, layout.managerBounds)) {
@@ -894,7 +916,7 @@ function syncStreamManagementWithOverlay({ focus = false } = {}) {
 }
 
 function getOverlayNotificationBounds() {
-    const anchor = gameOverlayWindow.getBounds();
+    const anchor = getOverlayBounds();
     const area = screen.getDisplayMatching(anchor).workArea;
     const width = Math.min(380, area.width - 24);
     const height = 190;
@@ -1009,7 +1031,7 @@ function setOverlayExpanded(expanded) {
     if (expanded) {
         if (overlayNotificationWindow && !overlayNotificationWindow.isDestroyed()) overlayNotificationWindow.hide();
         isGameOverlayExpanded = true;
-        const compact = gameOverlayWindow.getBounds();
+        const compact = getOverlayBounds();
         writeOverlaySettings({ x: compact.x, y: compact.y, size: compact.width });
         const area = screen.getDisplayMatching(compact).workArea;
         const saved = settings.panelBounds;
@@ -1020,9 +1042,9 @@ function setOverlayExpanded(expanded) {
             x: Math.round(compact.x + compact.width / 2 - Math.min(980, area.width - 48) / 2),
             y: Math.round(compact.y + compact.height / 2 - Math.min(780, area.height - 48) / 2),
         };
-        gameOverlayWindow.setResizable(true);
-        gameOverlayWindow.setHasShadow(true);
-        gameOverlayWindow.setBounds(keepBoundsOnScreen(desired), true);
+        gameOverlayWindow.setResizable(!overlaySurface);
+        gameOverlayWindow.setHasShadow(!overlaySurface);
+        setOverlayBounds(keepBoundsOnScreen(desired), true);
         gameOverlayWindow.webContents.send('overlay-mode-changed', true);
         gameOverlayWindow.focus();
         retryHostedFallbackIfNeeded(gameOverlayWindow, 'the game overlay was opened');
@@ -1030,13 +1052,13 @@ function setOverlayExpanded(expanded) {
     } else {
         isGameOverlayExpanded = false;
         if (streamManagementWindow && !streamManagementWindow.isDestroyed()) streamManagementWindow.hide();
-        const panelBounds = gameOverlayWindow.getBounds();
+        const panelBounds = getOverlayBounds();
         writeOverlaySettings({ panelBounds });
         const compactBounds = keepBoundsOnScreen({ x: settings.x ?? panelBounds.x, y: settings.y ?? panelBounds.y, width: settings.size, height: settings.size });
         gameOverlayWindow.webContents.send('overlay-mode-changed', false);
         gameOverlayWindow.setResizable(false);
         gameOverlayWindow.setHasShadow(false);
-        gameOverlayWindow.setBounds(compactBounds, true);
+        setOverlayBounds(compactBounds, true);
         if (!shouldShowOverlay({ iconEnabled: overlayIconEnabled, forcedVisible: overlayForcedVisible, autoEnabled: overlayAutoEnabled, activeGameId })) {
             gameOverlayWindow.hide();
         }
@@ -1045,6 +1067,12 @@ function setOverlayExpanded(expanded) {
 }
 
 function detectActiveGame() {
+    if (process.platform === 'linux') {
+        return detectActiveGameFromProc().catch(error => {
+            log.warn('Unable to inspect running games:', error.message);
+            return undefined;
+        });
+    }
     if (process.platform !== 'win32') return Promise.resolve(null);
     return new Promise((resolve) => {
         execFile('tasklist.exe', ['/FO', 'CSV', '/NH'], { windowsHide: true }, (error, stdout = '') => {
@@ -1063,7 +1091,7 @@ async function updateGameOverlayVisibility() {
     gameProcessCheckInFlight = true;
     try {
         const detectedGameId = await detectActiveGame();
-        // `undefined` means tasklist failed. Keep the previous state so a transient
+        // `undefined` means the process scan failed. Keep the previous state so a transient
         // OS error cannot falsely end a collaboration build session.
         if (detectedGameId !== undefined && detectedGameId !== activeGameId) {
             const previousGameId = activeGameId;
@@ -1882,7 +1910,7 @@ ipcMain.handle('set-overlay-forced', (event, value) => {
 ipcMain.on('overlay-drag-start', (event, point) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
     if (!Number.isFinite(point?.screenX) || !Number.isFinite(point?.screenY)) return;
-    const bounds = gameOverlayWindow.getBounds();
+    const bounds = getOverlayBounds();
     overlayDragState = {
         pointerX: point.screenX,
         pointerY: point.screenY,
@@ -1907,12 +1935,13 @@ function flushOverlayDrag() {
     // setPosition() lets a frameless transparent window grow by rounding on scaled
     // Windows displays (120 px -> 420 px after 300 tiny moves at 125 %). Only the
     // wheel may resize, so every move re-applies the size captured at drag start.
-    gameOverlayWindow.setBounds({
+    setOverlayBounds({
         x: next.x,
         y: next.y,
         width: overlayDragState.bounds.width,
         height: overlayDragState.bounds.height,
     }, false);
+    if (isGameOverlayExpanded) syncStreamManagementWithOverlay();
 }
 
 ipcMain.on('overlay-drag-move', (event, point) => {
@@ -1924,20 +1953,20 @@ ipcMain.on('overlay-drag-move', (event, point) => {
 ipcMain.on('overlay-drag-end', (event) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return;
     flushOverlayDrag();
-    const current = gameOverlayWindow.getBounds();
+    const current = getOverlayBounds();
     // Persist the intended size, not a value rounded by the display scaling.
     const bounds = overlayDragState ?
         { ...current, width: overlayDragState.bounds.width, height: overlayDragState.bounds.height } : current;
-    if (gameOverlayWindow.isResizable()) scheduleOverlaySettingsWrite({ panelBounds: bounds });
+    if (isGameOverlayExpanded) scheduleOverlaySettingsWrite({ panelBounds: bounds });
     else scheduleOverlaySettingsWrite({ x: bounds.x, y: bounds.y, size: bounds.width });
     flushPendingOverlaySettings();
     overlayDragState = null;
 });
 ipcMain.on('overlay-resize', (event, direction) => {
-    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || gameOverlayWindow.isResizable() || event.sender !== gameOverlayWindow.webContents) return;
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || isGameOverlayExpanded || event.sender !== gameOverlayWindow.webContents) return;
     const steps = Math.max(-20, Math.min(20, Math.trunc(Number(direction) || 0)));
     if (steps === 0) return;
-    const current = gameOverlayWindow.getBounds();
+    const current = getOverlayBounds();
     const nextSize = Math.min(OVERLAY_MAX_SIZE, Math.max(OVERLAY_MIN_SIZE, current.width + steps * 8));
     const next = keepBoundsOnScreen({
         x: Math.round(current.x - (nextSize - current.width) / 2),
@@ -1945,7 +1974,7 @@ ipcMain.on('overlay-resize', (event, direction) => {
         width: nextSize,
         height: nextSize,
     });
-    gameOverlayWindow.setBounds(next, false);
+    setOverlayBounds(next, false);
     if (overlayDragState) {
         const pointer = screen.getCursorScreenPoint();
         overlayDragState = {
@@ -1956,6 +1985,20 @@ ipcMain.on('overlay-resize', (event, direction) => {
         };
     }
     scheduleOverlaySettingsWrite({ x: next.x, y: next.y, size: nextSize });
+});
+ipcMain.handle('get-overlay-surface', (event) => {
+    requireTrustedIpcSender(event, true);
+    if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents || !supportsOverlaySurface) return null;
+    if (!overlaySurface) overlaySurface = new OverlaySurface(gameOverlayWindow, screen);
+    overlaySurface.sync();
+    return overlaySurface.layout();
+});
+ipcMain.on('resize-overlay-panel', (event, size) => {
+    if (!overlaySurface || !isGameOverlayExpanded || event.sender !== gameOverlayWindow?.webContents) return;
+    if (!Number.isFinite(size?.width) || !Number.isFinite(size?.height)) return;
+    const current = getOverlayBounds();
+    setOverlayBounds({ ...current, width: Math.max(480, Math.round(size.width)), height: Math.max(320, Math.round(size.height)) });
+    syncStreamManagementWithOverlay();
 });
 ipcMain.handle('set-overlay-expanded', (event, expanded) => {
     if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || event.sender !== gameOverlayWindow.webContents) return false;
@@ -2450,6 +2493,16 @@ ipcMain.handle('scan-games', (event, basePath, options = {}) => {
 
     return indexed.results;
 });
+ipcMain.handle('get-auto-backup-settings', (event) => {
+    requireTrustedIpcSender(event, true);
+    if (!autoBackupManager) throw new Error(autoBackupStartupError || 'Automatic backups are not ready.');
+    return autoBackupManager.snapshot();
+});
+ipcMain.handle('set-auto-backup-enabled', (event, filePath, enabled) => {
+    requireTrustedIpcSender(event, true);
+    if (!autoBackupManager) throw new Error(autoBackupStartupError || 'Automatic backups are not ready.');
+    return autoBackupManager.setEnabled(filePath, enabled);
+});
 ipcMain.handle('create-backup', (event, filePath, note, isSigned, idToken, appCheckToken, includeMedia = false) => {
     requireTrustedIpcSender(event, true);
     return createBackup(app, filePath, note, isSigned, idToken, null, appCheckToken, includeMedia === true);
@@ -2538,10 +2591,30 @@ app.whenReady().then(() => {
     // Manager choice. Only intentional background/dev launch modes bypass it.
     createWindow({ openOnline: isAutoStart || useHostedUiInDev || openLocalUiInDev });
     startGameProcessMonitor();
+    try {
+        autoBackupManager = new AutoBackupManager({
+            settingsPath: path.join(app.getPath('userData'), 'auto-backups.json'),
+            validatePath: filePath => validateAutoBackupSource(filePath, getStoredPath()),
+            createBackup: filePath => createBackup(app, filePath, 'Automatic backup after saving', false),
+            onChange: settings => broadcastToAppWindows('auto-backup-settings-changed', settings),
+            onBackup: () => broadcastToAppWindows('backups-updated'),
+        });
+        autoBackupManager.start();
+    } catch (error) {
+        autoBackupStartupError = `Automatic backups could not start: ${error.message}`;
+        log.error(autoBackupStartupError);
+    }
     streamingIntegration = createStreamingIntegration();
     streamingIntegration.start();
 });
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+    if (autoBackupManager && !autoBackupManager.stopped) {
+        event.preventDefault();
+        autoBackupQuitPending = true;
+        void autoBackupManager.stop().finally(() => { autoBackupQuitPending = false; app.quit(); });
+        return;
+    }
+    if (autoBackupQuitPending) { event.preventDefault(); return; }
     isQuitting = true;
     frontierSaveIndexWatcher?.close();
     frontierSaveIndexWatcher = null;

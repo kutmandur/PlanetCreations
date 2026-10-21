@@ -666,7 +666,7 @@ const CreationMetadataPanel = ({
                 </div>
             </div>
         </div>,
-        document.body,
+        document.querySelector('.overlay-surface-content') || document.body,
     );
 
     return <>

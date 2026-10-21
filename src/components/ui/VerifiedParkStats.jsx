@@ -274,7 +274,7 @@ const RideListPopover = ({groups, areaGroups, hasAreas, onClose}) => {
                     {grouping === 'areas' && hasAreas ? <AreaSections groups={areaGroups} /> : <TypeSections groups={groups} />}
                 </div>
             </div>
-        </div>, document.body);
+        </div>, document.querySelector('.overlay-surface-content') || document.body);
 };
 
 const VerifiedParkStats = ({ metadata, presentation }) => {

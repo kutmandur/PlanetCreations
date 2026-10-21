@@ -52,7 +52,7 @@ const ProfilePopover = ({ userId, onClose, user, userProfile, setReportModal, se
                 </div>
             </div>
         </div>,
-        document.body
+        document.querySelector('.overlay-surface-content') || document.body
     );
 };
 
@@ -112,7 +112,7 @@ const RankSelectorPopover = ({
                 );
             })}
         </div>,
-        document.body
+        document.querySelector('.overlay-surface-content') || document.body
     );
 };
 

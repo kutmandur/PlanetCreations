@@ -134,7 +134,7 @@ export default function ClientSettings({ setModalMessage }) {
             <h3 className="text-xl font-bold text-gray-800">In-Game Overlay</h3>
             <SettingToggle title="Show overlay automatically" checked={autoEnabled === true}
                 disabled={!supportsAuto || autoEnabled === null || Boolean(busy)}
-                description="Show the overlay icon when a supported game is detected on Windows. Turn this off to use the full-overlay shortcut manually."
+                description="Show the overlay icon when a supported game is detected on Windows or Linux (Steam/Proton or Wine). Turn this off to use the full-overlay shortcut manually."
                 onChange={event => { const enabled = event.target.checked; run('change automatic overlay mode', async () => setAutoEnabled(await api.setOverlayAutoEnabled(enabled))); }} />
             {!supportsAuto && <p className="text-sm text-amber-700">Update the desktop client to change automatic overlay mode. Microsoft Store updates may become available a few days later. Your current overlay behavior is unchanged.</p>}
             {api.getOverlayForced && <SettingToggle title="Keep In-Game Overlay visible" checked={forcedVisible === true}

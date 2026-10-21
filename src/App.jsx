@@ -36,6 +36,7 @@ import ReportModal from './components/ui/ReportModal';
 import StrikeModal from './components/ui/StrikeModal';
 import PopoverModal from './components/ui/PopoverModal';
 import RickRollModal from './components/modals/RickRollModal';
+import OverlaySurface from './components/ui/OverlaySurface';
 import { GameOverlayWidget, GameOverlayChrome } from './components/ui/GameOverlay';
 import StreamManagement from './components/streaming/StreamManagement';
 import OverlayNotificationPopover from './components/streaming/OverlayNotificationPopover';
@@ -1127,7 +1128,7 @@ export default function App() {
     return (
         <QueryClientProvider client={queryClient}>
             <Router>
-                <UserBlockingProvider><AppContent /></UserBlockingProvider>
+                <UserBlockingProvider><OverlaySurface><AppContent /></OverlaySurface></UserBlockingProvider>
                 <AccountDeletionStatus />
             </Router>
         </QueryClientProvider>

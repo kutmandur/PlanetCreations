@@ -17,8 +17,6 @@ import {
 // when already running as an installed app (installed users are auto-prompted on
 // first open and can re-enable from Settings).
 
-const isElectron = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron');
-
 const IOS_STEPS = [
     'Open this site in Safari.',
     'Tap the Share button (the square with an upward arrow).',
@@ -36,6 +34,9 @@ const DESKTOP_STEPS = [
 ];
 
 const InstallHelp = ({ user, setModalMessage }) => {
+    // The desktop client uses a browser-compatible user agent; identify it
+    // through the preload bridge in both hosted and bundled views.
+    const isElectron = Boolean(window.electronAPI?.isElectron);
     const [open, setOpen] = useState(false);
     const [canPrompt, setCanPrompt] = useState(canPromptInstall());
     const [pushSupported, setPushSupported] = useState(false);

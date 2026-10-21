@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Spinner from '../ui/Spinner';
+import AutoBackupControl, { useAutoBackupSettings } from '../ui/AutoBackupControl';
 import Icon from '../ui/Icon';
 import { ICONS, getGameColor } from '../../utils/helpers';
 import useGames from '../../hooks/useGames';
@@ -172,6 +173,7 @@ const SortAndFilterMenu = ({ statusFilter, setStatusFilter, statusFilterOptions,
 // --- LISTENDARSTELLUNG ---
 
 const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstallMedia, onUninstallMedia, onDeleteMediaClick, mediaStatus, snapshotStatus, mediaAvailability, mediaDiscoveryStatus, onBackupMediaClick, backingUpFile, backingUpMediaFile, allBackups, selectedItems, onToggleSelection }) => {
+    const autoBackupState = useAutoBackupSettings(viewMode === 'backup');
     if (!files || files.length === 0) {
         return <p className="text-gray-400 text-center mt-8">No files of this type found.</p>;
     }
@@ -219,6 +221,7 @@ const FileList = ({ files, viewMode, onBackupClick, onManageMediaClick, onInstal
                             />
                             {file.frontierMetadataError && <p className="mt-2 text-xs text-amber-400">Metadata could not be read.</p>}
                         </div>
+                        {viewMode === 'backup' && <AutoBackupControl file={file} state={autoBackupState} />}
                         <div className="grid grid-cols-2 gap-2 w-full mt-4">
                             <div className="text-center text-sm bg-gray-800 rounded-lg p-2">
                                 <p className="text-gray-400 text-xs">Size</p>

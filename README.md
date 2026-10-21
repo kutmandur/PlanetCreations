@@ -44,6 +44,50 @@ npm run electron-dev
 The `functions/` and `discord-bot/` directories have their own package manifests,
 configuration examples and tests. Install their dependencies separately.
 
+## Streaming overlay
+
+Automatic game detection supports Windows and Linux. Linux scans readable
+`/proc` entries for the supported game executables, including Wine/Steam Proton
+processes, without requiring root or an OBS connection. Detection is independent
+of X11/Wayland. Games hidden by a separate process namespace or procfs permissions
+cannot be detected; the manual overlay shortcut remains available.
+
+On Windows and Linux with X11/XWayland, the overlay uses a transparent window
+covering the entire monitor where it was opened, including the taskbar area.
+The capture title is `PlanetCreations Overlay`. Moving the logo/QR code or
+opening, moving and resizing the panel changes the content inside that window,
+not the capture dimensions. Areas outside the content rectangle pass mouse
+input through; the content remains interactive. Drag the panel header to move
+it and its bottom-right corner to resize it (arrow keys also work on that handle).
+
+Linux uses X11 when `DISPLAY` is available unless an explicit `--ozone-platform`
+override was supplied. Native Wayland without XWayland keeps the previous small
+overlay because global positioning and window shapes are not available there.
+This feature requires both the updated desktop bridge and UI; older clients or
+hosted UIs keep their existing behavior. Verify transparency with the chosen OBS
+capture method before streaming; native window bounds tests do not verify OBS.
+
+## Automatic backups
+
+In Offline Manager → Backup, enable **Auto backup on save** on individual file
+cards. The setting persists across client restarts. Keep the client running
+(the tray is sufficient). Each changed file is checked once per second and must
+remain unchanged for three seconds before a backup starts. Rapid successive
+writes are combined into the latest stable version; versions overwritten while
+the client is closed cannot be recovered. On restart, a changed tracked file is
+backed up after it settles.
+
+Backups use the existing local `.PlanetCreations` format, appear under Restore
+with the note “Automatic backup after saving”, and require no login/signing.
+Custom media files are not embedded. Integrity checks reject files that change
+between hashing and packaging. Jobs run sequentially, failures appear on the
+file card, and quitting waits for an archive already in progress.
+
+Enable this only for important files: retaining many park versions can consume
+substantial storage. There is no automatic retention/deletion policy; remove
+unneeded backups in Restore. Turning off automatic backups keeps existing
+versions and lets an already-running backup finish.
+
 ## Account deletion integration
 
 Clients first call `getAccountDeletionPreview` and show all owned communities.
