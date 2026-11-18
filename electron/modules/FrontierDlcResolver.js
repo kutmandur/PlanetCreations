@@ -6,6 +6,8 @@ const PLANET_COASTER_2_DLC_BITS = Object.freeze([
     { bit: 5, name: 'Toybox Pack', steamAppId: 4129920, contentId: 'ContentPDLC3', tag: 'Filter_PDLC_Toybox' },
     { bit: 6, name: 'Parades Pack', steamAppId: 4492160, contentId: 'ContentPDLC4', tag: 'Filter_PDLC_ParadesArcades' },
     { bit: 7, name: 'Silver Screen Pack', steamAppId: 4961870, contentId: 'ContentPDLC5' },
+    // Content ID verified locally; bit assignment awaits an isolated reference save.
+    { bit: null, name: 'Spooktacular Pack', steamAppId: 5362340, contentId: 'ContentPDLC6' },
 ]);
 
 // Planet Zoo stores Deluxe as bit 0 and ContentN as bit N. The relationship
@@ -34,9 +36,16 @@ const PLANET_ZOO_DLC_BITS = Object.freeze([
     { bit: 20, name: 'Asia Animal Pack', steamAppId: 3586990, contentId: 'Content20' },
 ]);
 
+// Store products verified 2026-11-18; do not inherit Planet Zoo 1 save bits.
+const PLANET_ZOO_2_DLC_BITS = Object.freeze([
+    { bit: null, name: 'Deluxe Upgrade Pack', steamAppId: 4515760 },
+    { bit: null, name: 'Bonus Content Pack', steamAppId: 4515770 },
+]);
+
 const DLC_BITS_BY_GAME = new Map([
     ['planet-coaster-2', PLANET_COASTER_2_DLC_BITS],
     ['planet-zoo', PLANET_ZOO_DLC_BITS],
+    ['planet-zoo-2', PLANET_ZOO_2_DLC_BITS],
 ]);
 
 function fallbackCatalogEntries(gameId) {
@@ -157,6 +166,7 @@ function resolveFrontierDlcMask(gameId, rawMask, catalogOverride = null) {
 module.exports = {
     PLANET_COASTER_2_DLC_BITS,
     PLANET_ZOO_DLC_BITS,
+    PLANET_ZOO_2_DLC_BITS,
     normalizeFrontierDlcCatalog,
     resolveFrontierDlcRequirements,
     resolveFrontierDlcMask,

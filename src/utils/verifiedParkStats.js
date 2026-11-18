@@ -6,6 +6,7 @@ export const RIDE_CATEGORY_ORDER = [
     'transport-ride',
     'flat-ride',
     'tracked-ride',
+    'walkthrough',
     'restaurant',
     'shop',
     'show',
@@ -34,6 +35,7 @@ const CATEGORY_LABELS = {
     'transport-ride': 'Transport Rides',
     'flat-ride': 'Flat Rides',
     'tracked-ride': 'Other Tracked Rides',
+    walkthrough: 'Walkthrough Attractions',
     restaurant: 'Restaurants',
     shop: 'Shops',
     show: 'Shows',
@@ -46,6 +48,7 @@ export function getRideCategory(ride) {
             label: CATEGORY_LABELS[ride.rideCategoryKey] || ride.rideCategory || 'Other Rides',
         };
     }
+    if (ride?.kind === 'walkthrough') return { key: 'walkthrough', label: CATEGORY_LABELS.walkthrough };
     return ride?.kind === 'flat'
         ? { key: 'flat-ride', label: CATEGORY_LABELS['flat-ride'] }
         : { key: 'tracked-ride', label: CATEGORY_LABELS['tracked-ride'] };

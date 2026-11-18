@@ -344,7 +344,20 @@ function parsePoolCount(body) {
     return poolEntityIds.size > 0 ? poolEntityIds.size : null;
 }
 
+const VERIFIED_RIDE_NAMES = Object.freeze({
+    cc_spectre: "Spectre",
+    cc_sledgecoaster: "Sledge",
+    fr_ballista: "Ballista",
+    fr_horrorheights: "Horror Heights",
+    fr_rumpusroom: "Rumpus Room",
+    ptr_inverteddarkride: "Bosetti",
+    ptr_huntsman: "The Huntsman",
+    walkthroughexperience: "Walkthrough Attraction",
+});
+
 function humanizeRideType(typeId, fallback) {
+    const verifiedName = VERIFIED_RIDE_NAMES[String(typeId || "").toLowerCase()];
+    if (verifiedName) return verifiedName;
     const label = String(typeId || "")
         .replace(/^(?:Coaster_|TrackedRide_|Water_|Powered_|CC_|PTR_|FR_|fr_)/i, "")
         .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -598,6 +611,15 @@ function parsePlanetZooSaveMetadata(payload, kind) {
     };
 }
 
+// Count placed entrance/station components, never scenery links or checkpoints.
+// Versions 1 and 3 are observed in shipped Spooktacular blueprints.
+function parseWalkthroughStationCount(body) {
+    const header = readClientHeader(body);
+    if (!header || ![1, 3].includes(header.version) || header.count > MAX_RIDES) return 0;
+    if (body.length - header.dataOffset < header.count * 2) return 0;
+    return header.count;
+}
+
 function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = [], options = {}) {
     const strings = parseStringTable(payload);
     if (!strings) return null;
@@ -606,7 +628,11 @@ function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = [], o
     const flatBody = clients.get("FlatRide");
     const trackedRideCount = getClientCount(clients, "Track") ?? 0;
     const flatRideCount = getClientCount(clients, "FlatRide") ?? 0;
-    const rideCount = getClientCount(clients, "Ride") ?? (trackedRideCount + flatRideCount);
+    const walkthroughCount = parseWalkthroughStationCount(
+        clients.get("PartDataWalkthroughExperienceStation"),
+    );
+    const rideCount = Math.max(getClientCount(clients, "Ride") ?? 0,
+        trackedRideCount + flatRideCount + walkthroughCount);
     const buildingCount = getClientCount(clients, "PartDataGroupComponentManager");
     const placedPartCount = getClientCount(clients, "PlacementPartData");
     const sceneryPieceCount = getClientCount(clients, "PartDataTransformComponentManager");
@@ -645,12 +671,15 @@ function parseCobraSaveMetadata(payload, kind, outerRatings = null, tags = [], o
     const rides = [
         ...fillMissingRides(trackedRides, "tracked", trackedRideCount, tags),
         ...fillMissingRides(flatRides, "flat", flatRideCount, tags),
+        ...Array.from({ length: walkthroughCount }, () =>
+            makeRide("walkthrough", "WalkthroughExperience", null)),
     ].slice(0, MAX_RIDES);
-    if (rideCount === 1 && rides.length === 1 && outerRatings) rides[0].ratings = outerRatings;
+    if (rideCount === 1 && rides.length === 1 && rides[0].kind !== "walkthrough" && outerRatings) rides[0].ratings = outerRatings;
     return {
         rideCount,
         trackedRideCount,
         flatRideCount,
+        walkthroughCount,
         buildingCount,
         placedPartCount,
         sceneryPieceCount,

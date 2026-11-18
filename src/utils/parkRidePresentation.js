@@ -13,6 +13,7 @@ export const RIDE_CATEGORY_OPTIONS = [
     { key: 'transport-ride', label: 'Transport Rides', singular: 'Transport Ride' },
     { key: 'flat-ride', label: 'Flat Rides', singular: 'Flat Ride' },
     { key: 'tracked-ride', label: 'Other Tracked Rides', singular: 'Tracked Ride' },
+    { key: 'walkthrough', label: 'Walkthrough Attractions', singular: 'Walkthrough Attraction' },
     { key: 'restaurant', label: 'Restaurants', singular: 'Restaurant' },
     { key: 'shop', label: 'Shops', singular: 'Shop' },
     { key: 'show', label: 'Shows', singular: 'Show' },
@@ -175,7 +176,8 @@ export function getPresentedParkRideEntries(park, presentation, options = {}) {
     const customEntries = normalized.customRides.map((customRide, index) => {
         const option = categoryOptionsByKey.get(customRide.rideCategoryKey);
         const ride = {
-            kind: customRide.rideCategoryKey === 'flat-ride' ? 'flat' :
+            kind: customRide.rideCategoryKey === 'walkthrough' ? 'walkthrough' :
+                customRide.rideCategoryKey === 'flat-ride' ? 'flat' :
                 ['restaurant', 'shop', 'show'].includes(customRide.rideCategoryKey) ? 'custom' : 'tracked',
             name: customRide.name,
             category: 'Custom attraction',

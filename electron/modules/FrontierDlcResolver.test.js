@@ -1,5 +1,30 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+for (const [label, resolver] of [
+    ['desktop', require('./FrontierDlcResolver')],
+    ['server', require('../../functions/frontierDlcResolver')],
+]) {
+    test(`${label}: recognizes content IDs without guessing unverified DLC bits`, () => {
+        const result = resolver.resolveFrontierDlcRequirements('planet-coaster-2', 256, ['ContentPDLC6']);
+        assert.deepEqual(result.requiredDlcs, ['Spooktacular Pack']);
+        assert.deepEqual(result.unknownDlcBits, [8]);
+        assert.deepEqual(result.unknownDlcIdentifiers, []);
+        const zoo = resolver.resolveFrontierDlcRequirements('planet-zoo-2', 3, ['Deluxe']);
+        assert.deepEqual(zoo.requiredDlcs, []);
+        assert.deepEqual(zoo.unknownDlcBits, [0, 1]);
+        assert.deepEqual(zoo.unknownDlcIdentifiers, ['Deluxe']);
+        assert.deepEqual(resolver.normalizeFrontierDlcCatalog('planet-zoo-2').entries.map(e => e.name),
+            ['Deluxe Upgrade Pack', 'Bonus Content Pack']);
+    });
+}
+
+test('desktop and server built-in catalogs stay aligned', () => {
+    const desktop = require('./FrontierDlcResolver');
+    const server = require('../../functions/frontierDlcResolver');
+    for (const game of ['planet-coaster-2', 'planet-zoo', 'planet-zoo-2']) {
+        assert.deepEqual(desktop.normalizeFrontierDlcCatalog(game), server.normalizeFrontierDlcCatalog(game));
+    }
+});
 const {
     PLANET_COASTER_2_DLC_BITS,
     PLANET_ZOO_DLC_BITS,
@@ -8,8 +33,8 @@ const {
     resolveFrontierDlcMask,
 } = require('./FrontierDlcResolver');
 
-test('contains the complete save-relevant DLC catalogs for both games', () => {
-    assert.equal(PLANET_COASTER_2_DLC_BITS.length, 7);
+test('contains the reviewed DLC catalogs', () => {
+    assert.equal(PLANET_COASTER_2_DLC_BITS.length, 8);
     assert.equal(PLANET_ZOO_DLC_BITS.length, 21);
     assert.deepEqual(PLANET_ZOO_DLC_BITS[0], {
         bit: 0,

@@ -194,6 +194,7 @@ function readMetadataFromArchive(archive, filePath, options = {}) {
                     normalized.blueprint.trackedRideElementCount = innerMetadata.trackedRideElementCount;
                     normalized.blueprint.binCount = innerMetadata.binCount;
                     normalized.blueprint.poolCount = innerMetadata.poolCount;
+                    normalized.blueprint.walkthroughCount = innerMetadata.walkthroughCount;
                 }
             }
         } catch {

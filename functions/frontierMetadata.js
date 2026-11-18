@@ -278,6 +278,7 @@ function extractFrontierData(payloadBuffer, options) {
                         innerMetadata.trackedRideElementCount;
                     normalized.blueprint.binCount = innerMetadata.binCount;
                     normalized.blueprint.poolCount = innerMetadata.poolCount;
+                    normalized.blueprint.walkthroughCount = innerMetadata.walkthroughCount;
                 }
             }
         } catch {

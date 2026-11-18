@@ -1,6 +1,7 @@
 "use strict";
 
 const CATEGORY = Object.freeze({
+    WALKTHROUGH: Object.freeze({ key: "walkthrough", label: "Walkthrough Attraction" }),
     COASTER: Object.freeze({key: "coaster", label: "Coaster"}),
     DARK_RIDE: Object.freeze({key: "dark-ride", label: "Dark Ride"}),
     FLAT_RIDE: Object.freeze({key: "flat-ride", label: "Flat Ride"}),
@@ -18,6 +19,8 @@ function hasTag(tags, pattern) {
 }
 
 function resolveFrontierRideCategory(kind, typeId, tags = []) {
+    if (kind === "walkthrough") return CATEGORY.WALKTHROUGH;
+    if (/^fr_horrorheights$/i.test(String(typeId || ""))) return CATEGORY.DARK_RIDE;
     if (kind === "flat") return CATEGORY.FLAT_RIDE;
     const id = String(typeId || "").toLowerCase();
     if (/^(?:tr|trr|transport)_/.test(id) ||

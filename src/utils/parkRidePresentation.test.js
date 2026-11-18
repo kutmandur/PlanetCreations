@@ -70,3 +70,13 @@ test('offers shows as a presentation-only venue category', () => {
         customRides: [{ id: 'custom-show', name: 'Harbor Stage', rideCategoryKey: 'show' }],
     }).customRides).toEqual([{ id: 'custom-show', name: 'Harbor Stage', rideCategoryKey: 'show' }]);
 });
+
+test('supports custom walkthroughs without turning them into tracked rides', () => {
+    const presentation = sanitizeParkRidePresentation({
+        customRides: [{ id: 'walk-1', name: 'Haunted House', rideCategoryKey: 'walkthrough' }],
+    });
+    expect(presentation.customRides).toHaveLength(1);
+    const entries = getPresentedParkRideEntries({ rides: [] }, presentation);
+    expect(entries[0].ride.kind).toBe('walkthrough');
+    expect(entries[0].ride.rideCategory).toBe('Walkthrough Attraction');
+});

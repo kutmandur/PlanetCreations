@@ -1,3 +1,4 @@
+import { DLC_SEED_DATA, mergeFrontierDlcNames } from '../../utils/frontierDlcDefaults';
 import { TEXT_LIMITS } from '../../utils/textLimits';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -205,9 +206,10 @@ const EditProfilePage = ({ user, setModalMessage, blacklist }) => {
                 const nextSelectedGame = getGame(nextProfile.favoriteGame)
                     ? nextProfile.favoriteGame
                     : getDefaultGameId();
-                const dlcData = {};
+                const dlcData = Object.fromEntries(Object.keys(DLC_SEED_DATA)
+                    .map(gameId => [gameId, mergeFrontierDlcNames(gameId)]));
                 dlcSnapshot.forEach((dlcDoc) => {
-                    dlcData[dlcDoc.id] = dlcDoc.data().names || [];
+                    dlcData[dlcDoc.id] = mergeFrontierDlcNames(dlcDoc.id, dlcDoc.data().names);
                 });
 
                 setProfileData(nextProfile);

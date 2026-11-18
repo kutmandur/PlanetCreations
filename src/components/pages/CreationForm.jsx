@@ -1,3 +1,4 @@
+import { mergeFrontierDlcNames } from '../../utils/frontierDlcDefaults';
 import LimitedTextField from '../ui/LimitedTextField';
 import { TEXT_LIMITS, textLengthError } from '../../utils/textLimits';
 import {getFunctions as getPolicyFunctions, httpsCallable as policyCallable} from 'firebase/functions';
@@ -268,8 +269,8 @@ const CreationForm = ({ user, userProfile, setModalMessage, initialGame, blackli
             ]);
             
             setCATEGORIES(prev => ({ ...prev, [game]: catSnap.exists() ? catSnap.data().names || [] : [] }));
-            setGameDlcs(cachedCatalog?.entries?.map(entry => entry.name) ||
-                (dlcSnap?.exists() ? dlcSnap.data().names || [] : []));
+            setGameDlcs(mergeFrontierDlcNames(game, cachedCatalog?.entries?.map(entry => entry.name) ||
+                (dlcSnap?.exists() ? dlcSnap.data().names || [] : [])));
         };
         fetchGameData();
     }, [game]);

@@ -34,3 +34,14 @@ test('combines distinct serialized piece managers without double-counting transf
         binCount: 1444,
     })).toBe(203557);
 });
+
+test('groups walkthroughs separately and retains Horror Heights as a dark ride', () => {
+    const groups = groupParkRides({ rideCount: 2, flatRideCount: 1, trackedRideCount: 0,
+        rides: [
+            { kind: 'flat', typeId: 'FR_HorrorHeights', rideCategoryKey: 'dark-ride' },
+            { kind: 'walkthrough', typeId: 'WalkthroughExperience', rideCategoryKey: 'walkthrough' },
+        ] });
+    expect(groups.map(group => group.key)).toEqual(['dark-ride', 'walkthrough']);
+    expect(groups[1].label).toBe('Walkthrough Attractions');
+    expect(groups.flatMap(group => group.rides)).toHaveLength(2);
+});
